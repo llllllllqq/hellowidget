@@ -16,6 +16,7 @@
 
 ## 版本历史
 
+- **v5.2** Home/多任务键/切应用也弹保存 Toast；新增 Material「widgets」开源图标；项目改名 hellowidget
 - **v5.1** 修复退出时保存 Toast 不显示的问题（返回键改为「先写盘确认 → Toast → 再退出」）
 - **v5.0** DataStore 原子写入 + CRC32 校验，仅退出/返回/切后台时保存，旧数据自动迁移
 - **v4.0** 新增小组件外观设置页（字体大小/颜色/背景色/透明度）
@@ -32,7 +33,7 @@
 3. **自动发布 GitHub Release**，附签名 APK，可直接下载：
 
 ```
-https://github.com/llllllllqq/HelloWorld/releases/latest
+https://github.com/llllllllqq/hellowidget/releases/latest
 ```
 
 ### 触发方式
@@ -62,7 +63,7 @@ gradle assembleRelease   # 签名 Release APK（需上述 4 个环境变量）
 ## 项目结构
 
 ```
-HelloWorld/
+hellowidget/
 ├── .github/workflows/build.yml   # GitHub Actions 云编译 + 发布 Release
 ├── app/
 │   ├── build.gradle.kts           # 构建配置（compileSdk 34, minSdk 21）

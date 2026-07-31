@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    自适应图标前景：Material Symbols「widgets」图标（Apache 2.0 开源可商用），
+    白色栅格图案，居中于 108dp 画布的安全区（66dp）内。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:scaleX="2.3"
+        android:scaleY="2.3"
+        android:translateX="26.4"
+        android:translateY="26.4">
+
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M16.65,13L11,7.35l5.65,-5.65l5.65,5.65zM3,11V3h8v8zm10,10v-8h8v8zM3,21v-8h8v8z" />
+
+    </group>
+</vector>

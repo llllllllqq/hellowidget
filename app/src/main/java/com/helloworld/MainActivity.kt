@@ -27,6 +27,9 @@ class MainActivity : AppCompatActivity() {
     /** 返回键退出流程是否已开始（防重入；也用于区分 onStop 的来源） */
     private var exitingByBack = false
 
+    /** 是否正在打开设置页（onStop 时用于区分「切后台」与「应用内跳转」，避免误弹 Toast） */
+    private var openingSettings = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -55,6 +58,7 @@ class MainActivity : AppCompatActivity() {
 
         // 打开小组件外观设置页
         binding.btnSettings.setOnClickListener {
+            openingSettings = true
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
@@ -79,15 +83,21 @@ class MainActivity : AppCompatActivity() {
     /**
      * 保存时机：仅在退出 / 返回 / 切后台（onStop）时执行，不做编辑自动保存。
      * - 返回键退出：由 [OnBackPressedCallback] 处理（保存 → Toast → finish）
-     * - Home 切后台 / 最近任务移除：此处静默保存（后台无界面，Toast 无意义）
+     * - Home / 多任务键 / 切到其他应用：保存并弹「已保存 ✓」Toast
+     * - 应用内跳转（设置页）/ 旋转：静默保存，不弹 Toast
      * 内容加载完成前不保存：此时编辑器还是空的，磁盘上已是最近一次完整内容，
      * 直接保存反而会把旧内容覆盖成空。
      */
     override fun onStop() {
         super.onStop()
         if (!exitingByBack && loadCompleted) {
-            saveContent(showToast = false)
+            saveContent(showToast = !openingSettings && !isChangingConfigurations)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        openingSettings = false
     }
 
     /**
