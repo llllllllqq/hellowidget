@@ -69,16 +69,17 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.6.${{ github.run_number }}
-          name: HelloWidget v5.6（修复MIUI加载 + 空白区可点击 + 失焦即保存）· build ${{ github.run_number }}
+          tag_name: v5.7.${{ github.run_number }}
+          name: HelloWidget v5.7（小部件单条渲染：行高正常 + 任意位置可点击）· build ${{ github.run_number }}
           body: |
             ## 本版本改进
-            ### 修复（重要）
-            - **修复 MIUI 小部件再次无法加载**：彻底移除 ScrollView 方案，回归 ListView 逐行渲染（该方案在 MIUI 已验证可正常加载）
-            - **小部件空白区域可点击**：内容不满一页时，最后一行列表项按小组件实际高度（getAppWidgetOptions）自动补齐高度，覆盖整个空白区；ListView 行间无缝隙不会漏点；填充仅在渲染时计算，编辑器/存储内容不受影响
-            - **失焦即保存并弹 Toast**：改为 onWindowFocusChanged 监听，Home / 多任务键 / 切应用 / 下拉通知栏等任何失焦都会同步保存并弹「已保存 ✓」（应用内跳转与旋转除外）
+            ### 小部件渲染优化
+            - **整段内容单条渲染**：改为单个列表项 + TextView 自动软换行，行高恢复正常，不再有被拉高的巨行
+            - 内容长 → 单项自动超高 → 原生滚动阅读；内容短 → 单项按小组件高度补高 → 整块任意位置可点击
+            - 填充逻辑简化：只需小组件报告高度，不再逐行估算行高
+            - 填充仅在渲染时计算，不影响存储内容和编辑器显示
             ### 历史功能
-            - 包名 moe.hellowidget；返回键退出先存后退
+            - 失焦即保存并弹 Toast（Home/多任务键/切应用）
             - DataStore 官方原子写入 + CRC32 校验
             - 小组件外观设置（字体/颜色/背景）
             - 零后台占用

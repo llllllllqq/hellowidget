@@ -11,8 +11,8 @@ android {
         applicationId = "moe.hellowidget"
         minSdk = 21
         targetSdk = 34
-        versionCode = 11
-        versionName = "5.6"
+        versionCode = 12
+        versionName = "5.7"
     }
 
     buildFeatures {
