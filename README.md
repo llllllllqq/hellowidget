@@ -95,3 +95,9 @@ hellowidget/
 - **用户内容**：`filesDir/user_content.dat`（DataStore 格式：`[UTF-8 内容][CRC32]`）
 - **外观设置**：SharedPreferences `hello_prefs`（字体大小/颜色/背景等，非关键数据）
 - **损坏恢复**：CRC 校验失败时自动保留现场文件 `corrupt_<时间戳>.dat` 并重建，应用始终可用
+
+## 开源许可证
+
+本项目基于 **MIT License** 开源，任何人可自由使用、修改、分发（含商用），仅需保留版权声明与许可证文本，详见 [LICENSE](LICENSE)。
+
+第三方组件声明（含应用图标出处）见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
