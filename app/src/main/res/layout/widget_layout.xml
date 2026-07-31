@@ -2,16 +2,16 @@
 <!--
     桌面小组件布局：ListView 集合视图。
     RemoteViews 中只有 ListView/GridView/StackView 支持原生滚动，
-    文本数据由 TextWidgetService(RemoteViewsFactory) 按行提供。
+    文本数据由 TextWidgetService(RemoteViewsFactory) 提供。
+    内边距已移至列表项内部（widget_list_item.xml），
+    使列表可视区 = 完整小组件高度，短内容填满后不会因内边距产生误滚动。
 -->
 <ListView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_list"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/transparent"
-    android:clipToPadding="false"
     android:divider="@android:color/transparent"
     android:dividerHeight="0dp"
     android:overScrollMode="never"
-    android:padding="8dp"
     android:scrollbars="vertical" />

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 小组件列表项：一行文本 -->
+<!-- 小组件列表项：整段内容单条渲染，内边距 8dp（保证文字不贴边） -->
 <TextView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_item_text"
     android:layout_width="match_parent"
@@ -7,5 +7,6 @@
     android:background="@android:color/transparent"
     android:gravity="start|top"
     android:lineSpacingExtra="2dp"
+    android:padding="8dp"
     android:textColor="#FFFFFF"
     android:textSize="14sp" />

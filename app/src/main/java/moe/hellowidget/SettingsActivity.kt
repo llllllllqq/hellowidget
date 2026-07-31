@@ -42,6 +42,7 @@ class SettingsActivity : AppCompatActivity() {
     private var textColor = WidgetSettings.DEFAULT_TEXT_COLOR
     private var bgColor = WidgetSettings.DEFAULT_BG_COLOR
     private var bgAlpha = WidgetSettings.DEFAULT_BG_ALPHA
+    private var fillMarginDp = WidgetSettings.DEFAULT_FILL_MARGIN_DP
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,6 +55,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.previewBox.background = GradientDrawable().apply { cornerRadius = dp(8).toFloat() }
         setupFontSizeSeek()
         setupBgAlphaSeek()
+        setupFillMarginSeek()
         renderTextSwatches()
         renderBgSwatches()
         updatePreview()
@@ -68,6 +70,7 @@ class SettingsActivity : AppCompatActivity() {
         textColor = WidgetSettings.textColor(this)
         bgColor = WidgetSettings.bgColor(this)
         bgAlpha = WidgetSettings.bgAlpha(this)
+        fillMarginDp = WidgetSettings.fillMarginDp(this)
     }
 
     /** 保存全部设置并立即刷新桌面小组件 */
@@ -77,6 +80,7 @@ class SettingsActivity : AppCompatActivity() {
             .putInt(WidgetSettings.KEY_TEXT_COLOR, textColor)
             .putInt(WidgetSettings.KEY_BG_COLOR, bgColor)
             .putInt(WidgetSettings.KEY_BG_ALPHA, bgAlpha)
+            .putInt(WidgetSettings.KEY_FILL_MARGIN_DP, fillMarginDp)
             .apply()
         TextWidgetProvider.updateWidgets(this)
     }
@@ -111,6 +115,23 @@ class SettingsActivity : AppCompatActivity() {
                 binding.bgAlphaValue.text = "$progress%"
                 persist()
                 updatePreview()
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+    }
+
+    // ---------- 防误触余量 ----------
+
+    private fun setupFillMarginSeek() {
+        binding.fillMarginSeek.progress = fillMarginDp.coerceIn(0, 20)
+        binding.fillMarginValue.text = getString(R.string.settings_fill_margin_value, fillMarginDp)
+        binding.fillMarginSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                fillMarginDp = progress
+                binding.fillMarginValue.text = getString(R.string.settings_fill_margin_value, progress)
+                persist()
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -296,9 +317,11 @@ class SettingsActivity : AppCompatActivity() {
         textColor = WidgetSettings.DEFAULT_TEXT_COLOR
         bgColor = WidgetSettings.DEFAULT_BG_COLOR
         bgAlpha = WidgetSettings.DEFAULT_BG_ALPHA
+        fillMarginDp = WidgetSettings.DEFAULT_FILL_MARGIN_DP
         persist()
         binding.fontSizeSeek.progress = (fontSp - 10).toInt()
         binding.bgAlphaSeek.progress = bgAlpha
+        binding.fillMarginSeek.progress = fillMarginDp
         renderTextSwatches()
         renderBgSwatches()
         updatePreview()

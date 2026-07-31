@@ -15,11 +15,13 @@ object WidgetSettings {
     const val KEY_TEXT_COLOR = "widget_text_color" // Int，ARGB
     const val KEY_BG_COLOR = "widget_bg_color"     // Int，ARGB（Color.TRANSPARENT = 无背景）
     const val KEY_BG_ALPHA = "widget_bg_alpha"     // Int，0..100（百分比）
+    const val KEY_FILL_MARGIN_DP = "widget_fill_margin_dp" // Int，dp
 
     const val DEFAULT_FONT_SP = 14f
     const val DEFAULT_TEXT_COLOR = Color.WHITE
     const val DEFAULT_BG_COLOR = Color.TRANSPARENT
     const val DEFAULT_BG_ALPHA = 100
+    const val DEFAULT_FILL_MARGIN_DP = 4
 
     fun fontSp(context: Context): Float =
         context.prefs.getFloat(KEY_FONT_SIZE, DEFAULT_FONT_SP)
@@ -34,6 +36,13 @@ object WidgetSettings {
     /** 背景透明度 0..100 */
     fun bgAlpha(context: Context): Int =
         context.prefs.getInt(KEY_BG_ALPHA, DEFAULT_BG_ALPHA)
+
+    /**
+     * 防误触余量（dp）：短内容时从小组件高度中扣除，避免因桌面取整误差导致误滚动。
+     * 余量越大越不容易误滚动，但底部留白（不可点击窄条）会略增。
+     */
+    fun fillMarginDp(context: Context): Int =
+        context.prefs.getInt(KEY_FILL_MARGIN_DP, DEFAULT_FILL_MARGIN_DP)
 
     /**
      * 背景颜色 × 透明度合成后的最终 ARGB 颜色。

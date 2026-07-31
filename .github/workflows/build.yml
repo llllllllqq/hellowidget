@@ -69,16 +69,15 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.7.${{ github.run_number }}
-          name: HelloWidget v5.7（小部件单条渲染：行高正常 + 任意位置可点击）· build ${{ github.run_number }}
+          tag_name: v5.8.${{ github.run_number }}
+          name: HelloWidget v5.8（修复短内容误滚动 + 可调防误触余量）· build ${{ github.run_number }}
           body: |
             ## 本版本改进
-            ### 小部件渲染优化
-            - **整段内容单条渲染**：改为单个列表项 + TextView 自动软换行，行高恢复正常，不再有被拉高的巨行
-            - 内容长 → 单项自动超高 → 原生滚动阅读；内容短 → 单项按小组件高度补高 → 整块任意位置可点击
-            - 填充逻辑简化：只需小组件报告高度，不再逐行估算行高
-            - 填充仅在渲染时计算，不影响存储内容和编辑器显示
+            ### 修复
+            - **修复短内容时小组件误滚动半行**：内边距 8dp 从 ListView 移到列表项内部，列表可视区 = 完整高度，不再因内边距产生滚动余量
+            - **防误触余量可设置**（设置页新增，默认 4dp，0–20dp）：短内容时从小组件高度扣除该余量，抵消桌面取整误差；余量越大越不易误滚动，底部留白略增
             ### 历史功能
+            - 整段内容单条渲染：行高正常、长内容滚动、短内容整块可点击
             - 失焦即保存并弹 Toast（Home/多任务键/切应用）
             - DataStore 官方原子写入 + CRC32 校验
             - 小组件外观设置（字体/颜色/背景）

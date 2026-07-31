@@ -56,14 +56,18 @@ class TextWidgetService : RemoteViewsService() {
             widgetHeightPx = computeWidgetHeightPx()
         }
 
-        /** 读取桌面报告的小组件高度（dp → px）；桌面不报告时返回 0（不填充） */
+        /** 读取桌面报告的小组件高度（dp），减去防误触余量后换算成 px；桌面不报告时返回 0 */
         private fun computeWidgetHeightPx(): Int {
             if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return 0
             val heightDp = AppWidgetManager.getInstance(context)
                 .getAppWidgetOptions(widgetId)
                 .getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0)
             if (heightDp <= 0) return 0
-            return (heightDp * context.resources.displayMetrics.density).toInt()
+            val density = context.resources.displayMetrics.density
+            // 扣除防误触余量（用户可在设置里调整）：
+            // 余量不足 → 单项略高于可视区，产生误滚动；余量过大 → 底部留出不可点击窄条
+            val usableDp = (heightDp - WidgetSettings.fillMarginDp(context)).coerceAtLeast(0)
+            return (usableDp * density).toInt()
         }
 
         override fun onDestroy() {
