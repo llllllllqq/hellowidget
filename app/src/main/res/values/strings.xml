@@ -4,6 +4,7 @@
     <string name="editor_hint">在此输入内容，退出自动保存…</string>
     <string name="widget_empty_hint">点此编辑</string>
     <string name="save_success">已保存 ✓</string>
+    <string name="save_failed">保存失败，请重试</string>
 
     <!-- 设置页 -->
     <string name="settings_button">⚙ 小组件外观设置</string>

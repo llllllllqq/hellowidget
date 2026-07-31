@@ -69,14 +69,15 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v4.0.${{ github.run_number }}
-          name: HelloWidget v4.0（可滚动小组件 + 外观设置）· build ${{ github.run_number }}
+          tag_name: v5.0.${{ github.run_number }}
+          name: HelloWidget v5.0（原子写入 + CRC32 校验）· build ${{ github.run_number }}
           body: |
             ## 本版本改进
-            - 新增**小组件外观设置页**：字体大小、字体颜色、背景颜色、背景透明度，实时预览、实时生效
-            - 自定义 RGB 取色器，支持任意颜色
-            - 桌面小组件**列表式可滚动**：上下滑动即可阅读全部内容
-            - 无需后台进程常驻：仅当桌面渲染小组件时临时绑定，零轮询、零耗电
-            - 点击小组件任意一行即可打开编辑器
+            - **DataStore 官方原子写入**：写临时文件 + fsync + 原子重命名，任意时刻崩溃都不会产生半个文件，内容永不损坏
+            - **CRC32 校验和**：文件末尾内嵌 4 字节 CRC32，读取时校验；损坏时保留现场文件并自动重建
+            - **保存时机**：仅在退出 / 返回 / 切后台时保存，不做编辑自动保存
+            - **保存确认**：真正写盘成功后才提示「已保存 ✓」，失败提示「保存失败」且旧内容不受影响
+            - **零后台占用**：保存完成即结束，无自动保存、无轮询、无后台任务，CPU 自动释放
+            - 旧版 SharedPreferences 内容自动迁移
           files: app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true

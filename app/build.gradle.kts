@@ -11,8 +11,8 @@ android {
         applicationId = "com.helloworld"
         minSdk = 21
         targetSdk = 34
-        versionCode = 4
-        versionName = "4.0"
+        versionCode = 5
+        versionName = "5.0"
     }
 
     buildFeatures {
@@ -51,4 +51,8 @@ android {
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
+    // DataStore 官方原子写入（自定义 Serializer + CRC32）
+    implementation("androidx.datastore:datastore-core:1.1.1")
+    // lifecycleScope（生命周期感知的协程作用域）
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
 }

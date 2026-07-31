@@ -4,8 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
-import com.helloworld.MainActivity.Companion.KEY_SAVED_TEXT
-import com.helloworld.MainActivity.Companion.prefs
+import kotlinx.coroutines.runBlocking
 
 /**
  * 为桌面小组件提供可滚动文本数据的服务。
@@ -34,7 +33,7 @@ class TextWidgetService : RemoteViewsService() {
 
         /**
          * 数据变化时由框架调用（在后台线程执行），
-         * 重新从 SharedPreferences 读取最新保存的文本。
+         * 重新从 DataStore 读取最新保存的文本。
          */
         override fun onDataSetChanged() {
             reload()
@@ -42,7 +41,8 @@ class TextWidgetService : RemoteViewsService() {
 
         private fun reload() {
             lines.clear()
-            val savedText = context.prefs.getString(KEY_SAVED_TEXT, "") ?: ""
+            // 从 DataStore 读取（工厂运行在后台线程，runBlocking 短暂阻塞可接受）
+            val savedText = runBlocking { ContentStore.read() }
             if (savedText.isBlank()) {
                 lines.add(context.getString(R.string.widget_empty_hint))
             } else {
