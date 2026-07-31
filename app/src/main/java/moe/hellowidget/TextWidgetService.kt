@@ -71,7 +71,7 @@ class TextWidgetService : RemoteViewsService() {
             if (lines.isEmpty()) return 0
             val heightDp = if (widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
                 AppWidgetManager.getInstance(context)
-                    .getAppWidgetOptions(context, widgetId)
+                    .getAppWidgetOptions(widgetId)
                     .getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0)
             } else {
                 0
