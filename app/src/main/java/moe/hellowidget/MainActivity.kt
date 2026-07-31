@@ -31,8 +31,8 @@ class MainActivity : AppCompatActivity() {
     /** 是否正在打开设置页（onStop 时用于区分「切后台」与「应用内跳转」，避免误弹 Toast） */
     private var openingSettings = false
 
-    /** onUserLeaveHint 已处理（Home/多任务键），onStop 不再重复保存 */
-    private var userLeavingHandled = false
+    /** 本次离开（失焦/Home/多任务键）是否已同步保存过，防止重复保存 */
+    private var savedOnLeave = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,41 +85,61 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Home / 多任务键按下时回调（在退到后台【之前】触发）。
-     * 这里【同步等待】写盘完成后再弹 Toast：
-     * - 此时应用仍在过渡动画中、界面可见，不会被 MIUI / Android 13+ 的后台 Toast 抑制
-     * - 多任务键切换比 Home 快，若用异步（写盘完成后才发 Toast），Toast 发出时
-     *   应用已被判定为后台而遭到抑制——同步等待则保证 Toast 在退后台之前发出
+     * 窗口失去焦点（Home / 多任务键 / 切到其他应用 / 下拉通知栏等）即同步保存并弹 Toast。
+     * 比 onUserLeaveHint 更早触发，Toast 发出时应用窗口尚未退场，不会被后台 Toast 抑制。
+     * 应用内跳转（设置页）与旋转已用标志排除。
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            savedOnLeave = false
+        } else if (shouldSaveOnLeave()) {
+            saveOnLeave()
+        }
+    }
+
+    /**
+     * Home / 多任务键按下时回调（兜底触发，通常已被 [onWindowFocusChanged] 覆盖）。
      * 注意：应用内 startActivity（如打开设置页）也会回调此方法，已用 openingSettings 排除。
      */
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (!openingSettings && !isChangingConfigurations && loadCompleted) {
-            userLeavingHandled = true
-            val text = binding.editor.text.toString()
-            // 同步写盘（DataStore 小文件，几毫秒即可完成），完成后再提示
-            val ok = runBlocking { ContentStore.write(text) }
-            TextWidgetProvider.updateWidgets(applicationContext)
-            Toast.makeText(
-                applicationContext,
-                if (ok) R.string.save_success else R.string.save_failed,
-                Toast.LENGTH_SHORT
-            ).show()
+        if (shouldSaveOnLeave()) {
+            saveOnLeave()
         }
+    }
+
+    private fun shouldSaveOnLeave(): Boolean =
+        !openingSettings && !isChangingConfigurations && !exitingByBack && loadCompleted && !savedOnLeave
+
+    /**
+     * 同步写盘（DataStore 小文件，几毫秒）→ 确认成功后刷新小组件 → 弹 Toast。
+     * 同步保证 Toast 在应用失去焦点/退后台之前发出，不被 MIUI / Android 13+ 抑制。
+     */
+    private fun saveOnLeave() {
+        savedOnLeave = true
+        val text = binding.editor.text.toString()
+        val ok = runBlocking { ContentStore.write(text) }
+        TextWidgetProvider.updateWidgets(applicationContext)
+        Toast.makeText(
+            applicationContext,
+            if (ok) R.string.save_success else R.string.save_failed,
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     /**
      * 保存时机：仅在退出 / 返回 / 切后台（onStop）时执行，不做编辑自动保存。
      * - 返回键退出：由 [OnBackPressedCallback] 处理（保存 → Toast → finish）
-     * - Home / 多任务键：已在 [onUserLeaveHint] 处理（保存 → Toast）
-     * - 最近任务滑动移除：此处兜底保存（无界面，Toast 无意义）
+     * - 失焦（Home/多任务键等）：已在 [onWindowFocusChanged] / [onUserLeaveHint] 同步处理
+     * - 最近任务滑动移除：此处兜底静默保存
      * - 应用内跳转（设置页）/ 旋转：静默保存，不弹 Toast
      * 内容加载完成前不保存：此时编辑器还是空的，磁盘上已是最近一次完整内容，
      * 直接保存反而会把旧内容覆盖成空。
      */
     override fun onStop() {
         super.onStop()
-        if (!exitingByBack && !userLeavingHandled && loadCompleted) {
+        if (!exitingByBack && !savedOnLeave && loadCompleted) {
             saveContent(showToast = !openingSettings && !isChangingConfigurations)
         }
     }
@@ -127,7 +147,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         openingSettings = false
-        userLeavingHandled = false
+        savedOnLeave = false
     }
 
     /**
