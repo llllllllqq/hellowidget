@@ -69,19 +69,17 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.3.${{ github.run_number }}
-          name: HelloWidget v5.3（包名 moe.hellowidget + 点击/Toast 修复）· build ${{ github.run_number }}
+          tag_name: v5.4.${{ github.run_number }}
+          name: HelloWidget v5.4（修复 MIUI 小部件无法加载）· build ${{ github.run_number }}
           body: |
             ## 本版本改进
-            ### 修复
-            - **小组件空白区域点击可打开应用**：除文字（列表项）外，ListView 空白区也响应点击
-            - **Home / 多任务键保存 Toast 不再丢失**：改为在 onUserLeaveHint（退后台之前）弹出，绕过 MIUI / Android 13+ 的后台 Toast 抑制
-            ### 变更
-            - **包名改为 `moe.hellowidget`**（⚠ 视为新应用：无法覆盖安装旧版，需先卸载 com.helloworld，内容数据不随包名迁移，请先备份文字）
+            ### 修复（重要）
+            - **修复 MIUI 桌面上小部件无法加载**：移除对 ListView 自身的 setOnClickPendingIntent（该操作在部分桌面会导致整个小部件加载失败）
+            - 空白区域点击改为**短内容单条填满**方案：内容 ≤3 行时合并为一条列表项、高度填满整个小组件，整块区域均可点击打开应用；长内容仍逐行渲染、正常上下滚动
             ### 历史功能
-            - 返回键退出：先原子写盘 → 确认后 Toast → 再退出
-            - DataStore 官方原子写入 + CRC32 校验，仅退出/返回/切后台时保存
-            - 桌面小组件列表式可滚动 + 外观设置（字体/颜色/背景）
-            - 零后台占用，保存完成即结束
+            - 包名 moe.hellowidget；返回键/Home/多任务键保存 Toast
+            - DataStore 官方原子写入 + CRC32 校验
+            - 桌面小组件可滚动 + 外观设置
+            - 零后台占用
           files: app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true

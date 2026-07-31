@@ -58,12 +58,11 @@ class TextWidgetProvider : AppWidgetProvider() {
                             }
                     val pendingIntent = PendingIntent.getActivity(context, 0, intent, flags)
 
-                    // 列表项（文字）点击：template + fill-in
+                    // 列表项（文字）点击：template + fill-in（官方支持，安全）
+                    // ⚠ 注意：绝不能对 ListView 本身调用 setOnClickPendingIntent——
+                    // 在部分桌面（含 MIUI）上会导致整个小部件加载失败。
+                    // 空白区域点击改为「短内容单条填满」方案（见 TextWidgetService）。
                     setPendingIntentTemplate(R.id.widget_list, pendingIntent)
-
-                    // 空白区域点击（ListView 自身）：官方文档注明 collection 的列表项
-                    // 不走 setOnClickPendingIntent，但空白区属于 ListView 自身事件，可正常触发
-                    setOnClickPendingIntent(R.id.widget_list, pendingIntent)
                 }
                 manager.updateAppWidget(id, views)
             }
