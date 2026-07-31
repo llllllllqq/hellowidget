@@ -4,4 +4,18 @@
     <string name="editor_hint">在此输入内容，退出自动保存…</string>
     <string name="widget_empty_hint">点此编辑</string>
     <string name="save_success">已保存 ✓</string>
+
+    <!-- 设置页 -->
+    <string name="settings_button">⚙ 小组件外观设置</string>
+    <string name="settings_title">小组件外观设置</string>
+    <string name="settings_preview">实时预览</string>
+    <string name="settings_preview_sample">示例文字：字体、颜色、背景会实时跟随设置变化。\n第二行用于观察行距效果。</string>
+    <string name="settings_font_size">字体大小</string>
+    <string name="settings_text_color">字体颜色</string>
+    <string name="settings_bg_color">背景颜色</string>
+    <string name="settings_bg_alpha">背景透明度（不透明 ← 透明）</string>
+    <string name="settings_reset">恢复默认设置</string>
+    <string name="color_picker_title_text">自定义字体颜色</string>
+    <string name="color_picker_title_bg">自定义背景颜色</string>
+    <string name="color_preview_text">颜色预览</string>
 </resources>

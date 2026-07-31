@@ -60,6 +60,10 @@ class TextWidgetService : RemoteViewsService() {
             val item = RemoteViews(context.packageName, R.layout.widget_list_item)
             item.setTextViewText(R.id.widget_item_text, lines[position])
 
+            // 应用字体大小（sp）与字体颜色
+            item.setFloat(R.id.widget_item_text, "setTextSize", WidgetSettings.fontSp(context))
+            item.setInt(R.id.widget_item_text, "setTextColor", WidgetSettings.textColor(context))
+
             // 点击这一行 → 通过列表模板打开主界面
             item.setOnClickFillInIntent(R.id.widget_item_text, Intent())
             return item

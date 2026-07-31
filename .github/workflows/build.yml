@@ -69,13 +69,14 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.0.${{ github.run_number }}
-          name: HelloWidget v3.0（可滚动小组件）· build ${{ github.run_number }}
+          tag_name: v4.0.${{ github.run_number }}
+          name: HelloWidget v4.0（可滚动小组件 + 外观设置）· build ${{ github.run_number }}
           body: |
             ## 本版本改进
-            - 桌面小组件改为**列表式可滚动**：上下滑动即可阅读全部内容
+            - 新增**小组件外观设置页**：字体大小、字体颜色、背景颜色、背景透明度，实时预览、实时生效
+            - 自定义 RGB 取色器，支持任意颜色
+            - 桌面小组件**列表式可滚动**：上下滑动即可阅读全部内容
             - 无需后台进程常驻：仅当桌面渲染小组件时临时绑定，零轮询、零耗电
             - 点击小组件任意一行即可打开编辑器
-            - 添加小组件时提供更直观的预览图
           files: app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true

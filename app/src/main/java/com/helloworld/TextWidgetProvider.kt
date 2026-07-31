@@ -35,6 +35,9 @@ class TextWidgetProvider : AppWidgetProvider() {
 
             ids.forEach { id ->
                 val views = RemoteViews(context.packageName, R.layout.widget_layout).apply {
+                    // 应用背景颜色（含透明度）
+                    setInt(R.id.widget_list, "setBackgroundColor", WidgetSettings.effectiveBgColor(context))
+
                     // 把列表数据源绑定到 TextWidgetService（绑定式，按需启动）
                     val serviceIntent = Intent(context, TextWidgetService::class.java).apply {
                         putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)

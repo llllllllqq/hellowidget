@@ -1,6 +1,7 @@
 package com.helloworld
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +22,11 @@ class MainActivity : AppCompatActivity() {
         // 光标移到末尾
         if (!savedText.isNullOrEmpty()) {
             binding.editor.setSelection(savedText.length)
+        }
+
+        // 打开小组件外观设置页
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
     }
 
