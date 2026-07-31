@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "com.helloworld"
+    namespace = "moe.hellowidget"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.helloworld"
+        applicationId = "moe.hellowidget"
         minSdk = 21
         targetSdk = 34
-        versionCode = 7
-        versionName = "5.2"
+        versionCode = 8
+        versionName = "5.3"
     }
 
     buildFeatures {

@@ -1,4 +1,4 @@
-package com.helloworld
+package moe.hellowidget
 
 import android.content.Context
 import android.util.Log
@@ -8,8 +8,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
 import androidx.datastore.core.Serializer
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
-import com.helloworld.MainActivity.Companion.KEY_SAVED_TEXT
-import com.helloworld.MainActivity.Companion.prefs
+import moe.hellowidget.MainActivity.Companion.KEY_SAVED_TEXT
+import moe.hellowidget.MainActivity.Companion.prefs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

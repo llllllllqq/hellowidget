@@ -16,6 +16,7 @@
 
 ## 版本历史
 
+- **v5.3** 包名改为 `moe.hellowidget`；小组件空白区域点击可打开应用；Home/多任务键保存 Toast 不再被后台抑制
 - **v5.2** Home/多任务键/切应用也弹保存 Toast；新增 Material「widgets」开源图标；项目改名 hellowidget
 - **v5.1** 修复退出时保存 Toast 不显示的问题（返回键改为「先写盘确认 → Toast → 再退出」）
 - **v5.0** DataStore 原子写入 + CRC32 校验，仅退出/返回/切后台时保存，旧数据自动迁移
@@ -69,7 +70,7 @@ hellowidget/
 │   ├── build.gradle.kts           # 构建配置（compileSdk 34, minSdk 21）
 │   └── src/main/
 │       ├── AndroidManifest.xml    # 清单（Application/Activity/小组件 Receiver/Service）
-│       ├── java/com/helloworld/
+│       ├── java/moe/hellowidget/
 │       │   ├── MainActivity.kt    # 编辑器 + 保存流程（onStop 保存，返回键先存后退）
 │       │   ├── SettingsActivity.kt# 小组件外观设置页（含 RGB 取色）
 │       │   ├── HelloWidgetApp.kt  # Application：初始化全局 DataStore

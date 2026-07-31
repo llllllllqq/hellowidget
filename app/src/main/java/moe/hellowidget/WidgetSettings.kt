@@ -1,8 +1,8 @@
-package com.helloworld
+package moe.hellowidget
 
 import android.content.Context
 import android.graphics.Color
-import com.helloworld.MainActivity.Companion.prefs
+import moe.hellowidget.MainActivity.Companion.prefs
 
 /**
  * 桌面小组件外观设置：字体大小、字体颜色、背景颜色、背景透明度。

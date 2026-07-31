@@ -3,4 +3,4 @@
 # proguardFiles setting in build.gradle.kts.
 
 # Keep the application class
--keep class com.helloworld.** { *; }
+-keep class moe.hellowidget.** { *; }

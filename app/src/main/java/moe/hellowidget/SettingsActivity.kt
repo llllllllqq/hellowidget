@@ -1,4 +1,4 @@
-package com.helloworld
+package moe.hellowidget
 
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -10,8 +10,8 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import com.helloworld.MainActivity.Companion.prefs
-import com.helloworld.databinding.ActivitySettingsBinding
+import moe.hellowidget.MainActivity.Companion.prefs
+import moe.hellowidget.databinding.ActivitySettingsBinding
 
 /**
  * 小组件外观设置页：字体大小、字体颜色、背景颜色、背景透明度。

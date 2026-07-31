@@ -1,4 +1,4 @@
-package com.helloworld
+package moe.hellowidget
 
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
@@ -57,7 +57,13 @@ class TextWidgetProvider : AppWidgetProvider() {
                                 0
                             }
                     val pendingIntent = PendingIntent.getActivity(context, 0, intent, flags)
+
+                    // 列表项（文字）点击：template + fill-in
                     setPendingIntentTemplate(R.id.widget_list, pendingIntent)
+
+                    // 空白区域点击（ListView 自身）：官方文档注明 collection 的列表项
+                    // 不走 setOnClickPendingIntent，但空白区属于 ListView 自身事件，可正常触发
+                    setOnClickPendingIntent(R.id.widget_list, pendingIntent)
                 }
                 manager.updateAppWidget(id, views)
             }

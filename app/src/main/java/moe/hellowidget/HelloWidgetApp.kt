@@ -1,4 +1,4 @@
-package com.helloworld
+package moe.hellowidget
 
 import android.app.Application
 

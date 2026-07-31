@@ -1,4 +1,4 @@
-package com.helloworld
+package moe.hellowidget
 
 import android.content.Context
 import android.content.Intent
@@ -9,7 +9,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.helloworld.databinding.ActivityMainBinding
+import moe.hellowidget.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,6 +29,9 @@ class MainActivity : AppCompatActivity() {
 
     /** 是否正在打开设置页（onStop 时用于区分「切后台」与「应用内跳转」，避免误弹 Toast） */
     private var openingSettings = false
+
+    /** onUserLeaveHint 已处理（Home/多任务键），onStop 不再重复保存 */
+    private var userLeavingHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,16 +84,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Home / 多任务键按下时回调（在退到后台【之前】触发）。
+     * 在这里保存并弹 Toast：此时应用仍在过渡动画中、界面可见，
+     * 不会被 MIUI / Android 13+ 的「后台 Toast 抑制」拦掉。
+     * 注意：应用内 startActivity（如打开设置页）也会回调此方法，
+     * 已用 openingSettings 标志排除。
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (!openingSettings && !isChangingConfigurations && loadCompleted) {
+            userLeavingHandled = true
+            saveContent(showToast = true)
+        }
+    }
+
+    /**
      * 保存时机：仅在退出 / 返回 / 切后台（onStop）时执行，不做编辑自动保存。
      * - 返回键退出：由 [OnBackPressedCallback] 处理（保存 → Toast → finish）
-     * - Home / 多任务键 / 切到其他应用：保存并弹「已保存 ✓」Toast
+     * - Home / 多任务键：已在 [onUserLeaveHint] 处理（保存 → Toast）
+     * - 最近任务滑动移除：此处兜底保存（无界面，Toast 无意义）
      * - 应用内跳转（设置页）/ 旋转：静默保存，不弹 Toast
      * 内容加载完成前不保存：此时编辑器还是空的，磁盘上已是最近一次完整内容，
      * 直接保存反而会把旧内容覆盖成空。
      */
     override fun onStop() {
         super.onStop()
-        if (!exitingByBack && loadCompleted) {
+        if (!exitingByBack && !userLeavingHandled && loadCompleted) {
             saveContent(showToast = !openingSettings && !isChangingConfigurations)
         }
     }
@@ -98,6 +117,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         openingSettings = false
+        userLeavingHandled = false
     }
 
     /**
