@@ -11,6 +11,15 @@
         android:orientation="vertical"
         android:padding="16dp">
 
+        <!-- 页面标题（NoActionBar 主题下 title 不显示，这里手动加） -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_title"
+            android:textColor="@android:color/black"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
         <!-- 实时预览 -->
         <TextView
             android:layout_width="match_parent"

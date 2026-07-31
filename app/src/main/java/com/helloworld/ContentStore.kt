@@ -66,6 +66,8 @@ object ContentStore {
     /** 读取当前内容（挂起；任何异常回退为空串） */
     suspend fun read(): String = try {
         store.data.first()
+    } catch (e: CancellationException) {
+        throw e // 协程取消不吞掉
     } catch (e: Exception) {
         Log.e(TAG, "读取失败，回退为空内容", e)
         ContentSerializer.defaultValue
