@@ -9,6 +9,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.widget.RemoteViews
+import kotlinx.coroutines.runBlocking
 
 class TextWidgetProvider : AppWidgetProvider() {
 
@@ -23,8 +24,15 @@ class TextWidgetProvider : AppWidgetProvider() {
     companion object {
 
         /**
+         * Android 12+（API 31）：ScrollView 方案——TextView 填满整块可点击，原生滚动。
+         * Android 5–11：ListView 集合方案——点击文字行打开应用，列表滚动。
+         */
+        private val useScrollLayout: Boolean
+            get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+        /**
          * 刷新所有已添加的桌面小组件。
-         * 可从 [MainActivity.saveText] 和 [onUpdate] 中调用。
+         * 可从 [MainActivity.saveContent] 和 [onUpdate] 中调用。
          */
         fun updateWidgets(context: Context, appWidgetIds: IntArray? = null) {
             val manager = AppWidgetManager.getInstance(context)
@@ -34,43 +42,69 @@ class TextWidgetProvider : AppWidgetProvider() {
                 )
 
             ids.forEach { id ->
-                val views = RemoteViews(context.packageName, R.layout.widget_layout).apply {
-                    // 应用背景颜色（含透明度）
-                    setInt(R.id.widget_list, "setBackgroundColor", WidgetSettings.effectiveBgColor(context))
-
-                    // 把列表数据源绑定到 TextWidgetService（绑定式，按需启动）
-                    val serviceIntent = Intent(context, TextWidgetService::class.java).apply {
-                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
-                        // 每个小组件独立的 data uri，避免多个小组件共享数据
-                        data = Uri.parse("widget://${context.packageName}/$id")
-                    }
-                    setRemoteAdapter(R.id.widget_list, serviceIntent)
-
-                    // 点击列表任意一行 → 打开主界面
-                    val intent = Intent(context, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    }
-                    val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                PendingIntent.FLAG_IMMUTABLE
-                            } else {
-                                0
-                            }
-                    val pendingIntent = PendingIntent.getActivity(context, 0, intent, flags)
-
-                    // 列表项（文字）点击：template + fill-in（官方支持，安全）
-                    // ⚠ 注意：绝不能对 ListView 本身调用 setOnClickPendingIntent——
-                    // 在部分桌面（含 MIUI）上会导致整个小部件加载失败。
-                    // 空白区域点击改为「短内容单条填满」方案（见 TextWidgetService）。
-                    setPendingIntentTemplate(R.id.widget_list, pendingIntent)
+                val views = if (useScrollLayout) {
+                    buildScrollViews(context)
+                } else {
+                    buildListViews(context, id)
                 }
                 manager.updateAppWidget(id, views)
             }
 
-            // 通知列表数据已变化，让工厂重新从 SharedPreferences 读取
-            if (ids.isNotEmpty()) {
+            // 仅 ListView 方案需要通知数据变化（ScrollView 方案直接写文本）
+            if (!useScrollLayout && ids.isNotEmpty()) {
                 manager.notifyAppWidgetViewDataChanged(ids, R.id.widget_list)
             }
+        }
+
+        /**
+         * Android 12+：ScrollView + 填满的 TextView。
+         * 内容短 → TextView 填满整块 → 点击任何位置打开应用；
+         * 内容长 → TextView 超高 → 原生滚动。二者兼得，无需叠加层。
+         */
+        private fun buildScrollViews(context: Context): RemoteViews {
+            // DataStore 首次读取会读盘（几毫秒），此后为内存缓存，开销可忽略
+            val savedText = runBlocking { ContentStore.read() }
+            val displayText = savedText.ifBlank { context.getString(R.string.widget_empty_hint) }
+
+            return RemoteViews(context.packageName, R.layout.widget_layout_scroll).apply {
+                setInt(R.id.widget_scroll, "setBackgroundColor", WidgetSettings.effectiveBgColor(context))
+                setTextViewText(R.id.widget_text, displayText)
+                setFloat(R.id.widget_text, "setTextSize", WidgetSettings.fontSp(context))
+                setInt(R.id.widget_text, "setTextColor", WidgetSettings.textColor(context))
+                // 点击整块（TextView 填满 ScrollView）→ 打开主界面
+                setOnClickPendingIntent(R.id.widget_text, openAppPendingIntent(context))
+            }
+        }
+
+        /** Android 5–11：ListView 集合方案（可滚动；点击文字行打开应用） */
+        private fun buildListViews(context: Context, id: Int): RemoteViews {
+            return RemoteViews(context.packageName, R.layout.widget_layout).apply {
+                setInt(R.id.widget_list, "setBackgroundColor", WidgetSettings.effectiveBgColor(context))
+
+                // 把列表数据源绑定到 TextWidgetService（绑定式，按需启动）
+                val serviceIntent = Intent(context, TextWidgetService::class.java).apply {
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                    data = Uri.parse("widget://${context.packageName}/$id")
+                }
+                setRemoteAdapter(R.id.widget_list, serviceIntent)
+
+                // 列表项（文字）点击：template + fill-in（官方支持，安全）
+                // ⚠ 绝不能对 ListView 本身调用 setOnClickPendingIntent（部分桌面含 MIUI 会导致加载失败）
+                setPendingIntentTemplate(R.id.widget_list, openAppPendingIntent(context))
+            }
+        }
+
+        private fun openAppPendingIntent(context: Context): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        PendingIntent.FLAG_IMMUTABLE
+                    } else {
+                        0
+                    }
+            return PendingIntent.getActivity(context, 0, intent, flags)
         }
     }
 }

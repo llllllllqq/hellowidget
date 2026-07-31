@@ -12,6 +12,7 @@ import androidx.lifecycle.lifecycleScope
 import moe.hellowidget.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
@@ -85,16 +86,25 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Home / 多任务键按下时回调（在退到后台【之前】触发）。
-     * 在这里保存并弹 Toast：此时应用仍在过渡动画中、界面可见，
-     * 不会被 MIUI / Android 13+ 的「后台 Toast 抑制」拦掉。
-     * 注意：应用内 startActivity（如打开设置页）也会回调此方法，
-     * 已用 openingSettings 标志排除。
+     * 这里【同步等待】写盘完成后再弹 Toast：
+     * - 此时应用仍在过渡动画中、界面可见，不会被 MIUI / Android 13+ 的后台 Toast 抑制
+     * - 多任务键切换比 Home 快，若用异步（写盘完成后才发 Toast），Toast 发出时
+     *   应用已被判定为后台而遭到抑制——同步等待则保证 Toast 在退后台之前发出
+     * 注意：应用内 startActivity（如打开设置页）也会回调此方法，已用 openingSettings 排除。
      */
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (!openingSettings && !isChangingConfigurations && loadCompleted) {
             userLeavingHandled = true
-            saveContent(showToast = true)
+            val text = binding.editor.text.toString()
+            // 同步写盘（DataStore 小文件，几毫秒即可完成），完成后再提示
+            val ok = runBlocking { ContentStore.write(text) }
+            TextWidgetProvider.updateWidgets(applicationContext)
+            Toast.makeText(
+                applicationContext,
+                if (ok) R.string.save_success else R.string.save_failed,
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
