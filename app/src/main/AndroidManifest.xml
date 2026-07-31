@@ -26,6 +26,15 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_info" />
         </receiver>
+
+        <!--
+            小组件数据服务：绑定式服务，仅当桌面渲染小组件时被临时启动，
+            渲染结束后即停止，不常驻后台。
+        -->
+        <service
+            android:name=".TextWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
     </application>
 
 </manifest>

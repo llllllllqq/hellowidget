@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 添加小组件时选择器里的预览图（Android 12+ 使用 previewLayout） -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent"
+    android:padding="8dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:lineSpacingExtra="2dp"
+        android:text="在这里输入内容，\n桌面小组件将以列表形式\n展示全部文字，\n支持上下滑动阅读，\n无需后台进程常驻。"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp" />
+
+</FrameLayout>
