@@ -3,6 +3,7 @@ package moe.hellowidget
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
@@ -254,11 +255,12 @@ class SettingsActivity : AppCompatActivity() {
             LinearLayout.LayoutParams.WRAP_CONTENT))
 
         // R / G / B 三根滑杆
+        val dialogTextColor = themeAttrColor(android.R.attr.textColorPrimary)
         listOf("R", "G", "B").forEachIndexed { index, label ->
             val bar = SeekBar(this).apply { max = 255; progress = rgb[index] }
             val value = TextView(this).apply {
                 text = rgb[index].toString()
-                setTextColor(Color.BLACK)
+                setTextColor(dialogTextColor)
                 gravity = Gravity.END
             }
             val row = LinearLayout(this).apply {
@@ -266,7 +268,7 @@ class SettingsActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER_VERTICAL
                 addView(TextView(this@SettingsActivity).apply {
                     text = label
-                    setTextColor(Color.BLACK)
+                    setTextColor(dialogTextColor)
                     layoutParams = LinearLayout.LayoutParams(dp(36), LinearLayout.LayoutParams.WRAP_CONTENT)
                 })
                 addView(bar, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -328,4 +330,11 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    /** 从当前主题解析属性颜色（浅色/深色模式自动适配） */
+    private fun themeAttrColor(attr: Int): Int {
+        val value = TypedValue()
+        theme.resolveAttribute(attr, value, true)
+        return value.data
+    }
 }

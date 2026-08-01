@@ -10,8 +10,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HelloWorld">
 
+        <!--
+            configChanges="uiMode"：系统深色模式切换时不自动重建 Activity，
+            改由 onConfigurationChanged 处理：先触发一次自动保存，再重建应用新主题。
+        -->
         <activity
             android:name=".MainActivity"
+            android:configChanges="uiMode"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

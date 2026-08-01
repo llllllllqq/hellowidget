@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色模式下的设置页配色（仅页面外壳，小组件本身颜色不受影响） -->
+    <color name="settings_bg">#121212</color>
+    <color name="settings_text">#E6E6E6</color>
+    <color name="settings_secondary">#9E9E9E</color>
+    <color name="settings_divider">#333333</color>
+</resources>

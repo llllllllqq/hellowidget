@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    设置页：页面外壳颜色（背景/文字/分隔线）跟随系统深色模式，
+    但小组件的色板与预览使用用户自选颜色，不随主题变化。
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FAFAFA"
+    android:background="@color/settings_bg"
     android:fillViewport="true">
 
     <LinearLayout
@@ -16,7 +20,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/settings_title"
-            android:textColor="@android:color/black"
+            android:textColor="@color/settings_text"
             android:textSize="20sp"
             android:textStyle="bold" />
 
@@ -25,7 +29,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/settings_preview"
-            android:textColor="@android:color/black"
+            android:textColor="@color/settings_text"
             android:textSize="16sp"
             android:textStyle="bold" />
 
@@ -50,7 +54,7 @@
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:layout_marginTop="20dp"
-            android:background="#DDDDDD" />
+            android:background="@color/settings_divider" />
 
         <!-- 字体大小 -->
         <TextView
@@ -59,7 +63,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="@string/settings_font_size"
-            android:textColor="@android:color/black"
+            android:textColor="@color/settings_text"
             android:textSize="16sp" />
 
         <LinearLayout
@@ -81,7 +85,7 @@
                 android:layout_height="wrap_content"
                 android:gravity="end"
                 android:text="14sp"
-                android:textColor="@android:color/black"
+                android:textColor="@color/settings_text"
                 android:textSize="15sp" />
         </LinearLayout>
 
@@ -92,7 +96,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="@string/settings_text_color"
-            android:textColor="@android:color/black"
+            android:textColor="@color/settings_text"
             android:textSize="16sp" />
 
         <HorizontalScrollView
@@ -115,7 +119,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="@string/settings_bg_color"
-            android:textColor="@android:color/black"
+            android:textColor="@color/settings_text"
             android:textSize="16sp" />
 
         <HorizontalScrollView
@@ -138,7 +142,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="@string/settings_bg_alpha"
-            android:textColor="@android:color/black"
+            android:textColor="@color/settings_text"
             android:textSize="16sp" />
 
         <LinearLayout
@@ -160,7 +164,7 @@
                 android:layout_height="wrap_content"
                 android:gravity="end"
                 android:text="100%"
-                android:textColor="@android:color/black"
+                android:textColor="@color/settings_text"
                 android:textSize="15sp" />
         </LinearLayout>
 
@@ -171,7 +175,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="@string/settings_fill_margin"
-            android:textColor="@android:color/black"
+            android:textColor="@color/settings_text"
             android:textSize="16sp" />
 
         <LinearLayout
@@ -193,7 +197,7 @@
                 android:layout_height="wrap_content"
                 android:gravity="end"
                 android:text="4dp"
-                android:textColor="@android:color/black"
+                android:textColor="@color/settings_text"
                 android:textSize="15sp" />
         </LinearLayout>
 
@@ -202,7 +206,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="@string/settings_fill_margin_hint"
-            android:textColor="#888888"
+            android:textColor="@color/settings_secondary"
             android:textSize="12sp" />
 
         <Button

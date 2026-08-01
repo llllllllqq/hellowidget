@@ -2,4 +2,10 @@
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
     <color name="teal_200">#FF03DAC5</color>
+
+    <!-- 设置页配色（浅色模式；深色模式见 values-night/colors.xml） -->
+    <color name="settings_bg">#FAFAFA</color>
+    <color name="settings_text">#000000</color>
+    <color name="settings_secondary">#888888</color>
+    <color name="settings_divider">#DDDDDD</color>
 </resources>

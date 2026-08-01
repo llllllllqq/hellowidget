@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色模式主题：与浅色主题同名，系统深色模式开启时自动选用（values-night 限定符） -->
+    <style name="Theme.HelloWorld" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/purple_500</item>
+        <item name="colorPrimaryDark">@color/purple_700</item>
+        <item name="colorAccent">@color/teal_200</item>
+        <!-- 编辑页面窗口背景：深色模式下为纯黑 -->
+        <item name="android:windowBackground">#000000</item>
+    </style>
+</resources>

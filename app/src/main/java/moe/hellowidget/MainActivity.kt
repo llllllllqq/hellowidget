@@ -2,6 +2,7 @@ package moe.hellowidget
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -34,8 +35,16 @@ class MainActivity : AppCompatActivity() {
     /** 本次离开（失焦/Home/多任务键）是否已同步保存过，防止重复保存 */
     private var savedOnLeave = false
 
+    /** 最近一次记录的夜间模式标志位（Configuration.UI_MODE_NIGHT_MASK），用于检测深色模式切换 */
+    private var lastNightMode = -1
+
+    /** 深色模式切换触发的自动保存是否进行中（防重复触发） */
+    private var nightSwitchSaving = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 记录当前夜间模式位，之后仅在夜间模式真正变化时才触发切换流程
+        lastNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -148,6 +157,41 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         openingSettings = false
         savedOnLeave = false
+    }
+
+    /**
+     * 深色模式切换（系统设置变更）：本 Activity 在 Manifest 中声明了
+     * configChanges="uiMode"，系统不会自动重建，而是回调本方法。
+     * 这里先触发一次自动保存，再重建 Activity 以应用新的浅色/深色主题。
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val nightMode = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        if (nightMode != lastNightMode) {
+            lastNightMode = nightMode
+            handleNightModeSwitch()
+        }
+    }
+
+    /**
+     * 深色模式切换时的自动保存流程（静默保存，不弹 Toast）：
+     * 内容已加载完成才保存（加载中保存会把磁盘旧内容覆盖成空）；
+     * 保存完成后重建 Activity 应用新主题。
+     */
+    private fun handleNightModeSwitch() {
+        if (nightSwitchSaving) return
+        if (loadCompleted) {
+            nightSwitchSaving = true
+            savedOnLeave = true // 重建过程中的 onStop 不再重复保存
+            saveContent(showToast = false) {
+                nightSwitchSaving = false
+                if (!isFinishing && !isDestroyed) {
+                    recreate()
+                }
+            }
+        } else {
+            recreate()
+        }
     }
 
     /**
