@@ -22,4 +22,15 @@
     <string name="color_picker_title_text">自定义字体颜色</string>
     <string name="color_picker_title_bg">自定义背景颜色</string>
     <string name="color_preview_text">颜色预览</string>
+
+    <!-- 编辑器颜色（浅色/深色模式） -->
+    <string name="settings_section_widget">小组件外观</string>
+    <string name="settings_section_editor_light">编辑器颜色（浅色模式）</string>
+    <string name="settings_section_editor_dark">编辑器颜色（深色模式）</string>
+    <string name="settings_editor_text_color">文字颜色</string>
+    <string name="settings_editor_bg_hint">「无背景」= 跟随系统主题背景（浅色=白，深色=黑）</string>
+    <string name="color_picker_title_editor_light_bg">自定义浅色模式编辑器背景颜色</string>
+    <string name="color_picker_title_editor_light_text">自定义浅色模式编辑器文字颜色</string>
+    <string name="color_picker_title_editor_dark_bg">自定义深色模式编辑器背景颜色</string>
+    <string name="color_picker_title_editor_dark_text">自定义深色模式编辑器文字颜色</string>
 </resources>

@@ -69,18 +69,18 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.8.${{ github.run_number }}
-          name: HelloWidget v5.8（修复短内容误滚动 + 可调防误触余量）· build ${{ github.run_number }}
+          tag_name: v6.0.${{ github.run_number }}
+          name: HelloWidget v6.0（编辑器颜色自定义 + 自适应深色模式）· build ${{ github.run_number }}
           body: |
             ## 本版本改进
-            ### 修复
-            - **修复短内容时小组件误滚动半行**：内边距 8dp 从 ListView 移到列表项内部，列表可视区 = 完整高度，不再因内边距产生滚动余量
-            - **防误触余量可设置**（设置页新增，默认 4dp，0–20dp）：短内容时从小组件高度扣除该余量，抵消桌面取整误差；余量越大越不易误滚动，底部留白略增
+            ### 新增
+            - **自适应系统深色模式**：编辑页随系统深色模式自动切换黑白，切换时自动保存当前内容（小组件颜色不受影响）
+            - **编辑器颜色自定义**：设置页可分别自定义「浅色模式」与「深色模式」编辑器的背景色与文字色（含自定义 RGB 取色）
             ### 历史功能
             - 整段内容单条渲染：行高正常、长内容滚动、短内容整块可点击
             - 失焦即保存并弹 Toast（Home/多任务键/切应用）
             - DataStore 官方原子写入 + CRC32 校验
-            - 小组件外观设置（字体/颜色/背景）
+            - 小组件外观设置（字体/颜色/背景/透明度/防误触余量）
             - 零后台占用
           files: app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true

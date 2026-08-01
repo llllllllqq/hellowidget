@@ -7,8 +7,9 @@
 | 特性 | 说明 |
 |---|---|
 | 📝 文本编辑 | 全屏多行编辑器，内容仅在退出 / 返回 / 切后台时保存（不做编辑自动保存） |
+| 🌙 自适应深色模式 | 编辑页随系统深色模式自动切换黑白（黑底白字 / 白底黑字），切换时自动保存当前内容；小组件颜色不受影响 |
 | 🪟 可滚动小组件 | ListView 集合式小组件，桌面即可上下滑动阅读全部内容（所有 Android 版本支持） |
-| 🎨 外观自定义 | 设置页可调字体大小(10–34sp)、字体颜色、背景颜色、背景透明度，实时预览即时生效，支持自定义 RGB 取色 |
+| 🎨 外观自定义 | 设置页可调小组件字体大小(10–34sp)、字体颜色、背景颜色、背景透明度；并可分别自定义**浅色模式 / 深色模式编辑器**的背景色与文字色；实时预览即时生效，支持自定义 RGB 取色 |
 | 🔒 原子写入 | 内容存储采用 **Jetpack DataStore** 官方原子写入（临时文件 + fsync + 原子重命名），任意时刻崩溃都不会产生"写一半"的损坏文件 |
 | ✅ CRC32 校验 | 文件格式 `[UTF-8 内容][4字节 CRC32]`，读取时校验；发现损坏自动保留现场文件并重建 |
 | 🪫 零后台占用 | 无自动保存、无轮询、无常驻服务。小组件数据服务为绑定式，仅桌面渲染时才临时启动；保存完成即结束，CPU 自动释放 |
@@ -16,6 +17,7 @@
 
 ## 版本历史
 
+- **v6.0** 新增自适应系统深色模式（编辑页随系统自动切换黑白，切换时自动保存）；设置页新增浅色/深色模式编辑器颜色自定义；小组件颜色不受影响
 - **v5.8** 修复短内容误滚动半行（内边距移入列表项）；新增可调防误触余量设置（默认 4dp）
 - **v5.7** 小部件整段单条渲染：行高正常、长内容滚动、短内容整块可点击
 - **v5.6** 修复 MIUI 加载（回归 ListView）；空白区按尺寸自动补齐可点击；失焦即保存并弹 Toast
@@ -76,14 +78,15 @@ hellowidget/
 │   └── src/main/
 │       ├── AndroidManifest.xml    # 清单（Application/Activity/小组件 Receiver/Service）
 │       ├── java/moe/hellowidget/
-│       │   ├── MainActivity.kt    # 编辑器 + 保存流程（onStop 保存，返回键先存后退）
-│       │   ├── SettingsActivity.kt# 小组件外观设置页（含 RGB 取色）
-│       │   ├── HelloWidgetApp.kt  # Application：初始化全局 DataStore
+│       │   ├── MainActivity.kt    # 编辑器 + 保存流程（onStop 保存，返回键先存后退；深色模式切换自动保存）
+│       │   ├── SettingsActivity.kt# 外观设置页（小组件 + 编辑器颜色，含 RGB 取色）
+│       │   ├── EditorSettings.kt  # 编辑器颜色设置存取（浅色/深色模式各自背景色与文字色）
+│       │   ├── HelloWidgetApp.kt  # Application：初始化全局 DataStore + 跟随系统深色模式
 │       │   ├── ContentStore.kt    # DataStore 原子写入 + CRC32 序列化 + 旧数据迁移
 │       │   ├── TextWidgetProvider.kt  # 小组件 Provider（绑定数据源/背景色/点击）
 │       │   ├── TextWidgetService.kt   # 绑定式数据服务（按行渲染文本）
 │       │   └── WidgetSettings.kt  # 外观设置存取
-│       └── res/                   # 布局、字符串、主题、widget_info
+│       └── res/                   # 布局、字符串、主题（含 values-night 深色主题）
 ├── build.gradle.kts               # 根构建配置（AGP 8.2.2, Kotlin 1.9.22）
 ├── settings.gradle.kts
 ├── gradle.properties

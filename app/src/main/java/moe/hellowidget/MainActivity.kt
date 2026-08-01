@@ -3,6 +3,7 @@ package moe.hellowidget
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -157,7 +158,29 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         openingSettings = false
         savedOnLeave = false
+        applyEditorColors()
     }
+
+    /**
+     * 按当前系统浅色/深色模式应用用户自定义的编辑器背景色与文字色。
+     * 每次回到前台（含从设置页返回、深色模式重建后）都会重新应用。
+     */
+    private fun applyEditorColors() {
+        val night = isNightMode()
+        val bg = EditorSettings.bg(this, night)
+        val text = EditorSettings.textColor(this, night)
+        binding.editor.setTextColor(text)
+        // 「无背景」（透明）= 跟随系统主题背景（浅色=白，深色=黑）
+        binding.editorScroll.setBackgroundColor(if (bg == Color.TRANSPARENT) Color.TRANSPARENT else bg)
+        // 提示文字用文字色半透明，保证任意配色下都清晰可见
+        binding.editor.setHintTextColor(
+            Color.argb(128, Color.red(text), Color.green(text), Color.blue(text))
+        )
+    }
+
+    private fun isNightMode(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
 
     /**
      * 深色模式切换（系统设置变更）：本 Activity 在 Manifest 中声明了

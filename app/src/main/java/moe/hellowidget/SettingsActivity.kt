@@ -45,6 +45,12 @@ class SettingsActivity : AppCompatActivity() {
     private var bgAlpha = WidgetSettings.DEFAULT_BG_ALPHA
     private var fillMarginDp = WidgetSettings.DEFAULT_FILL_MARGIN_DP
 
+    // 编辑器颜色（浅色/深色模式各自的背景色与文字色，与小组件颜色独立）
+    private var editorLightBg = EditorSettings.DEFAULT_LIGHT_BG
+    private var editorLightText = EditorSettings.DEFAULT_LIGHT_TEXT
+    private var editorDarkBg = EditorSettings.DEFAULT_DARK_BG
+    private var editorDarkText = EditorSettings.DEFAULT_DARK_TEXT
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivitySettingsBinding.inflate(layoutInflater)
@@ -59,6 +65,7 @@ class SettingsActivity : AppCompatActivity() {
         setupFillMarginSeek()
         renderTextSwatches()
         renderBgSwatches()
+        renderEditorSwatches()
         updatePreview()
 
         binding.btnReset.setOnClickListener { resetSettings() }
@@ -72,6 +79,10 @@ class SettingsActivity : AppCompatActivity() {
         bgColor = WidgetSettings.bgColor(this)
         bgAlpha = WidgetSettings.bgAlpha(this)
         fillMarginDp = WidgetSettings.fillMarginDp(this)
+        editorLightBg = EditorSettings.lightBg(this)
+        editorLightText = EditorSettings.lightText(this)
+        editorDarkBg = EditorSettings.darkBg(this)
+        editorDarkText = EditorSettings.darkText(this)
     }
 
     /** 保存全部设置并立即刷新桌面小组件 */
@@ -82,6 +93,10 @@ class SettingsActivity : AppCompatActivity() {
             .putInt(WidgetSettings.KEY_BG_COLOR, bgColor)
             .putInt(WidgetSettings.KEY_BG_ALPHA, bgAlpha)
             .putInt(WidgetSettings.KEY_FILL_MARGIN_DP, fillMarginDp)
+            .putInt(EditorSettings.KEY_LIGHT_BG, editorLightBg)
+            .putInt(EditorSettings.KEY_LIGHT_TEXT, editorLightText)
+            .putInt(EditorSettings.KEY_DARK_BG, editorDarkBg)
+            .putInt(EditorSettings.KEY_DARK_TEXT, editorDarkText)
             .apply()
         TextWidgetProvider.updateWidgets(this)
     }
@@ -192,6 +207,46 @@ class SettingsActivity : AppCompatActivity() {
         // 未选择背景时，透明度滑杆不可用
         binding.bgAlphaSeek.isEnabled = bgColor != Color.TRANSPARENT
         binding.bgAlphaLabel.isEnabled = bgColor != Color.TRANSPARENT
+    }
+
+    // ---------- 编辑器颜色（浅色/深色模式各自的背景色与文字色） ----------
+
+    /** 渲染一行色板（预设色块 + 自定义取色按钮），点击即时保存 */
+    private fun renderSwatchRow(
+        container: LinearLayout,
+        palette: List<Int>,
+        selected: Int,
+        pickerTitleRes: Int,
+        onPick: (Int) -> Unit
+    ) {
+        container.removeAllViews()
+        palette.forEach { color ->
+            container.addView(makeSwatch(color, color == selected) { onPick(it) })
+        }
+        container.addView(
+            makeCustomSwatch(selected !in palette) {
+                showColorDialog(getString(pickerTitleRes), selected) { color -> onPick(color) }
+            }
+        )
+    }
+
+    private fun renderEditorSwatches() {
+        renderSwatchRow(
+            binding.editorLightBgSwatches, bgColors, editorLightBg,
+            R.string.color_picker_title_editor_light_bg
+        ) { editorLightBg = it; persist() }
+        renderSwatchRow(
+            binding.editorLightTextSwatches, textColors, editorLightText,
+            R.string.color_picker_title_editor_light_text
+        ) { editorLightText = it; persist() }
+        renderSwatchRow(
+            binding.editorDarkBgSwatches, bgColors, editorDarkBg,
+            R.string.color_picker_title_editor_dark_bg
+        ) { editorDarkBg = it; persist() }
+        renderSwatchRow(
+            binding.editorDarkTextSwatches, textColors, editorDarkText,
+            R.string.color_picker_title_editor_dark_text
+        ) { editorDarkText = it; persist() }
     }
 
     /** 一个颜色方块；选中时显示高亮边框 */
@@ -320,12 +375,17 @@ class SettingsActivity : AppCompatActivity() {
         bgColor = WidgetSettings.DEFAULT_BG_COLOR
         bgAlpha = WidgetSettings.DEFAULT_BG_ALPHA
         fillMarginDp = WidgetSettings.DEFAULT_FILL_MARGIN_DP
+        editorLightBg = EditorSettings.DEFAULT_LIGHT_BG
+        editorLightText = EditorSettings.DEFAULT_LIGHT_TEXT
+        editorDarkBg = EditorSettings.DEFAULT_DARK_BG
+        editorDarkText = EditorSettings.DEFAULT_DARK_TEXT
         persist()
         binding.fontSizeSeek.progress = (fontSp - 10).toInt()
         binding.bgAlphaSeek.progress = bgAlpha
         binding.fillMarginSeek.progress = fillMarginDp
         renderTextSwatches()
         renderBgSwatches()
+        renderEditorSwatches()
         updatePreview()
     }
 
