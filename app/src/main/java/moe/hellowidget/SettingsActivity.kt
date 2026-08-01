@@ -211,7 +211,7 @@ class SettingsActivity : AppCompatActivity() {
 
     // ---------- 编辑器颜色（浅色/深色模式各自的背景色与文字色） ----------
 
-    /** 渲染一行色板（预设色块 + 自定义取色按钮），点击即时保存 */
+    /** 渲染一行色板（预设色块 + 自定义取色按钮），点击即时保存并重绘选中边框 */
     private fun renderSwatchRow(
         container: LinearLayout,
         palette: List<Int>,
@@ -221,11 +221,18 @@ class SettingsActivity : AppCompatActivity() {
     ) {
         container.removeAllViews()
         palette.forEach { color ->
-            container.addView(makeSwatch(color, color == selected) { onPick(it) })
+            container.addView(makeSwatch(color, color == selected) {
+                onPick(it)
+                // 重绘整行，让选中边框立即同步（与小组件色板 renderTextSwatches/renderBgSwatches 逻辑一致）
+                renderSwatchRow(container, palette, it, pickerTitleRes, onPick)
+            })
         }
         container.addView(
             makeCustomSwatch(selected !in palette) {
-                showColorDialog(getString(pickerTitleRes), selected) { color -> onPick(color) }
+                showColorDialog(getString(pickerTitleRes), selected) { color ->
+                    onPick(color)
+                    renderSwatchRow(container, palette, color, pickerTitleRes, onPick)
+                }
             }
         )
     }
