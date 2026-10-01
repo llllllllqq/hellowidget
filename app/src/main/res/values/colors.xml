@@ -8,4 +8,6 @@
     <color name="settings_text">#000000</color>
     <color name="settings_secondary">#888888</color>
     <color name="settings_divider">#DDDDDD</color>
+    <!-- 风险提示（WebDAV 同步页的明文 http 警告），浅色模式 -->
+    <color name="settings_warning">#D32F2F</color>
 </resources>

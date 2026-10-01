@@ -21,6 +21,10 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import moe.hellowidget.databinding.ActivityMainBinding
+import moe.hellowidget.sync.SyncLauncher
+import moe.hellowidget.sync.SyncManager
+import moe.hellowidget.sync.SyncSettings
+import moe.hellowidget.sync.SyncTrigger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,6 +72,13 @@ class MainActivity : AppCompatActivity() {
 
     /** 「已达最大长度」提示的限流时间戳，避免连续输入时 Toast 刷屏 */
     private var lastTooLongToastAt = 0L
+
+    /**
+     * 本次载入内容时记录的「云端覆盖本地」时间戳（[SyncSettings.contentReplacedAt]）。
+     * onResume 发现它变了，说明同步页用云端内容替换了本地文件，编辑器需要重新载入。
+     * 未使用同步功能时该值恒为 0，v7.1 的行为完全不变。
+     */
+    private var loadedContentVersion = 0L
 
     /**
      * 内容长度上限（字符）。
@@ -124,6 +135,8 @@ class MainActivity : AppCompatActivity() {
 
         // 异步恢复上次保存的内容
         lifecycleScope.launch {
+            // 记录「云端覆盖本地」的版本号：读取内容之前先取，避免与并发的替换动作错位
+            loadedContentVersion = SyncSettings.contentReplacedAt(this@MainActivity)
             val savedText = withContext(Dispatchers.IO) { ContentStore.read() }
             loadCompleted = true
             if (!editorTouched) {
@@ -141,12 +154,20 @@ class MainActivity : AppCompatActivity() {
                 binding.editor.setSelection(0)
             }
             requestImeShow()
+            // 打开应用时检查上次同步是否成功（失败或还有未上传的改动就补一次）
+            maybeSyncOnOpen(savedText)
         }
 
         // 打开小组件外观设置页
         binding.btnSettings.setOnClickListener {
             openingSettings = true
             startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
+        // 打开 WebDAV 同步设置页
+        binding.btnSync.setOnClickListener {
+            openingSettings = true
+            startActivity(SyncActivity.intent(this))
         }
 
         /**
@@ -158,9 +179,10 @@ class MainActivity : AppCompatActivity() {
                 if (exitingByBack) return // 防重入：保存/退出流程进行中忽略再次返回
                 exitingByBack = true
                 if (shouldPersist()) {
-                    saveContent(showToast = true) { finish() }
+                    saveContent(showToast = true, syncAfter = true) { finish() }
                 } else {
                     // 尚未加载出任何内容且用户没输入过：磁盘上已有完整数据，无需保存
+                    syncAfterLeave()
                     finish()
                 }
             }
@@ -212,7 +234,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun saveOnLeave() {
         savedOnLeave = true
-        saveContent(showToast = true)
+        saveContent(showToast = true, syncAfter = true)
     }
 
     /**
@@ -225,7 +247,11 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         if (!exitingByBack && !savedOnLeave && shouldPersist()) {
-            saveContent(showToast = !openingSettings && !isChangingConfigurations)
+            val leavingApp = !openingSettings && !isChangingConfigurations
+            saveContent(showToast = leavingApp, syncAfter = leavingApp)
+        } else if (!exitingByBack && !savedOnLeave && !openingSettings && !isChangingConfigurations) {
+            // 没有内容需要保存（例如空内容且未输入）也要走一次同步检查
+            syncAfterLeave()
         }
     }
 
@@ -234,6 +260,7 @@ class MainActivity : AppCompatActivity() {
         openingSettings = false
         savedOnLeave = false
         applyEditorColors()
+        reloadIfContentReplaced()
     }
 
     /**
@@ -362,8 +389,11 @@ class MainActivity : AppCompatActivity() {
      * 2. updateData 挂起直到内容真正写盘（fsync + 原子重命名）成功后返回
      * 3. 写盘结果确认后，才刷新桌面小组件、发送 Toast
      * 4. 失败时清除 savedOnLeave，让后续 onStop 有机会重试（旧实现失败后不再重试）
+     *
+     * @param syncAfter v7.2：写盘成功后触发一次 WebDAV 同步（只在「离开编辑」的场景为 true；
+     *   应用内跳设置页、旋转、深色模式重建都不会触发）
      */
-    private fun saveContent(showToast: Boolean, onDone: () -> Unit = {}) {
+    private fun saveContent(showToast: Boolean, syncAfter: Boolean = false, onDone: () -> Unit = {}) {
         val text = binding.editor.text.toString()
         val appContext = applicationContext
         ContentStore.saveScope.launch {
@@ -376,6 +406,11 @@ class MainActivity : AppCompatActivity() {
                 // 无论成功与否都刷新小组件（失败时小组件继续显示磁盘上的旧内容，保持一致）
                 TextWidgetProvider.updateWidgets(appContext)
 
+                // 只在写盘成功后才上传：否则会把磁盘上的旧内容推到云端
+                if (ok && syncAfter) {
+                    SyncLauncher.request(appContext, SyncTrigger.CLOSE_EDITOR)
+                }
+
                 if (showToast) {
                     Toast.makeText(
                         appContext,
@@ -385,6 +420,40 @@ class MainActivity : AppCompatActivity() {
                 }
                 onDone()
             }
+        }
+    }
+
+    /** 没有内容需要保存（空内容且用户没输入过）时的离开同步：同样只在离开应用的场景触发 */
+    private fun syncAfterLeave() {
+        SyncLauncher.request(applicationContext, SyncTrigger.CLOSE_EDITOR)
+    }
+
+    /**
+     * 打开应用时补一次同步：上次没成功、或本机还有没上传的改动。
+     * 幂等、异步、不阻塞输入（30 分钟节流在 SyncManager 里），失败只是记状态 + 发通知。
+     */
+    private fun maybeSyncOnOpen(localText: String) {
+        if (!SyncManager.needsSyncOnOpen(this, localText)) return
+        SyncLauncher.request(this, SyncTrigger.APP_OPEN)
+    }
+
+    /**
+     * 同步页选择「用云端覆盖本地」后，磁盘内容会变成云端那份；本 Activity 还活在后台时
+     * 它手里的文本已经过期。这里在回到前台时同步一次，避免用户看到旧内容又把它覆盖回去。
+     * 未使用同步功能时该时间戳恒为 0，本方法直接返回。
+     */
+    private fun reloadIfContentReplaced() {
+        if (!loadCompleted) return
+        val version = SyncSettings.contentReplacedAt(this)
+        if (version == loadedContentVersion) return
+        loadedContentVersion = version
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) { ContentStore.read() }
+            binding.editor.setText(text)
+            binding.editor.setSelection(0)
+            Toast.makeText(
+                applicationContext, R.string.sync_remote_applied, Toast.LENGTH_SHORT
+            ).show()
         }
     }
 

@@ -16,7 +16,7 @@
     <string name="save_failed">Save failed, please try again</string>
 
     <!-- Settings -->
-    <string name="settings_button">⚙ Widget appearance</string>
+    <string name="settings_button">⚙ Appearance</string>
     <string name="settings_title">Widget appearance</string>
     <string name="settings_preview">Live preview</string>
     <string name="settings_preview_sample">Sample text: font, color and background follow your settings live.\nThe second line shows the line spacing.</string>
@@ -56,4 +56,87 @@
     <string name="color_picker_title_editor_light_text">Custom light-mode editor text color</string>
     <string name="color_picker_title_editor_dark_bg">Custom dark-mode editor background</string>
     <string name="color_picker_title_editor_dark_text">Custom dark-mode editor text color</string>
+
+    <!-- ===== WebDAV sync (v7.2) ===== -->
+    <string name="sync_button">☁ WebDAV sync</string>
+    <string name="sync_title">WebDAV sync</string>
+    <string name="sync_subtitle">Uploads your latest content to your own WebDAV. Automatic sync only uploads — the cloud copy never overwrites this device.</string>
+    <string name="sync_enable">Enable WebDAV sync</string>
+    <string name="sync_server_label">Server directory URL</string>
+    <string name="sync_server_hint">https://dav.example.com/dav/hellowidget/</string>
+    <string name="sync_server_examples">Nextcloud: https://your-host/remote.php/dav/files/&lt;user&gt;/&lt;folder&gt;/\nSynology/NAS: http://192.168.1.5:5005/dav/&lt;folder&gt;/ (plain http is flagged as risky)\nThe URL must point to a directory and end with /; do not put the user name or password in it.</string>
+    <string name="sync_file_name_label">File name</string>
+    <string name="sync_file_name_hint">note.txt</string>
+    <string name="sync_username_label">User name</string>
+    <string name="sync_password_label">Password</string>
+    <string name="sync_password_hint">An app-specific password is recommended so it can be revoked on its own. It is stored in the app-private directory and is excluded from cloud backup and device transfer.</string>
+    <string name="sync_save">Save settings</string>
+    <string name="sync_now">Sync now (ignores the 30-minute limit)</string>
+    <string name="sync_trust_button">Trust and remember this certificate fingerprint</string>
+    <string name="sync_status_section">Sync status</string>
+    <string name="sync_behavior_hint">Sync runs when you close the editor and when the app starts (only if the previous attempt failed). Automatic syncs are at least 30 minutes apart so the server is not hammered; "Sync now" is not limited. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
+    <string name="sync_saved">Settings saved</string>
+    <string name="sync_state_enabled">Status: enabled</string>
+    <string name="sync_state_disabled">Status: disabled</string>
+    <string name="sync_effective_url">Effective URL: %1$s</string>
+    <string name="sync_status_never">Never synced yet</string>
+    <string name="sync_status_success">Last sync succeeded: %1$s</string>
+    <string name="sync_status_failed">Last sync failed: %1$s %2$s</string>
+    <string name="sync_status_conflict">The cloud copy was modified elsewhere — waiting for your decision</string>
+    <string name="sync_status_running">Syncing…</string>
+    <string name="sync_skip_disabled">Sync is disabled — skipped</string>
+    <string name="sync_skip_not_configured">Settings are incomplete — skipped</string>
+    <string name="sync_skip_throttled">Less than 30 minutes since the last sync — skipped (changes go up at the next allowed moment or via "Sync now")</string>
+    <string name="sync_skip_conflict">A conflict is pending — automatic sync is paused</string>
+    <string name="sync_time_never">never</string>
+    <string name="sync_remote_applied">Local content replaced with the cloud copy</string>
+    <string name="sync_cleartext_warning">⚠ Plain http is in use: your password and notes travel unencrypted and can be read by others on the same network. Use https when possible (self-signed certificates can be pinned below).</string>
+    <string name="sync_tls_pending">Server certificate fingerprint (not trusted yet): %1$s</string>
+    <string name="sync_tls_trusted">Trusted certificate fingerprint: %1$s</string>
+    <string name="sync_trust_dialog_title">Trust this server certificate?</string>
+    <string name="sync_trust_dialog_message">Server certificate fingerprint:\n%1$s\n\nOnly trust it if you are sure it belongs to your own server. Afterwards only this fingerprint is accepted, and a changed fingerprint asks for confirmation again.</string>
+    <string name="sync_trust_confirm">Trust and remember</string>
+    <string name="sync_trusted">Fingerprint remembered</string>
+    <string name="sync_conflict_dialog_title">The cloud copy was modified</string>
+    <string name="sync_conflict_dialog_message">%1$s was modified on the server by another device. To make sure nothing is lost, both versions are kept (the conflict copy is named xxx.conflict-date-time.txt). Choose which one to keep:</string>
+    <string name="sync_conflict_keep_local">Keep local</string>
+    <string name="sync_conflict_use_remote">Overwrite local with cloud</string>
+    <string name="sync_conflict_later">Decide later</string>
+
+    <!-- WebDAV sync: notifications -->
+    <string name="sync_notif_channel_name">WebDAV sync</string>
+    <string name="sync_notif_channel_description">Sync progress and conflicts that need a decision</string>
+    <string name="sync_notif_progress_title">Syncing to WebDAV</string>
+    <string name="sync_notif_progress_text">Uploading your latest content…</string>
+    <string name="sync_notif_failed_title">Sync failed</string>
+    <string name="sync_notif_conflict_title">Your decision is needed: the cloud copy changed</string>
+    <string name="sync_notif_conflict_text">The cloud copy of %1$s was modified by another device</string>
+    <string name="sync_notif_conflict_big_text">%1$s was modified on the server by another device. Choose which version to keep — both are preserved as separate copies, so nothing is lost.</string>
+
+    <!-- WebDAV sync: errors and validation -->
+    <string name="sync_error_not_configured">Sync settings are incomplete — check the server URL and file name</string>
+    <string name="sync_error_unauthorized">Authentication failed: wrong user name or password (Jianguoyun and others need an app-specific password)</string>
+    <string name="sync_error_forbidden">No permission to access that directory</string>
+    <string name="sync_error_not_found">The cloud file or directory does not exist</string>
+    <string name="sync_error_parent_not_found">The parent directory does not exist — create it on the WebDAV server first</string>
+    <string name="sync_error_not_supported">The server does not support that operation (it may not be WebDAV)</string>
+    <string name="sync_error_precondition">The cloud copy changed during the sync — paused to avoid overwriting it</string>
+    <string name="sync_error_locked">The cloud file is locked — try again later</string>
+    <string name="sync_error_storage">Not enough space in the cloud</string>
+    <string name="sync_error_server">Server error</string>
+    <string name="sync_error_redirect">The server wants to redirect — enter the final URL directly</string>
+    <string name="sync_error_network">Network unreachable — check your connection and the server URL</string>
+    <string name="sync_error_timeout">Connection timed out</string>
+    <string name="sync_error_tls_untrusted">The server certificate is not trusted</string>
+    <string name="sync_error_tls">TLS handshake failed</string>
+    <string name="sync_error_too_large">The cloud file exceeds the 1 MiB limit and was not downloaded</string>
+    <string name="sync_error_bad_response">The server returned an unparsable response</string>
+    <string name="sync_error_io">Network read/write failed</string>
+    <string name="sync_error_empty_url">Please enter the server directory URL</string>
+    <string name="sync_error_invalid_url">Cannot parse the URL: %1$s</string>
+    <string name="sync_error_scheme">Only http:// or https:// is supported, got: %1$s</string>
+    <string name="sync_error_missing_host">The URL has no host name</string>
+    <string name="sync_error_url_query">The URL must not contain a ? query string</string>
+    <string name="sync_error_empty_file_name">Please enter a file name</string>
+    <string name="sync_error_invalid_file_name">Invalid file name: %1$s (must not contain / \\ : * ? " &lt; &gt; |)</string>
 </resources>

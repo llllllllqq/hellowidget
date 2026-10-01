@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    网络安全配置（v7.2 WebDAV 同步引入）。
+
+    两个刻意的决定，都是为了让「用户自己的 WebDAV」真的能连上：
+
+    1. 允许明文 http（base-config cleartextTrafficPermitted="true"）
+       Android 9（API 28）起默认禁止明文流量。自建 NAS 上的 WebDAV 绝大多数只有
+       http://192.168.x.x，不开这个开关就完全无法连接，功能等于不可用。
+       官方文档把 base-config 的明文开关列为「应尽量避免」的不安全配置，
+       因此界面会在用户填写 http:// 地址时给出常驻的红色风险提示，
+       并且客户端**绝不自动跟随跳转**（防止 Basic 凭据被 302 带到第三方域名）。
+
+    2. 信任用户安装的 CA（certificates src="user"）
+       Android 7（API 24）起应用默认不再信任用户证书库。加回这一项后，
+       用户可以把自建 NAS 的 CA 装进系统证书库即可正常使用 https，
+       而不必依赖应用内的「信任自签名证书」。应用内的自签名支持是
+       「首次连接显示指纹 → 用户确认 → 按指纹固定（TOFU）」，
+       不是信任所有证书，也不会用 setDefaultSSLSocketFactory 影响全局。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -177,7 +177,7 @@ jobs:
   instrumented:
     name: Instrumented Tests (emulator)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -209,6 +209,12 @@ jobs:
       # enable-hw-keyboard=false：接了「硬件键盘」的设备系统不显示软键盘，
       # 本用例验证的正是软键盘，必须关掉（对应官方文档的 Note）。
       # target=default 用 AOSP 镜像：自带 AOSP 输入法，且没有 Gboard 首次启动弹窗干扰。
+      #
+      # v7.2：同一个 script 内先拉起仓库自带的零依赖 Python WebDAV 服务器
+      # （.github/scripts/webdav_stub_server.py，只监听 127.0.0.1；模拟器通过 10.0.2.2 访问），
+      # 再把地址通过 instrumentation 参数传给 WebDAV 端到端测试。
+      # 服务器端会记录每个请求，测试据此断言「真的用了 HEAD/MKCOL/PUT/MOVE/COPY」
+      # ——这是「支持 WebDAV」而不是「碰巧能传文件」的硬证据。
       - name: Run instrumented tests on emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
@@ -219,7 +225,38 @@ jobs:
           disable-spellchecker: true
           enable-hw-keyboard: false
           emulator-boot-timeout: 900
-          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+          script: |
+            set -uo pipefail
+            PORT=8080
+            STUB_LOG=/tmp/webdav_stub.log
+            STUB_OUT=/tmp/webdav_stub_stdout.log
+            python3 .github/scripts/webdav_stub_server.py --port "$PORT" \
+              --user test --password test --log "$STUB_LOG" > "$STUB_OUT" 2>&1 &
+            SERVER_PID=$!
+            READY=0
+            for _ in $(seq 1 20); do
+              if curl -sf "http://127.0.0.1:${PORT}/__control__/count" > /dev/null 2>&1; then READY=1; break; fi
+              sleep 0.5
+            done
+            if [ "$READY" != "1" ]; then
+              echo "::error::WebDAV 桩服务器未就绪"
+              cat "$STUB_OUT" || true
+              kill "$SERVER_PID" 2>/dev/null || true
+              exit 1
+            fi
+            echo "WebDAV 桩服务器已就绪：http://127.0.0.1:${PORT}（模拟器侧为 10.0.2.2）"
+
+            ./gradlew :app:connectedDebugAndroidTest \
+              -Pandroid.testInstrumentationRunnerArguments.webdavUrl="http://10.0.2.2:${PORT}/dav/" \
+              -Pandroid.testInstrumentationRunnerArguments.webdavControlUrl="http://10.0.2.2:${PORT}/__control__/" \
+              --stacktrace
+            STATUS=$?
+
+            echo "===== WebDAV 桩服务器请求日志（WebDAV 动词实证）====="
+            cat "$STUB_LOG" || true
+            kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+            exit $STATUS
 
       - name: Instrumented test summary
         if: always()

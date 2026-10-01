@@ -5,4 +5,6 @@
     <color name="settings_text">#E6E6E6</color>
     <color name="settings_secondary">#9E9E9E</color>
     <color name="settings_divider">#333333</color>
+    <!-- 深色模式下用更亮的红，保证在深色背景上依然清晰 -->
+    <color name="settings_warning">#FF8A80</color>
 </resources>

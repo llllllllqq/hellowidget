@@ -12,7 +12,7 @@
     <string name="save_failed">保存失败，请重试</string>
 
     <!-- 设置页 -->
-    <string name="settings_button">⚙ 小组件外观设置</string>
+    <string name="settings_button">⚙ 外观设置</string>
     <string name="settings_title">小组件外观设置</string>
     <string name="settings_preview">实时预览</string>
     <string name="settings_preview_sample">示例文字：字体、颜色、背景会实时跟随设置变化。\n第二行用于观察行距效果。</string>
@@ -52,4 +52,87 @@
     <string name="color_picker_title_editor_light_text">自定义浅色模式编辑器文字颜色</string>
     <string name="color_picker_title_editor_dark_bg">自定义深色模式编辑器背景颜色</string>
     <string name="color_picker_title_editor_dark_text">自定义深色模式编辑器文字颜色</string>
+
+    <!-- ===== WebDAV 同步（v7.2） ===== -->
+    <string name="sync_button">☁ WebDAV 同步</string>
+    <string name="sync_title">WebDAV 同步</string>
+    <string name="sync_subtitle">把最新内容上传到你自己的 WebDAV。自动同步只上传，绝不用云端内容覆盖本机。</string>
+    <string name="sync_enable">启用 WebDAV 同步</string>
+    <string name="sync_server_label">服务器目录地址</string>
+    <string name="sync_server_hint">https://dav.example.com/dav/hellowidget/</string>
+    <string name="sync_server_examples">坚果云：https://dav.jianguoyun.com/dav/你的目录/\nNextcloud：https://你的域名/remote.php/dav/files/用户名/目录/\n局域网 NAS：http://192.168.1.5:5005/dav/目录/（明文 http 会被警告）\n地址要指向「目录」并以 / 结尾；不要在地址里写用户名和口令。</string>
+    <string name="sync_file_name_label">文件名</string>
+    <string name="sync_file_name_hint">note.txt</string>
+    <string name="sync_username_label">用户名</string>
+    <string name="sync_password_label">口令</string>
+    <string name="sync_password_hint">建议在 WebDAV 侧生成「应用专用密码」，便于随时单独吊销。口令只存在应用私有目录，且已被排除在系统备份与换机迁移之外。</string>
+    <string name="sync_save">保存设置</string>
+    <string name="sync_now">立即同步（不受 30 分钟限制）</string>
+    <string name="sync_trust_button">信任并记住此证书指纹</string>
+    <string name="sync_status_section">同步状态</string>
+    <string name="sync_behavior_hint">同步时机：关闭编辑器后、打开应用时（上次未成功才补）。自动同步两次之间至少间隔 30 分钟，避免被服务器限流；「立即同步」不受限制。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
+    <string name="sync_saved">设置已保存</string>
+    <string name="sync_state_enabled">状态：已启用</string>
+    <string name="sync_state_disabled">状态：未启用</string>
+    <string name="sync_effective_url">实际使用地址：%1$s</string>
+    <string name="sync_status_never">尚未同步过</string>
+    <string name="sync_status_success">上次同步成功：%1$s</string>
+    <string name="sync_status_failed">上次同步失败：%1$s %2$s</string>
+    <string name="sync_status_conflict">云端内容被外部修改，等待你决定保留哪一份</string>
+    <string name="sync_status_running">正在同步…</string>
+    <string name="sync_skip_disabled">未启用同步，本次跳过</string>
+    <string name="sync_skip_not_configured">设置不完整，本次跳过</string>
+    <string name="sync_skip_throttled">距上次同步不足 30 分钟，本次跳过（改动会在下次允许时机或点击「立即同步」时上传）</string>
+    <string name="sync_skip_conflict">有待处理的冲突，自动同步已暂停</string>
+    <string name="sync_time_never">从未</string>
+    <string name="sync_remote_applied">已用云端内容替换本地</string>
+    <string name="sync_cleartext_warning">⚠ 当前使用明文 http：口令与笔记内容会以未加密方式经过网络，同一网络中的他人可能读取。条件允许时请改用 https（自建证书可在下方信任指纹）。</string>
+    <string name="sync_tls_pending">服务器证书指纹（尚未信任）：%1$s</string>
+    <string name="sync_tls_trusted">已信任证书指纹：%1$s</string>
+    <string name="sync_trust_dialog_title">信任服务器证书？</string>
+    <string name="sync_trust_dialog_message">服务器证书指纹：\n%1$s\n\n只有在你确认这就是自己服务器的证书时才应信任。信任后本应用只接受该指纹的证书，指纹变化会再次要求确认。</string>
+    <string name="sync_trust_confirm">信任并记住</string>
+    <string name="sync_trusted">已记住该证书指纹</string>
+    <string name="sync_conflict_dialog_title">云端内容已被修改</string>
+    <string name="sync_conflict_dialog_message">%1$s 在云端被其他设备修改过。为避免丢失数据，两边版本都会各留一份（冲突副本命名为 xxx.conflict-日期-时间.txt）。请选择保留哪一份：</string>
+    <string name="sync_conflict_keep_local">保留本地</string>
+    <string name="sync_conflict_use_remote">用云端覆盖本地</string>
+    <string name="sync_conflict_later">稍后处理</string>
+
+    <!-- WebDAV 同步：通知 -->
+    <string name="sync_notif_channel_name">WebDAV 同步</string>
+    <string name="sync_notif_channel_description">同步进度与需要处理的冲突</string>
+    <string name="sync_notif_progress_title">正在同步到 WebDAV</string>
+    <string name="sync_notif_progress_text">正在上传最新内容…</string>
+    <string name="sync_notif_failed_title">同步失败</string>
+    <string name="sync_notif_conflict_title">需要你决定：云端内容已被修改</string>
+    <string name="sync_notif_conflict_text">%1$s 的云端版本已被其他设备修改</string>
+    <string name="sync_notif_conflict_big_text">%1$s 在云端被其他设备修改过。请选择保留哪一份；两边版本都会各留一份副本，不会丢数据。</string>
+
+    <!-- WebDAV 同步：错误与校验 -->
+    <string name="sync_error_not_configured">同步设置不完整，请检查服务器地址与文件名</string>
+    <string name="sync_error_unauthorized">认证失败：用户名或口令不正确（坚果云等需要应用专用密码）</string>
+    <string name="sync_error_forbidden">没有权限访问该目录</string>
+    <string name="sync_error_not_found">云端文件或目录不存在</string>
+    <string name="sync_error_parent_not_found">上级目录不存在，请先在 WebDAV 上建好目录</string>
+    <string name="sync_error_not_supported">服务器不支持该操作（可能不是 WebDAV 服务）</string>
+    <string name="sync_error_precondition">云端内容在同步过程中被修改，为避免覆盖已暂停</string>
+    <string name="sync_error_locked">云端文件被锁定，请稍后重试</string>
+    <string name="sync_error_storage">云端空间不足</string>
+    <string name="sync_error_server">服务器内部错误</string>
+    <string name="sync_error_redirect">服务器要求跳转，请直接填写最终地址</string>
+    <string name="sync_error_network">网络不可达，请检查网络与服务器地址</string>
+    <string name="sync_error_timeout">连接超时</string>
+    <string name="sync_error_tls_untrusted">服务器证书不受信任</string>
+    <string name="sync_error_tls">TLS 握手失败</string>
+    <string name="sync_error_too_large">云端文件超过 1 MiB 上限，未下载</string>
+    <string name="sync_error_bad_response">服务器返回了无法解析的响应</string>
+    <string name="sync_error_io">网络读写失败</string>
+    <string name="sync_error_empty_url">请填写服务器目录地址</string>
+    <string name="sync_error_invalid_url">地址无法解析：%1$s</string>
+    <string name="sync_error_scheme">只支持 http:// 或 https://，当前为：%1$s</string>
+    <string name="sync_error_missing_host">地址缺少主机名</string>
+    <string name="sync_error_url_query">地址不要带 ? 查询参数</string>
+    <string name="sync_error_empty_file_name">请填写文件名</string>
+    <string name="sync_error_invalid_file_name">文件名非法：%1$s（不能包含 / \\ : * ? " &lt; &gt; |）</string>
 </resources>

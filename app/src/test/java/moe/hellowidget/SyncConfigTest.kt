@@ -1,0 +1,137 @@
+package moe.hellowidget
+
+import moe.hellowidget.sync.ConfigError
+import moe.hellowidget.sync.ConfigValidation
+import moe.hellowidget.sync.HttpDates
+import moe.hellowidget.sync.SyncConfig
+import moe.hellowidget.sync.SyncConfigValidator
+import moe.hellowidget.sync.UrlCodec
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * 配置校验 / URL 编码 / HTTP 日期解析的单元测试（纯 JVM）。
+ *
+ * 这些是最容易被忽略、又最能坑用户的一层：地址里少一个斜杠、文件名带空格没编码，
+ * 表现出来都是「同步失败」而不是「参数写错了」。
+ */
+class SyncConfigTest {
+
+    private fun ok(rawUrl: String, fileName: String = "note.txt"): SyncConfig {
+        val result = SyncConfigValidator.validate(rawUrl, fileName, "u", "p")
+        assertTrue("期望合法：$rawUrl，实际 $result", result is ConfigValidation.Ok)
+        return (result as ConfigValidation.Ok).config
+    }
+
+    private fun error(rawUrl: String, fileName: String = "note.txt"): ConfigError {
+        val result = SyncConfigValidator.validate(rawUrl, fileName, "u", "p")
+        assertTrue("期望非法：$rawUrl，实际 $result", result is ConfigValidation.Invalid)
+        return (result as ConfigValidation.Invalid).error
+    }
+
+    // ------------------------------------------------------------ 地址归一化
+
+    @Test
+    fun baseUrl_getsTrailingSlash() {
+        assertEquals("https://dav.example.com/dav/", ok("https://dav.example.com/dav").baseUrl)
+        assertEquals("https://dav.example.com/dav/", ok("https://dav.example.com/dav/").baseUrl)
+        assertEquals("https://dav.example.com/", ok("https://dav.example.com").baseUrl)
+        // 首尾空格会被裁掉（用户从浏览器复制地址时很常见）
+        assertEquals("https://dav.example.com/dav/", ok("  https://dav.example.com/dav  ").baseUrl)
+    }
+
+    @Test
+    fun baseUrl_keepsPortAndScheme() {
+        assertEquals("https://dav.example.com:8443/dav/", ok("https://dav.example.com:8443/dav").baseUrl)
+        assertEquals("http://192.168.1.5:5005/dav/", ok("http://192.168.1.5:5005/dav").baseUrl)
+    }
+
+    @Test
+    fun baseUrl_neverKeepsCredentialsInTheUrl() {
+        // 用户把用户名口令写进地址时，绝不把它落盘/显示出来（否则会进 prefs 与界面）
+        val config = ok("https://user:secret@dav.example.com/dav")
+        assertEquals("https://dav.example.com/dav/", config.baseUrl)
+        assertTrue(!config.baseUrl.contains("secret"))
+        assertTrue(!config.baseUrl.contains("user:"))
+    }
+
+    @Test
+    fun baseUrl_rejectsBadInput() {
+        assertEquals(ConfigError.EMPTY_URL, error("   "))
+        // 没有 scheme：不猜、不自动补 https，直接报错让用户改对
+        assertEquals(ConfigError.INVALID_URL, error("dav.example.com/dav"))
+        assertEquals(ConfigError.UNSUPPORTED_SCHEME, error("ftp://dav.example.com/dav"))
+        assertEquals(ConfigError.URL_HAS_QUERY, error("https://dav.example.com/dav?x=1"))
+        assertEquals(ConfigError.INVALID_URL, error("https://dav example.com/dav"))
+    }
+
+    @Test
+    fun cleartextFlag_drivesTheWarning() {
+        assertTrue(ok("http://192.168.1.5/dav").isCleartext)
+        assertTrue(!ok("https://dav.example.com/dav").isCleartext)
+    }
+
+    // ------------------------------------------------------------ 文件名
+
+    @Test
+    fun fileName_allowsCjkSpacesAndDots() {
+        assertEquals("我的 笔记.txt", ok("https://dav.example.com/dav", "我的 笔记.txt").fileName)
+        assertEquals("a.b.txt", ok("https://dav.example.com/dav", "a.b.txt").fileName)
+    }
+
+    @Test
+    fun fileName_rejectsPathSeparatorsAndTraversal() {
+        assertEquals(ConfigError.EMPTY_FILE_NAME, error("https://dav.example.com/dav", ""))
+        assertEquals(ConfigError.EMPTY_FILE_NAME, error("https://dav.example.com/dav", "   "))
+        assertEquals(ConfigError.INVALID_FILE_NAME, error("https://dav.example.com/dav", "../note.txt"))
+        assertEquals(ConfigError.INVALID_FILE_NAME, error("https://dav.example.com/dav", "sub/note.txt"))
+        assertEquals(ConfigError.INVALID_FILE_NAME, error("https://dav.example.com/dav", "sub\\note.txt"))
+        assertEquals(ConfigError.INVALID_FILE_NAME, error("https://dav.example.com/dav", ".."))
+        assertEquals(ConfigError.INVALID_FILE_NAME, error("https://dav.example.com/dav", "a:b.txt"))
+    }
+
+    // ------------------------------------------------------------ URL 编码
+
+    @Test
+    fun urlCodec_percentEncodesPathSegments() {
+        assertEquals("note.txt", UrlCodec.encodePathSegment("note.txt"))
+        assertEquals("AZaz09-._~", UrlCodec.encodePathSegment("AZaz09-._~"))
+        // 空格必须是 %20 而不是 +（+ 在路径里就是加号本身，服务器会找不到文件）
+        assertEquals("%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0.txt", UrlCodec.encodePathSegment("我的 笔记.txt"))
+        assertEquals("a%3Fb%23c%25d", UrlCodec.encodePathSegment("a?b#c%d"))
+    }
+
+    @Test
+    fun fileUrl_andConflictCopyUrl_areBuiltFromEncodedSegments() {
+        val config = SyncConfig(
+            baseUrl = "https://dav.example.com/dav/",
+            fileName = "我的 笔记.txt",
+            username = "u",
+            password = "p"
+        )
+        assertEquals("https://dav.example.com/dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0.txt", config.fileUrl)
+        assertEquals(
+            "https://dav.example.com/dav/note.conflict-20261001-031500.txt",
+            config.conflictCopyUrl("note.conflict-20261001-031500.txt")
+        )
+        assertEquals("dav.example.com", config.host)
+    }
+
+    // ------------------------------------------------------------ HTTP 日期
+
+    @Test
+    fun httpDates_parsesAndFormatsRfc1123() {
+        val expected = java.time.Instant.parse("2026-10-01T03:15:00Z").toEpochMilli()
+        val weekday = java.time.LocalDate.of(2026, 10, 1).dayOfWeek.name
+            .lowercase().replaceFirstChar { it.uppercase() }.take(3)
+        val header = "$weekday, 01 Oct 2026 03:15:00 GMT"
+
+        assertEquals(expected, HttpDates.parse(header))
+        assertEquals(header, HttpDates.format(expected))
+        // 无法解析 / 空值时返回 -1，由调用方降级，而不是抛异常打断同步
+        assertEquals(-1L, HttpDates.parse("not a date"))
+        assertEquals(-1L, HttpDates.parse(null))
+        assertEquals(-1L, HttpDates.parse(""))
+    }
+}
