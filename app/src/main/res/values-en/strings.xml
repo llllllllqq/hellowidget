@@ -65,7 +65,7 @@
     <string name="sync_server_label">Server directory URL</string>
     <string name="sync_server_hint">https://dav.example.com/dav/hellowidget/</string>
     <string name="sync_server_examples">Nextcloud: https://your-host/remote.php/dav/files/&lt;user&gt;/&lt;folder&gt;/\nSynology/NAS: http://192.168.1.5:5005/dav/&lt;folder&gt;/ (plain http is flagged as risky)\nThe URL must point to a directory and end with /; do not put the user name or password in it.</string>
-    <string name="sync_file_name_label">File name</string>
+    <string name="sync_file_name_label">File name (prefix + extension)</string>
     <string name="sync_file_name_hint">note.txt</string>
     <string name="sync_username_label">User name</string>
     <string name="sync_password_label">Password</string>
@@ -78,7 +78,8 @@
     <string name="sync_saved">Settings saved</string>
     <string name="sync_state_enabled">Status: enabled</string>
     <string name="sync_state_disabled">Status: disabled</string>
-    <string name="sync_effective_url">Effective URL: %1$s</string>
+    <string name="sync_effective_url">Writes to: %1$s</string>
+    <string name="sync_history_note">Every upload creates a new file with a unix timestamp; older files are left untouched (the cloud keeps the full history)</string>
     <string name="sync_status_never">Never synced yet</string>
     <string name="sync_status_success">Last sync succeeded: %1$s</string>
     <string name="sync_upload_succeeded">Uploaded to WebDAV</string>

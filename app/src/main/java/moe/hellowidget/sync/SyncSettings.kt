@@ -34,6 +34,7 @@ object SyncSettings {
     const val KEY_LAST_ATTEMPT_AT = "sync_last_attempt_at"
     const val KEY_LAST_SUCCESS_AT = "sync_last_success_at"
     const val KEY_LAST_UPLOADED_HASH = "sync_last_uploaded_hash"
+    const val KEY_LAST_UPLOADED_TS = "sync_last_uploaded_ts"
 
     const val DEFAULT_FILE_NAME = "note.txt"
 
@@ -107,6 +108,9 @@ object SyncSettings {
 
     fun lastSuccessAt(context: Context): Long = context.prefs.getLong(KEY_LAST_SUCCESS_AT, 0L)
 
+    /** 上次成功上传所用的 unix 秒时间戳（0 = 从未上传过）—— 用于保证文件名单调递增 */
+    fun lastUploadedTs(context: Context): Long = context.prefs.getLong(KEY_LAST_UPLOADED_TS, 0L)
+
     /** 上次**成功上传**的内容哈希；null = 本机从未上传过 */
     fun lastUploadedHash(context: Context): String? =
         context.prefs.getString(KEY_LAST_UPLOADED_HASH, null)?.takeIf { it.isNotBlank() }
@@ -117,14 +121,16 @@ object SyncSettings {
 
     /**
      * 记录一次成功。`uploadedHash` 是本次同步结束时本地内容的哈希 ——
-     * 它既是下一次「本地有没有变」的基准，也是「确认无需上传」时的基准。
+     * 它既是下一次「本地有没有变」的基准，也是「确认无需上传」时的基准；
+     * `uploadedTs` 是这次实际上传用的 unix 秒时间戳（没有上传时传上一次的值）。
      */
-    fun recordSuccess(context: Context, uploadedHash: String) {
+    fun recordSuccess(context: Context, uploadedHash: String, uploadedTs: Long) {
         context.prefs.edit()
             .putString(KEY_LAST_RESULT, SyncEngine.RESULT_SUCCESS)
             .putString(KEY_LAST_ERROR, "")
             .putLong(KEY_LAST_SUCCESS_AT, System.currentTimeMillis())
             .putString(KEY_LAST_UPLOADED_HASH, uploadedHash)
+            .putLong(KEY_LAST_UPLOADED_TS, uploadedTs)
             .apply()
     }
 
@@ -143,6 +149,7 @@ object SyncSettings {
             .remove(KEY_LAST_ATTEMPT_AT)
             .remove(KEY_LAST_SUCCESS_AT)
             .remove(KEY_LAST_UPLOADED_HASH)
+            .remove(KEY_LAST_UPLOADED_TS)
             .apply()
     }
 }

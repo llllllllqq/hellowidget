@@ -61,7 +61,7 @@
     <string name="sync_server_label">服务器目录地址</string>
     <string name="sync_server_hint">https://dav.example.com/dav/hellowidget/</string>
     <string name="sync_server_examples">坚果云：https://dav.jianguoyun.com/dav/你的目录/\nNextcloud：https://你的域名/remote.php/dav/files/用户名/目录/\n局域网 NAS：http://192.168.1.5:5005/dav/目录/（明文 http 会被警告）\n地址要指向「目录」并以 / 结尾；不要在地址里写用户名和口令。</string>
-    <string name="sync_file_name_label">文件名</string>
+    <string name="sync_file_name_label">文件名（前缀 + 扩展名）</string>
     <string name="sync_file_name_hint">note.txt</string>
     <string name="sync_username_label">用户名</string>
     <string name="sync_password_label">口令</string>
@@ -74,7 +74,8 @@
     <string name="sync_saved">设置已保存</string>
     <string name="sync_state_enabled">状态：已启用</string>
     <string name="sync_state_disabled">状态：未启用</string>
-    <string name="sync_effective_url">实际使用地址：%1$s</string>
+    <string name="sync_effective_url">云端写入：%1$s</string>
+    <string name="sync_history_note">每次上传都会新建一个带 unix 时间戳的文件，旧文件保持原样（云端自动保留全部历史）</string>
     <string name="sync_status_never">尚未同步过</string>
     <string name="sync_status_success">上次同步成功：%1$s</string>
     <string name="sync_upload_succeeded">已上传到云端</string>

@@ -56,18 +56,19 @@ class SyncSettingsTest {
 
     @Test
     fun recordSuccess_storesTheUploadedHashAsTheOnlyBaseline() {
-        SyncSettings.recordSuccess(context, "hash-1")
+        SyncSettings.recordSuccess(context, "hash-1", 1_735_689_600L)
 
         assertEquals(SyncEngine.RESULT_SUCCESS, SyncSettings.lastResult(context))
         assertEquals("hash-1", SyncSettings.lastUploadedHash(context))
         assertEquals("", SyncSettings.lastError(context))
+        assertEquals(1_735_689_600L, SyncSettings.lastUploadedTs(context))
         assertTrue(SyncSettings.lastSuccessAt(context) > 0)
     }
 
     @Test
     fun recordSuccess_clearsAPreviousFailure() {
         SyncSettings.recordFailure(context, WebDavError.UNAUTHORIZED)
-        SyncSettings.recordSuccess(context, "hash-1")
+        SyncSettings.recordSuccess(context, "hash-1", 1_735_689_600L)
 
         assertEquals(SyncEngine.RESULT_SUCCESS, SyncSettings.lastResult(context))
         assertEquals("", SyncSettings.lastError(context))
@@ -75,7 +76,7 @@ class SyncSettingsTest {
 
     @Test
     fun recordFailure_keepsTheUploadedHashSoPendingChangesAreStillDetected() {
-        SyncSettings.recordSuccess(context, "hash-1")
+        SyncSettings.recordSuccess(context, "hash-1", 1_735_689_600L)
         SyncSettings.recordFailure(context, WebDavError.UNAUTHORIZED)
 
         assertEquals(SyncEngine.RESULT_FAILED, SyncSettings.lastResult(context))
@@ -93,13 +94,14 @@ class SyncSettingsTest {
     @Test
     fun resetRuntimeState_clearsResultAndHashButKeepsCredentials() {
         configure(enabled = true)
-        SyncSettings.recordSuccess(context, "hash-1")
+        SyncSettings.recordSuccess(context, "hash-1", 1_735_689_600L)
         SyncSettings.setLastAttemptAt(context, 123L)
 
         SyncSettings.resetRuntimeState(context)
 
         assertEquals(SyncEngine.RESULT_NEVER, SyncSettings.lastResult(context))
         assertNull(SyncSettings.lastUploadedHash(context))
+        assertEquals(0L, SyncSettings.lastUploadedTs(context))
         assertEquals(0L, SyncSettings.lastAttemptAt(context))
         assertEquals("note.txt", SyncSettings.fileName(context))
         assertEquals("http://127.0.0.1:1/dav/", SyncSettings.baseUrl(context))
@@ -151,7 +153,7 @@ class SyncSettingsTest {
     @Test
     fun needsSyncOnOpen_trueWhenThereAreUnuploadedChanges() {
         configure(enabled = true)
-        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("旧内容".toByteArray()))
+        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("旧内容".toByteArray()), 1_735_689_600L)
         assertTrue(SyncManager.needsSyncOnOpen(context, "新内容"))
         assertFalse(SyncManager.needsSyncOnOpen(context, "旧内容"))
     }

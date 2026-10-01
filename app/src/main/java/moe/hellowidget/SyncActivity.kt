@@ -177,7 +177,10 @@ class SyncActivity : AppCompatActivity() {
             getString(if (enabled) R.string.sync_state_enabled else R.string.sync_state_disabled)
         )
         if (config != null) {
-            builder.append('\n').append(getString(R.string.sync_effective_url, config.fileUrl))
+            builder.append('\n').append(
+                getString(R.string.sync_effective_url, config.baseUrl + config.historyFilePattern)
+            )
+            builder.append('\n').append(getString(R.string.sync_history_note))
         }
         builder.append('\n').append(lastResultLine())
         SyncManager.status.value.let { live ->

@@ -93,7 +93,7 @@ class HttpWebDavClientTest {
     }
 
     @Test
-    fun fileUrlFromConfig_isPercentEncodedInTheRequestTarget() {
+    fun historyFileUrl_isPercentEncodedInTheRequestTarget() {
         // 中文/空格文件名必须按路径段编码（空格是 %20 而不是 +），否则服务器找不到文件
         StubHttpServer { StubHttpServer.Response(201, "Created") }.use { server ->
             val config = SyncConfig(
@@ -103,9 +103,9 @@ class HttpWebDavClientTest {
                 password = "test"
             )
             HttpWebDavClient(config, userAgent = "HelloWidgetTest")
-                .put(config.fileUrl, "x".toByteArray(Charsets.UTF_8))
+                .put(config.historyFileUrl(1_735_689_600L), "x".toByteArray(Charsets.UTF_8))
             assertEquals(
-                "PUT /dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0.txt",
+                "PUT /dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0" + "1735689600.txt",
                 server.targets()[0]
             )
         }

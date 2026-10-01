@@ -40,10 +40,13 @@ import java.net.URL
  * 为什么必须有这一层：
  *  1. JVM 单测跑的是桌面 JVM 的 Socket 栈，只有真实 Android 才能证明这台设备上的
  *     网络栈、明文策略（network_security_config）、前台服务与通知权限下流程成立；
- *  2. 服务器端有请求日志，可以断言**客户端究竟发了什么** —— v7.5 的单向语义要求
- *     日志里只有 `PUT`（必要时一个 `MKCOL`），不得出现任何读取动作或临时文件/换名；
- *  3. 通知栏这种只有真实 NotificationManager 才有的行为，也只有在设备上才算数
- *     （见 [fastUpload_stillShowsProgressNotification]）。
+ *  2. 服务器端有请求日志，可以断言**客户端究竟发了什么** —— v7.6 的语义是
+ *     「往指定目录里放一个带 unix 时间戳的新文件」，日志里应只有 `PUT`（必要时一个 `MKCOL`），
+ *     不得出现任何读取动作、临时文件或换名；
+ *  3. 通知栏这种只有真实 NotificationManager 才有的行为，也只有在设备上才算数。
+ *
+ * 每个用例用**各自的远端目录**（目录本身由被测代码 `MKCOL` 出来），
+ * 因此用例之间互不干扰，而目录内的文件名就是产品格式 `note<unix 秒>.txt`。
  *
  * 未传 `webdavUrl` 时整体跳过（本地或其它 CI 运行不会因此变红）。
  */
@@ -59,17 +62,9 @@ class SyncE2eInstrumentedTest {
     @get:Rule
     val testName = TestName()
 
-    /**
-     * 每个用例用**各自独立的远端文件名**，而不是靠服务器 reset 来隔离。
-     *
-     * 原因：服务器 reset 会连请求日志一起清空，那么 CI 最后打印出来的「WebDAV 动词实证」
-     * 就只剩下最后执行的那个用例；用独立文件名后，日志天然累积，
-     * 一次运行里所有场景的请求序列都留在证据里。
-     */
-    private val fileName: String get() = "note-${testName.methodName}.txt"
+    private val dirName: String get() = "note-${testName.methodName}"
 
-    /** 通知自检结果：本环境下能否「发出并查询到」本应用的通知 */
-    private var notificationQueryReliable = false
+    private val dirPath: String get() = "/dav/$dirName"
 
     @Before
     fun setUp() {
@@ -83,12 +78,13 @@ class SyncE2eInstrumentedTest {
         SyncNotifier.ensureChannel(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationQueryReliable = notificationQueryWorks(manager)
+
         SyncSettings.setEnabled(context, true)
         SyncSettings.saveConfig(
             context,
             SyncConfig(
-                baseUrl = davUrl!!,
-                fileName = fileName,
+                baseUrl = davUrl!! + dirName + "/",
+                fileName = "note.txt",
                 username = "test",
                 password = "test"
             )
@@ -98,12 +94,15 @@ class SyncE2eInstrumentedTest {
         SyncSettings.resetRuntimeState(context)
     }
 
+    /** 通知自检结果：本环境下能否「发出并查询到」本应用的通知 */
+    private var notificationQueryReliable = false
+
     /**
      * API 33+ 没授予通知权限时，前台服务通知不会进通知栏、`notify()` 也会被丢弃，
      * 「进度通知是否可见」这条断言就会变成假失败 —— 所以先确保权限真的到手。
      *
      * 注意 `executeShellCommand` 得到的是异步管道：必须读到 EOF 才算命令执行完，
-     * 直接 close 可能把 `pm grant` 掐掉（这正是第一版里权限没生效的原因）。
+     * 直接 close 可能把 `pm grant` 掐掉。
      */
     private fun ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
@@ -123,10 +122,10 @@ class SyncE2eInstrumentedTest {
         )
     }
 
-    // ------------------------------------------------------------ 单向覆盖上传
+    // ------------------------------------------------------------ 单向增量上传
 
     @Test
-    fun upload_pushesLatestContent_withASingleUnconditionalPut() {
+    fun upload_writesANewTimestampedFile_withASingleUnconditionalPut() {
         val content = "第一行内容\n第二行 with emoji 📝\n第三行"
         assertTrue("前置条件：本地写入成功", runBlocking { ContentStore.write(content) })
 
@@ -134,68 +133,71 @@ class SyncE2eInstrumentedTest {
         assertTrue("同步应成功，实际：$status", status is SyncStatus.Success)
         assertTrue("应确实上传了内容", (status as SyncStatus.Success).uploaded)
 
-        assertEquals("服务器端字节必须与编辑器内容一致", content, cloud(fileName))
+        val name = uploadedName()
+        assertTrue("文件名必须是 note<unix 秒>.txt，实际：$name", NAME_PATTERN.matches(name))
+        assertEquals("服务器端字节必须与编辑器内容一致", content, cloud(name))
 
         val log = control("log")
-        assertTrue("应直接 PUT 正式文件：$log", log.contains("PUT /dav/$fileName -> 201"))
-        // v7.5 的单向语义：一个请求搞定，不读云端、不写临时文件、不换名
-        assertFalse("不得再出现临时文件：$log", log.contains(".uploading"))
-        assertFalse("不得再出现 MOVE/COPY：$log", log.contains("MOVE") || log.contains("COPY"))
-        assertFalse("正常路径不该读到云端（HEAD/PROPFIND）：$log", log.contains("HEAD /dav/$fileName") || log.contains("PROPFIND"))
+        assertTrue("应直接 PUT 一个带时间戳的新文件：$log", log.contains("PUT $dirPath/$name -> 201"))
+        assertFalse("不得出现临时文件：$log", log.contains(".uploading"))
+        assertFalse("不得出现 MOVE/COPY：$log", log.contains("MOVE") || log.contains("COPY"))
+        assertFalse(
+            "不得读取云端（HEAD/PROPFIND/GET）：$log",
+            log.contains("HEAD $dirPath") || log.contains("PROPFIND") || log.contains("GET $dirPath")
+        )
     }
 
     @Test
     fun secondSync_withoutChanges_doesNotUploadAgain() {
         assertTrue(runBlocking { ContentStore.write("内容 A") })
         runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
+        val name = uploadedName()
         val countAfterFirst = requestCount()
 
         val second = runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
         assertTrue("第二次应识别为已是最新，实际：$second", second is SyncStatus.Success)
         assertFalse("不应重复上传", (second as SyncStatus.Success).uploaded)
         assertEquals("本地没变时**一个请求都不该发**", countAfterFirst, requestCount())
-        assertEquals("内容 A", cloud(fileName))
+        assertEquals("内容 A", cloud(name))
     }
 
     @Test
-    fun forceOverwrite_replacesCloudContentWithoutAnyComparisonOrConflict() {
-        // 第一次上传建立基线
-        assertTrue(runBlocking { ContentStore.write("本机第一版") })
-        assertTrue(
-            "第一次同步应成功",
-            runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) } is SyncStatus.Success
-        )
+    fun everyUploadCreatesANewFile_andOlderFilesStayUntouched() {
+        assertTrue(runBlocking { ContentStore.write("第一版") })
+        assertTrue(runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) } is SyncStatus.Success)
+        val first = uploadedName()
 
-        // 模拟「电脑端在云端改了内容」——v7.5 不再关心，也不该弹冲突
-        controlPost("file?path=/dav/$fileName", "电脑上改过的云端内容")
+        assertTrue(runBlocking { ContentStore.write("第二版") })
+        assertTrue(runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) } is SyncStatus.Success)
+        val second = uploadedName()
 
-        // 本机再改 → 直接整份覆盖云端
-        assertTrue(runBlocking { ContentStore.write("本机第二版") })
-        val status = runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
-        assertTrue("应成功覆盖，实际：$status", status is SyncStatus.Success)
-        assertTrue("应确实上传", (status as SyncStatus.Success).uploaded)
-
-        assertEquals("云端必须被本机内容覆盖", "本机第二版", cloud(fileName))
+        assertTrue("两次上传必须是两个不同的文件：$first / $second", first != second)
+        assertEquals("旧文件必须原样保留（历史不丢）", "第一版", cloud(first))
+        assertEquals("新文件是本次内容", "第二版", cloud(second))
         val log = control("log")
-        assertTrue("覆盖应是单次 PUT（已存在 → 204）：$log", log.contains("PUT /dav/$fileName -> 204"))
-        assertFalse("不得产生冲突副本：$log", log.contains(".conflict-"))
+        assertTrue("新上传应创建一个新文件：$log", log.contains("PUT $dirPath/$second -> 201"))
+        assertFalse("旧文件不得被改写：$log", log.contains("PUT $dirPath/$first -> 204"))
+        assertFalse("不允许出现删除动作：$log", log.contains("DELETE $dirPath/$first"))
     }
 
     @Test
-    fun sync_neverReadsTheCloud_evenWhenTheCloudWasChanged() {
-        controlPost("file?path=/dav/$fileName", "云端已有内容")
+    fun sync_neverReadsTheCloud_evenWhenTheFolderHasOldFiles() {
+        // 目录里预置一份「历史文件」（模拟以前同步上去的内容）
+        controlPost("file?path=$dirPath/legacy-note.txt", "旧的历史内容")
         assertTrue(runBlocking { ContentStore.write("本机内容") })
         val before = requestCount()
 
         val status = runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
         assertTrue(status is SyncStatus.Success)
 
-        val newLines = control("log").lines().filter { it.isNotBlank() }
-        val relevant = newLines.drop(before)
+        val newLines = control("log").lines().filter { it.isNotBlank() }.drop(before)
         assertTrue(
-            "云端被外部改过时也只应有写入请求：${relevant.joinToString("\n")}",
-            relevant.isNotEmpty() && relevant.none { it.contains("HEAD") || it.contains("PROPFIND") || it.contains("GET") }
+            "云端有旧文件时也只应有写入请求：${newLines.joinToString("\n")}",
+            newLines.isNotEmpty() && newLines.none {
+                it.contains("HEAD") || it.contains("PROPFIND") || it.contains("GET")
+            }
         )
+        assertEquals("旧文件必须原样保留", "旧的历史内容", cloud("legacy-note.txt"))
     }
 
     // ------------------------------------------------------------ 节流
@@ -204,6 +206,7 @@ class SyncE2eInstrumentedTest {
     fun throttle_blocksAutomaticSyncButNotTheManualButton() {
         assertTrue(runBlocking { ContentStore.write("v1") })
         runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
+        val first = uploadedName()
         val countAfterFirst = requestCount()
 
         // 内容又变了，但距上次同步不足 30 分钟：自动触发必须被跳过，且**不发任何请求**
@@ -211,13 +214,16 @@ class SyncE2eInstrumentedTest {
         val throttled = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
         assertEquals(SyncStatus.Skipped(SkipReason.THROTTLED), throttled)
         assertEquals("被节流时不能访问服务器", countAfterFirst, requestCount())
-        assertEquals("被节流时云端保持旧内容", "v1", cloud(fileName))
+        assertEquals("被节流时不会产生新文件", "v1", cloud(first))
 
         // 手动按钮不受限
         val manual = runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
         assertTrue("手动同步应成功，实际：$manual", manual is SyncStatus.Success)
         assertTrue("手动同步应真的发出请求", requestCount() > countAfterFirst)
-        assertEquals("v2", cloud(fileName))
+        val second = uploadedName()
+        assertTrue("必须写成另一个新文件：$first / $second", first != second)
+        assertEquals("v2", cloud(second))
+        assertEquals("v1 的那份仍在", "v1", cloud(first))
     }
 
     // ------------------------------------------------------------ 前台服务与通知
@@ -251,7 +257,7 @@ class SyncE2eInstrumentedTest {
                 SyncEngine.RESULT_SUCCESS,
                 SyncSettings.lastResult(context)
             )
-            assertEquals("通过前台服务上传", cloud(fileName))
+            assertEquals("通过前台服务上传", cloud(uploadedName()))
 
             // 同步结束必须收掉服务：不留常驻后台
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -272,13 +278,12 @@ class SyncE2eInstrumentedTest {
      *
      * 为什么这里断言的是**服务存活时长**而不是「查询到通知」：
      * 实测（CI 的 API 34 / API 35 模拟器）`NotificationManager.getActiveNotifications()`
-     * **不会返回前台服务的通知** —— 上传成功、服务确实在跑（serviceSeen=true），
-     * 但查询结果始终为空；而本应用自己 `notify()` 发出的通知（见
-     * [inProcessFallback_alsoShowsAProgressNotification]）能被正常查到。
-     * 因此前台服务路径改为断言它的**效果**：进度通知的宿主（前台服务）必须存活足够久，
-     * 让通知真的有机会被渲染出来 —— 这正是 v7.5 修的那个点
-     * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）；没有任何改动前的实现会在上传完成后
-     * 立刻收掉通知，服务存活只有几十毫秒。
+     * **不会返回前台服务的通知** —— 上传成功、服务确实在跑，但查询结果始终为空；
+     * 而本应用自己 `notify()` 发出的通知（见 [inProcessFallback_alsoShowsAProgressNotification]）
+     * 能被正常查到。因此前台服务路径改为断言它的**效果**：进度通知的宿主（前台服务）
+     * 必须存活足够久，让通知真的有机会被渲染出来 —— 这正是 v7.5 修的那个点
+     * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）；修好之前上传一结束就收通知，
+     * 服务只活几十毫秒。
      */
     @Test
     fun fastUpload_keepsTheProgressNotificationAliveLongEnough() {
@@ -314,7 +319,7 @@ class SyncE2eInstrumentedTest {
                 SyncEngine.RESULT_SUCCESS,
                 SyncSettings.lastResult(context)
             )
-            assertEquals("通知可见性验证", cloud(fileName))
+            assertEquals("通知可见性验证", cloud(uploadedName()))
             assertTrue("应观测到前台服务的整个生命周期", lifetimeMs >= 0)
             assertTrue(
                 "上传极快时进度通知也必须保留 ${SyncNotifier.MIN_PROGRESS_VISIBLE_MS}ms，" +
@@ -333,14 +338,13 @@ class SyncE2eInstrumentedTest {
      */
     @Test
     fun inProcessFallback_alsoShowsAProgressNotification() {
-        assertTrue(runBlocking { ContentStore.write("进程内兜底验证") })
-        SyncSettings.setLastAttemptAt(context, 0)
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
         assumeTrue(
             "此环境无法发出/查询本应用的通知（自检失败），跳过通知可见性断言",
             notificationQueryReliable
         )
+        assertTrue(runBlocking { ContentStore.write("进程内兜底验证") })
+        SyncSettings.setLastAttemptAt(context, 0)
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         SyncManager.requestInProcess(context, SyncTrigger.MANUAL)
 
@@ -367,7 +371,7 @@ class SyncE2eInstrumentedTest {
             SystemClock.sleep(100)
         }
         assertEquals(SyncEngine.RESULT_SUCCESS, SyncSettings.lastResult(context))
-        assertEquals("进程内兜底验证", cloud(fileName))
+        assertEquals("进程内兜底验证", cloud(uploadedName()))
     }
 
     // ------------------------------------------------------------ 工具
@@ -376,7 +380,7 @@ class SyncE2eInstrumentedTest {
      * 自检：本环境下「发出一条通知并能查询回来」是否可用。
      *
      * 必须重试：通知权限刚授予、或系统刚完成启动时，第一次 `notify` 可能被丢弃，
-     * 查询也可能跑在系统落库之前 —— 一次性判定会把用例误跳过（第三轮 CI 就发生了）。
+     * 查询也可能跑在系统落库之前 —— 一次性判定会把用例误跳过。
      *
      * 真正不可用时（受限环境）跳过可见性断言，而不是给出误导性的失败：
      * 「通知有没有发出去」由 JVM 的 SyncManagerTest 用假客户端直接断言。
@@ -384,8 +388,6 @@ class SyncE2eInstrumentedTest {
     private fun notificationQueryWorks(manager: NotificationManager): Boolean {
         val probeId = 4099
         val composer = NotificationManagerCompat.from(context)
-        // 最多等 10s：权限刚授予时系统的「通知已启用」状态是异步生效的，
-        // 这段窗口内发出的通知会被静默丢弃（早于本修复时用例被误跳过就是这个原因）
         repeat(12) { attempt ->
             composer.notify(probeId, SyncNotifier.progressNotification(context, "自检"))
             val deadline = SystemClock.uptimeMillis() + 800
@@ -402,8 +404,15 @@ class SyncE2eInstrumentedTest {
         return false
     }
 
+    /** 本次实际上传用的文件名（由落盘的时间戳还原，不依赖任何测试侧约定） */
+    private fun uploadedName(): String {
+        val config = SyncSettings.config(context)
+        assertNotNull("应有可用配置", config)
+        return config!!.historyFileName(SyncSettings.lastUploadedTs(context))
+    }
+
     /** 云端文件内容（经过 control 面读取，不经过被测客户端） */
-    private fun cloud(name: String): String = control("file?path=/dav/$name")
+    private fun cloud(name: String): String = control("file?path=$dirPath/$name")
 
     private fun requestCount(): Int = control("count").trim().toInt()
 
@@ -432,5 +441,10 @@ class SyncE2eInstrumentedTest {
         } finally {
             connection.disconnect()
         }
+    }
+
+    private companion object {
+        /** `note1735689600.txt`：前缀 + unix 秒时间戳 + 扩展名 */
+        val NAME_PATTERN = Regex("""note\d{10}\.txt""")
     }
 }

@@ -71,6 +71,16 @@ object SyncEngine {
     }
 
     /**
+     * 本次上传该用的 unix **秒**时间戳。
+     *
+     * 取 `max(now, 上次上传的时间戳 + 1)`，两个作用：
+     *  - 同一秒内的第二次上传不会复用同一个文件名（那会覆盖上一份历史）；
+     *  - 设备时钟被回拨时文件名依旧单调递增，云端按名字排序仍是正确的时间顺序。
+     */
+    fun nextUploadTimestamp(nowSec: Long, lastUploadedSec: Long): Long =
+        if (nowSec > lastUploadedSec) nowSec else lastUploadedSec + 1
+
+    /**
      * 打开应用时是否需要补一次同步：
      * 上次没成功、或本机从未上传过、或本地内容与上次上传的不一致（例如进程被杀在同步之前）。
      */

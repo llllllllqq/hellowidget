@@ -13,7 +13,12 @@ import java.util.Locale
 data class SyncConfig(
     /** 归一化后的目录地址，一定以 '/' 结尾（用户填的地址会先过 [SyncConfigValidator]） */
     val baseUrl: String,
-    /** 远端文件名（不含路径分隔符），如 note.txt */
+    /**
+     * 用户填写的文件名模板（不含路径分隔符），如 note.txt。
+     *
+     * v7.6 起它不再是「云端那一个文件的名字」，而是**前缀 + 扩展名**：
+     * 每次上传都会写成 `<前缀><unix 秒时间戳><扩展名>`，例如 `note1735689600.txt`。
+     */
     val fileName: String,
     val username: String,
     val password: String,
@@ -23,14 +28,34 @@ data class SyncConfig(
     /** 远端目录（MKCOL 的目标） */
     val directoryUrl: String get() = baseUrl
 
-    /** 主文件的完整 URL（文件名已做百分号编码） */
-    val fileUrl: String get() = baseUrl + UrlCodec.encodePathSegment(fileName)
+    /**
+     * 本次上传的文件名：`<前缀><unix 秒时间戳><扩展名>`（如 `note1735689600.txt`）。
+     *
+     * 每次上传都是**新文件**，云端天然保留每一次上传的历史，旧文件永远不会被覆盖 ——
+     * 因此完全不需要列出、比对或清理远端（省流量，也不怕历史积累）。
+     */
+    fun historyFileName(timestampSec: Long): String = "$stem$timestampSec$extension"
+
+    /** 本次上传的完整 URL（文件名已做百分号编码） */
+    fun historyFileUrl(timestampSec: Long): String =
+        baseUrl + UrlCodec.encodePathSegment(historyFileName(timestampSec))
+
+    /** 界面上展示的命名规则，如 `note<时间戳>.txt` */
+    val historyFilePattern: String get() = "$stem<时间戳>$extension"
 
     /** 是否明文 http（界面需要给出风险提示） */
     val isCleartext: Boolean get() = baseUrl.startsWith("http://", ignoreCase = true)
 
     /** 主机名（用于界面展示与错误信息，不含端口） */
     val host: String get() = runCatching { URI(baseUrl).host ?: "" }.getOrDefault("")
+
+    /** 去掉扩展名前的前缀：`note.txt` → `note`；没有扩展名时就是整个名字 */
+    private val stem: String
+        get() = if (fileName.lastIndexOf('.') > 0) fileName.substring(0, fileName.lastIndexOf('.')) else fileName
+
+    /** 扩展名（含点）：`note.txt` → `.txt`；没有扩展名时默认 `.txt` */
+    private val extension: String
+        get() = if (fileName.lastIndexOf('.') > 0) fileName.substring(fileName.lastIndexOf('.')) else ".txt"
 }
 
 enum class ConfigError {

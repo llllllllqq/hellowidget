@@ -179,29 +179,38 @@ object SyncManager {
 
         if (!SyncEngine.hasLocalChanges(localHash, SyncSettings.lastUploadedHash(context))) {
             // 本地自上次成功上传后没有任何改动：一个请求都不发（省流量、省服务器配额）
-            SyncSettings.recordSuccess(context, localHash)
+            SyncSettings.recordSuccess(context, localHash, SyncSettings.lastUploadedTs(context))
             return SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
         }
 
-        putForceOverwrite(client, config, bytes)
-        SyncSettings.recordSuccess(context, localHash)
+        // 每次上传都写一个新文件：文件名 = 前缀 + unix 秒时间戳 + 扩展名
+        val timestampSec = SyncEngine.nextUploadTimestamp(
+            nowSec = System.currentTimeMillis() / 1000,
+            lastUploadedSec = SyncSettings.lastUploadedTs(context)
+        )
+        putNewFile(client, config, bytes, timestampSec)
+        SyncSettings.recordSuccess(context, localHash, timestampSec)
         return SyncStatus.Success(System.currentTimeMillis(), uploaded = true)
     }
 
     /**
-     * 强制覆盖上传：直接 `PUT` 到目标地址，不带任何条件请求头。
+     * 把内容写成一个**新文件**（`<前缀><unix 秒时间戳><扩展名>`）。
+     *
+     * 新文件名意味着云端不会丢任何历史；客户端也从不读取或清理远端，
+     * 只做「往这个目录里放一份带时间戳的新内容」这一件事。
      *
      * 目标目录不存在时（服务器回 409/404）先 `MKCOL` 再重试一次 ——
      * 这样正常路径只需要一个请求，而首次使用（用户填的目录还没建）也能自动建好。
      */
-    private fun putForceOverwrite(client: WebDavClient, config: SyncConfig, bytes: ByteArray) {
+    private fun putNewFile(client: WebDavClient, config: SyncConfig, bytes: ByteArray, timestampSec: Long) {
+        val url = config.historyFileUrl(timestampSec)
         try {
-            client.put(config.fileUrl, bytes)
+            client.put(url, bytes)
         } catch (e: WebDavException) {
             if (e.error != WebDavError.PARENT_NOT_FOUND && e.error != WebDavError.NOT_FOUND) throw e
             Log.i(TAG, "云端目录不存在（${e.error}），先创建目录再重试上传")
             client.mkcol(config.directoryUrl)
-            client.put(config.fileUrl, bytes)
+            client.put(url, bytes)
         }
     }
 

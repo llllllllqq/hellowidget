@@ -102,14 +102,46 @@ class SyncConfigTest {
     }
 
     @Test
-    fun fileUrl_isBuiltFromEncodedSegments() {
+    fun historyFileName_isPrefixPlusUnixTimestampPlusExtension() {
+        val config = SyncConfig(
+            baseUrl = "https://dav.example.com/dav/",
+            fileName = "note.txt",
+            username = "u",
+            password = "p"
+        )
+        assertEquals("note1735689600.txt", config.historyFileName(1735689600L))
+        assertEquals(
+            "https://dav.example.com/dav/note1735689600.txt",
+            config.historyFileUrl(1735689600L)
+        )
+        assertEquals("note<时间戳>.txt", config.historyFilePattern)
+        assertEquals("dav.example.com", config.host)
+    }
+
+    @Test
+    fun historyFileName_handlesCustomNamesAndMissingExtension() {
+        fun config(name: String) = SyncConfig("https://d/x/", name, "u", "p")
+        // 自定义前缀与扩展名照旧生效
+        assertEquals("我的笔记1759312800.md", config("我的笔记.md").historyFileName(1759312800L))
+        // 多个点：只把最后一段当扩展名
+        assertEquals("a.b1759312800.txt", config("a.b.txt").historyFileName(1759312800L))
+        // 没写扩展名时默认 .txt
+        assertEquals("memo1759312800.txt", config("memo").historyFileName(1759312800L))
+    }
+
+    @Test
+    fun historyFileUrl_percentEncodesCjkAndSpaces() {
         val config = SyncConfig(
             baseUrl = "https://dav.example.com/dav/",
             fileName = "我的 笔记.txt",
             username = "u",
             password = "p"
         )
-        assertEquals("https://dav.example.com/dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0.txt", config.fileUrl)
-        assertEquals("dav.example.com", config.host)
+        // 空格必须是 %20 而不是 +（+ 在路径里就是加号本身，服务器会找不到文件）
+        assertEquals(
+            "https://dav.example.com/dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0" +
+                "1759312800.txt",
+            config.historyFileUrl(1759312800L)
+        )
     }
 }

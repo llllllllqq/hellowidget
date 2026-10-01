@@ -89,6 +89,9 @@ class SyncManagerTest {
     }
 
     private var lastClient: FakeClient? = null
+
+    /** 每次同步都会新建一个客户端，这里把每次的都留着（断言「两次上传用了两个文件名」） */
+    private val clients = mutableListOf<FakeClient>()
     private var clientBuilds = 0
 
     @Before
@@ -106,6 +109,7 @@ class SyncManagerTest {
             )
         )
         SyncSettings.resetRuntimeState(context)
+        clients.clear()
         SyncManager.contentReader = { content }
         installClient()
     }
@@ -124,7 +128,10 @@ class SyncManagerTest {
     private fun installClient(firstPutFailure: WebDavException? = null) {
         SyncManager.clientFactory = { _, _ ->
             clientBuilds++
-            FakeClient(context, firstPutFailure).also { lastClient = it }
+            FakeClient(context, firstPutFailure).also {
+                lastClient = it
+                clients += it
+            }
         }
     }
 
@@ -144,9 +151,15 @@ class SyncManagerTest {
 
         val client = lastClient!!
         assertEquals("只应有一次 PUT（没有任何读取/条件请求）", 1, client.puts.size)
-        assertEquals("http://127.0.0.1:1/dav/note.txt", client.puts[0].first)
         assertEquals("内容 A", client.puts[0].second)
         assertTrue("目录存在时不应该多发 MKCOL：${client.mkcols}", client.mkcols.isEmpty())
+        // 文件名必须是「前缀 + unix 秒时间戳 + 扩展名」：每次上传一个新文件，历史不会被覆盖
+        val name = client.puts[0].first.removePrefix("http://127.0.0.1:1/dav/")
+        assertTrue("文件名应形如 note<unix 秒>.txt，实际：$name", Regex("""note\d{10}\.txt""").matches(name))
+        val stamp = name.removePrefix("note").removeSuffix(".txt").toLong()
+        val nowSec = System.currentTimeMillis() / 1000
+        assertTrue("时间戳应是当下（±120s），实际：$stamp", Math.abs(stamp - nowSec) < 120)
+        assertEquals("时间戳要落盘，供下次保证文件名单调递增", stamp, SyncSettings.lastUploadedTs(context))
 
         // 报障点 1：上传很快也必须真的有通知栏进度
         assertTrue(
@@ -174,7 +187,7 @@ class SyncManagerTest {
 
     @Test
     fun noUpload_whenContentUnchanged_sendsNothingAndIsSilent() {
-        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex(content.toByteArray()))
+        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex(content.toByteArray()), 1_735_689_600L)
         val startedAt = System.currentTimeMillis()
 
         val status = sync()
@@ -191,7 +204,7 @@ class SyncManagerTest {
     }
 
     @Test
-    fun firstEverSync_overwritesTheCloudWithoutReadingIt() {
+    fun firstEverSync_uploadsTheLocalContentWithoutReadingTheCloud() {
         // 云端有什么、对不对，本应用一概不管：接口里根本没有读取方法，
         // 这里断言「第一次同步就是一次 PUT，且内容就是本地内容」
         assertNull("前置条件：本机从未上传过", SyncSettings.lastUploadedHash(context))
@@ -200,7 +213,26 @@ class SyncManagerTest {
         val status = sync()
 
         assertTrue(status is SyncStatus.Success && (status as SyncStatus.Success).uploaded)
-        assertEquals(listOf("http://127.0.0.1:1/dav/note.txt" to "本地唯一的真相"), lastClient!!.puts)
+        assertEquals(1, lastClient!!.puts.size)
+        assertEquals("本地唯一的真相", lastClient!!.puts[0].second)
+    }
+
+    @Test
+    fun everyUploadGoesToANewTimestampedFile_soHistoryIsNeverOverwritten() {
+        content = "第一版"
+        assertTrue(sync() is SyncStatus.Success)
+        val firstUrl = clients[0].puts[0].first
+
+        // 同一秒内立刻再传一次：文件名必须递增，绝不能复用上一个名字（否则会覆盖历史）
+        content = "第二版"
+        assertTrue(sync() is SyncStatus.Success)
+        val secondUrl = clients[1].puts[0].first
+
+        assertTrue("两次上传必须是两个不同的文件：$firstUrl / $secondUrl", firstUrl != secondUrl)
+        assertEquals("第二次的正文应是新内容", "第二版", clients[1].puts[0].second)
+        val firstStamp = firstUrl.removePrefix("http://127.0.0.1:1/dav/note").removeSuffix(".txt").toLong()
+        val secondStamp = secondUrl.removePrefix("http://127.0.0.1:1/dav/note").removeSuffix(".txt").toLong()
+        assertEquals("同一秒内也必须递增 1 秒", firstStamp + 1, secondStamp)
     }
 
     @Test

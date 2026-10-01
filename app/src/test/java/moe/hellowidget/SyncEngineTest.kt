@@ -60,6 +60,30 @@ class SyncEngineTest {
         assertFalse(SyncEngine.hasLocalChanges("h1", "h1"))
     }
 
+    // ------------------------------------------------------------ 上传文件名的时间戳
+
+    @Test
+    fun nextUploadTimestamp_usesNowWhenItIsNewer() {
+        assertEquals(1_735_689_600L, SyncEngine.nextUploadTimestamp(1_735_689_600L, 1_735_689_000L))
+    }
+
+    @Test
+    fun nextUploadTimestamp_sameSecondStillAdvances() {
+        // 同一秒内的第二次上传必须换一个文件名，否则会覆盖上一份历史
+        assertEquals(1_735_689_601L, SyncEngine.nextUploadTimestamp(1_735_689_600L, 1_735_689_600L))
+    }
+
+    @Test
+    fun nextUploadTimestamp_clockRolledBack_stillIncreases() {
+        // 设备时钟被回拨：文件名仍单调递增，云端按名字排序仍是正确的时间顺序
+        assertEquals(1_735_689_601L, SyncEngine.nextUploadTimestamp(1_000_000_000L, 1_735_689_600L))
+    }
+
+    @Test
+    fun nextUploadTimestamp_firstEverUpload_usesNow() {
+        assertEquals(1_735_689_600L, SyncEngine.nextUploadTimestamp(1_735_689_600L, 0L))
+    }
+
     // ------------------------------------------------------------ 节流闸门
 
     private val now = 1_000_000_000_000L
