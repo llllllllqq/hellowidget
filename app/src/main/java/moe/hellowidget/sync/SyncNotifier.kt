@@ -9,31 +9,46 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 import moe.hellowidget.R
-import moe.hellowidget.SyncActionReceiver
 import moe.hellowidget.SyncActivity
 
 /**
- * WebDAV 同步的通知。
+ * WebDAV 同步的通知与上传结果提示。
  *
  * 产品要求是「同步期间通知栏留一条进度条，结束后立刻收掉」：
  *  - 进度通知既是用户可见的反馈，也是前台服务能长期存活（不被系统回收）的依据；
- *  - 同步一结束就 `stopForeground(REMOVE)`，不留常驻通知、不留后台线程；
- *  - 只有「失败」与「待处理的冲突」会留下通知，因为它们需要用户做点什么。
+ *  - 同步一结束就收掉，不留常驻通知、不留后台线程；
+ *  - 只有「失败」会留下通知，因为它需要用户做点什么。
+ *
+ * ## v7.5 起新增的两条保证
+ *  1. **每次上传都有可见的进度条**：上传往往几百毫秒就结束，`startForeground` 之后
+ *     立刻收掉用户根本看不到（这正是「明明上传了却没有通知栏进度」的根因）。
+ *     为此引入 [awaitProgressVisibleFor]：真的发生了上传时，进度通知至少可见
+ *     [MIN_PROGRESS_VISIBLE_MS]；而「本地没变、什么都没做」仍旧不打扰用户。
+ *  2. **上传成功弹 Toast**：通知可能一闪而过（或用户没拉下通知栏），
+ *     Toast 直接把「已上传到云端」送到眼前。用 `Toast.makeText`（纯文本 Toast）——
+ *     官方文档明确：Android 11 起只禁止后台的**自定义视图** Toast，文本 Toast 仍然允许；
+ *     何况本应用的同步始终在前台服务或可见界面中执行。
  */
 object SyncNotifier {
 
     const val CHANNEL_ID = "webdav_sync"
     const val ID_PROGRESS = 1001
-    const val ID_CONFLICT = 1002
     const val ID_FAILURE = 1003
 
-    const val ACTION_KEEP_LOCAL = "moe.hellowidget.action.SYNC_KEEP_LOCAL"
-    const val ACTION_USE_REMOTE = "moe.hellowidget.action.SYNC_USE_REMOTE"
+    /**
+     * 进度通知的最短可见时长。上传通常只要几百毫秒：通知刚发出去就被收掉，
+     * SystemUI 甚至来不及渲染，用户看到的是「完全没有通知」。
+     */
+    const val MIN_PROGRESS_VISIBLE_MS = 1500L
 
     /** 通知渠道懒创建：同步没启用时应用启动完全不受影响 */
     fun ensureChannel(context: Context) {
@@ -73,8 +88,19 @@ object SyncNotifier {
             .setContentIntent(openSyncActivity(context))
             .build()
 
+    /**
+     * 进程内兜底路径的进度通知（没有前台服务，用普通通知顶上）。
+     * 失败/成功的收尾与前台服务路径共用同一套回调。
+     */
+    fun postProgress(context: Context) {
+        // 进程内兜底路径可能从没启动过 SyncService，渠道要在这里补齐（幂等）
+        ensureChannel(context)
+        notifyCompat(context, ID_PROGRESS, progressNotification(context))
+    }
+
     /** 同步失败：留下通知，点开进入同步页看原因并重试 */
     fun postFailure(context: Context, error: WebDavError, detail: String) {
+        ensureChannel(context)
         val localized = SyncErrorText.of(context, error)
         val message = if (detail.isNotBlank() && detail != error.name) "$localized（$detail）" else localized
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -95,45 +121,33 @@ object SyncNotifier {
         runCatching { NotificationManagerCompat.from(context).cancel(ID_FAILURE) }
     }
 
-    /**
-     * 待处理的冲突：**绝不自动解决**，把决定权交给用户。
-     * 两个动作按钮让用户不必打开应用就能处理，符合「后台同步时也要能询问」的场景。
-     */
-    fun postConflict(context: Context, fileName: String) {
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_sync_notification)
-            .setContentTitle(context.getString(R.string.sync_notif_conflict_title))
-            .setContentText(context.getString(R.string.sync_notif_conflict_text, fileName))
-            .setStyle(
-                NotificationCompat.BigTextStyle()
-                    .bigText(context.getString(R.string.sync_notif_conflict_big_text, fileName))
-            )
-            .setOngoing(false)
-            .setAutoCancel(true)
-            .setShowWhen(true)
-            .setCategory(NotificationCompat.CATEGORY_ERROR)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(openSyncActivity(context))
-            .addAction(
-                0,
-                context.getString(R.string.sync_conflict_keep_local),
-                broadcast(context, ACTION_KEEP_LOCAL, 11)
-            )
-            .addAction(
-                0,
-                context.getString(R.string.sync_conflict_use_remote),
-                broadcast(context, ACTION_USE_REMOTE, 12)
-            )
-            .build()
-        notifyCompat(context, ID_CONFLICT, notification)
-    }
-
-    fun cancelConflict(context: Context) {
-        runCatching { NotificationManagerCompat.from(context).cancel(ID_CONFLICT) }
-    }
-
     fun cancelProgress(context: Context) {
         runCatching { NotificationManagerCompat.from(context).cancel(ID_PROGRESS) }
+    }
+
+    /**
+     * 让进度通知至少显示到 [MIN_PROGRESS_VISIBLE_MS]（只在**真的上传了**之后调用）。
+     * 调用方随后照常 [cancelProgress]。
+     */
+    suspend fun awaitProgressVisibleFor(startedAt: Long) {
+        val elapsed = System.currentTimeMillis() - startedAt
+        val remaining = MIN_PROGRESS_VISIBLE_MS - elapsed
+        if (remaining > 0) delay(remaining)
+    }
+
+    /**
+     * 上传成功的 Toast。
+     *
+     * 必须切到主线程 Looper：同步跑在 IO 协程上，而 Toast 需要一个有 Looper 的线程。
+     * 失败时吞掉异常 —— 提示不该把一次成功的上传变成失败。
+     */
+    fun showUploadSucceededToast(context: Context) {
+        val appContext = context.applicationContext
+        Handler(Looper.getMainLooper()).post {
+            runCatching {
+                Toast.makeText(appContext, R.string.sync_upload_succeeded, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     /** 只有拿到通知权限（API 33+）才会真正显示；没权限时同步照跑，只是没有通知栏反馈 */
@@ -157,11 +171,6 @@ object SyncNotifier {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         return PendingIntent.getActivity(context, 10, intent, pendingIntentFlags())
-    }
-
-    private fun broadcast(context: Context, action: String, requestCode: Int): PendingIntent {
-        val intent = Intent(context, SyncActionReceiver::class.java).apply { this.action = action }
-        return PendingIntent.getBroadcast(context, requestCode, intent, pendingIntentFlags())
     }
 
     private fun pendingIntentFlags(): Int =

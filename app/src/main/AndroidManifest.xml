@@ -77,14 +77,6 @@
             android:foregroundServiceType="dataSync" />
 
         <!--
-            通知栏动作（覆盖云端 / 用云端覆盖本地）的接收者。
-            exported="false"：只有本应用自己发出的 PendingIntent 能触发它。
-        -->
-        <receiver
-            android:name=".SyncActionReceiver"
-            android:exported="false" />
-
-        <!--
             小组件 Provider。exported="false"：系统仍可投递 APPWIDGET_UPDATE
             （系统不受 exported 限制），但第三方应用无法伪造该广播。
             与 Android Studio 官方 App Widget 模板一致。

@@ -21,7 +21,6 @@ object SyncErrorText {
         WebDavError.NOT_FOUND -> R.string.sync_error_not_found
         WebDavError.PARENT_NOT_FOUND -> R.string.sync_error_parent_not_found
         WebDavError.NOT_SUPPORTED -> R.string.sync_error_not_supported
-        WebDavError.PRECONDITION_FAILED -> R.string.sync_error_precondition
         WebDavError.LOCKED -> R.string.sync_error_locked
         WebDavError.INSUFFICIENT_STORAGE -> R.string.sync_error_storage
         WebDavError.SERVER_ERROR -> R.string.sync_error_server
@@ -30,7 +29,6 @@ object SyncErrorText {
         WebDavError.TIMEOUT -> R.string.sync_error_timeout
         WebDavError.TLS_UNTRUSTED -> R.string.sync_error_tls_untrusted
         WebDavError.TLS -> R.string.sync_error_tls
-        WebDavError.TOO_LARGE -> R.string.sync_error_too_large
         WebDavError.BAD_RESPONSE -> R.string.sync_error_bad_response
         WebDavError.IO -> R.string.sync_error_io
     }

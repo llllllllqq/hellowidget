@@ -2,6 +2,7 @@ package moe.hellowidget.sync
 
 import android.content.Context
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,24 +13,27 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import moe.hellowidget.ContentStore
-import moe.hellowidget.TextWidgetProvider
 
 /** 同步结果（界面据此渲染状态行） */
 sealed interface SyncStatus {
     object Idle : SyncStatus
     data class Running(val trigger: SyncTrigger, val startedAt: Long) : SyncStatus
 
-    /** uploaded = true 表示真的上传了；false 表示确认云端已是最新 */
+    /** uploaded = true 表示真的把内容传上去了；false 表示本地自上次上传后没有改动 */
     data class Success(val at: Long, val uploaded: Boolean) : SyncStatus
     data class Failed(val at: Long, val error: WebDavError, val detail: String) : SyncStatus
-    data class Conflict(val at: Long, val reason: ConflictReason) : SyncStatus
     data class Skipped(val reason: SkipReason) : SyncStatus
 }
 
-enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED, THROTTLED, PENDING_CONFLICT }
+enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED, THROTTLED }
 
 /**
- * 同步编排：闸门（30 分钟节流 / 待处理冲突）→ 决策 → 上传或产生冲突 → 记录状态。
+ * 同步编排：闸门（30 分钟节流）→ 「本地变了没有」→ 强制覆盖上传 → 记录状态。
+ *
+ * ## v7.5 的单向语义
+ * 这里**从不读取云端**：不 HEAD、不 PROPFIND、不 GET，因此也没有冲突、没有合并、
+ * 没有「云端被改过」的判断。云端对本应用而言只是一个写入目的地：
+ * 本机内容一变，下一次同步就整份覆盖它；本机没变，就一个请求都不发。
  *
  * 线程模型：全部网络与磁盘操作跑在调用方的 IO 协程里；[mutex] 保证同一时刻只有一次同步，
  * 重复请求会排队，且自动触发会被刚更新过的 `lastAttemptAt` 直接节流掉。
@@ -44,14 +48,30 @@ object SyncManager {
     /** 同步状态（界面订阅它渲染状态行；用 getter 暴露不可变视图，避免多引一个扩展函数） */
     val status: StateFlow<SyncStatus> get() = _status
 
-    /** 前台服务无法启动时的兜底（进程内同步，没有通知栏进度） */
+    /**
+     * 客户端构造入口。默认发真实请求；单测里替换成假实现，
+     * 就能在 JVM 上断言「有没有发请求、发的什么」而不需要网络。
+     */
+    @VisibleForTesting
+    internal var clientFactory: (SyncConfig, (String) -> Unit) -> WebDavClient =
+        { config, onUntrusted -> HttpWebDavClient(config, onUntrusted) }
+
+    /** 待上传内容的读取入口；单测里替换掉，避免依赖 DataStore 的具体实现 */
+    @VisibleForTesting
+    internal var contentReader: suspend () -> String = { ContentStore.read() }
+
+    /** 前台服务无法启动时的兜底（进程内同步；进度通知由这里自己发） */
     private val fallbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    fun requestInProcess(context: Context, trigger: SyncTrigger, resolution: ConflictChoice? = null) {
+    /**
+     * 进程内执行一次同步（没有前台服务，因此这里自己维护进度通知）。
+     * 只在 [SyncLauncher] 无法启动前台服务时使用。
+     */
+    fun requestInProcess(context: Context, trigger: SyncTrigger) {
         val appContext = context.applicationContext
         fallbackScope.launch {
             try {
-                performSync(appContext, trigger, resolution)
+                performSync(appContext, trigger, progress = true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -67,7 +87,6 @@ object SyncManager {
     fun needsSyncOnOpen(context: Context, localText: String): Boolean {
         if (!SyncSettings.enabled(context)) return false
         if (SyncSettings.config(context) == null) return false
-        if (SyncSettings.pendingConflict(context)) return false
         val hash = SyncEngine.sha256Hex(localText.toByteArray(Charsets.UTF_8))
         return SyncEngine.shouldSyncOnOpen(
             lastResult = SyncSettings.lastResult(context),
@@ -76,18 +95,23 @@ object SyncManager {
         )
     }
 
-    suspend fun performSync(
+    /** 前台服务路径（进度通知由服务的 `startForeground` 负责） */
+    suspend fun performSync(context: Context, trigger: SyncTrigger): SyncStatus =
+        performSync(context, trigger, progress = false)
+
+    @VisibleForTesting
+    internal suspend fun performSync(
         context: Context,
         trigger: SyncTrigger,
-        resolution: ConflictChoice? = null
-    ): SyncStatus = mutex.withLock { doSync(context.applicationContext, trigger, resolution) }
+        progress: Boolean
+    ): SyncStatus = mutex.withLock { doSync(context.applicationContext, trigger, progress) }
 
     // ------------------------------------------------------------------ 闸门
 
     private suspend fun doSync(
         context: Context,
         trigger: SyncTrigger,
-        resolution: ConflictChoice?
+        progress: Boolean
     ): SyncStatus {
         if (!SyncSettings.enabled(context)) return SyncStatus.Skipped(SkipReason.NOT_ENABLED)
 
@@ -99,43 +123,30 @@ object SyncManager {
         }
 
         val now = System.currentTimeMillis()
-        if (resolution == null) {
-            // 有待处理的冲突时绝不自动上传：否则下一次「关闭编辑器」会静默覆盖云端那份外部修改
-            if (SyncSettings.pendingConflict(context)) {
-                SyncNotifier.postConflict(context, config.fileName)
-                return SyncStatus.Skipped(SkipReason.PENDING_CONFLICT)
-            }
-            if (SyncEngine.gate(trigger, now, SyncSettings.lastAttemptAt(context)) == GateResult.SKIP_THROTTLED) {
-                Log.i(TAG, "距上次同步不足 ${SyncEngine.MIN_SYNC_INTERVAL_MS / 60_000} 分钟，本次跳过")
-                return SyncStatus.Skipped(SkipReason.THROTTLED)
-            }
+        if (SyncEngine.gate(trigger, now, SyncSettings.lastAttemptAt(context)) == GateResult.SKIP_THROTTLED) {
+            Log.i(TAG, "距上次同步不足 ${SyncEngine.MIN_SYNC_INTERVAL_MS / 60_000} 分钟，本次跳过")
+            return SyncStatus.Skipped(SkipReason.THROTTLED)
         }
 
         SyncSettings.setLastAttemptAt(context, now)
-        _status.value = SyncStatus.Running(trigger, now)
+        val startedAt = System.currentTimeMillis()
+        _status.value = SyncStatus.Running(trigger, startedAt)
+        // 进程内路径没有前台服务，通知得自己发（放在闸门之后：被跳过时不打扰用户）
+        if (progress) SyncNotifier.postProgress(context)
 
-        val client = HttpWebDavClient(
-            config = config,
-            onUntrustedCertificate = { fingerprint ->
-                // 只记录「待确认」，本次仍然失败：证书信任必须由用户在看到指纹后决定
-                SyncSettings.setPendingTlsPin(context, fingerprint)
-            }
-        )
+        val client = clientFactory(config) { fingerprint ->
+            // 只记录「待确认」，本次仍然失败：证书信任必须由用户在看到指纹后决定
+            SyncSettings.setPendingTlsPin(context, fingerprint)
+        }
 
+        var uploaded = false
         return try {
-            val outcome = if (resolution != null) {
-                resolve(context, client, config, resolution)
-            } else {
-                syncOnce(context, client, config)
-            }
+            val outcome = uploadOnce(context, client, config)
+            uploaded = outcome is SyncStatus.Success && outcome.uploaded
             _status.value = outcome
-            when (outcome) {
-                is SyncStatus.Conflict -> SyncNotifier.postConflict(context, config.fileName)
-                is SyncStatus.Success -> {
-                    SyncNotifier.cancelConflict(context)
-                    SyncNotifier.cancelFailure(context)
-                }
-                else -> Unit
+            if (outcome is SyncStatus.Success) {
+                SyncNotifier.cancelFailure(context)
+                if (outcome.uploaded) SyncNotifier.showUploadSucceededToast(context)
             }
             outcome
         } catch (e: CancellationException) {
@@ -149,241 +160,52 @@ object SyncManager {
             SyncNotifier.postFailure(context, error, safeDetail)
             SyncStatus.Failed(System.currentTimeMillis(), error, safeDetail).also { _status.value = it }
         } finally {
+            if (progress) {
+                // 只有**真的上传了**才保证进度通知可见的时长：上传常常几百毫秒就结束，
+                // 立即收掉用户根本看不到；而「本地没变、什么都没做」不该弹通知打扰用户
+                if (uploaded) SyncNotifier.awaitProgressVisibleFor(startedAt)
+                SyncNotifier.cancelProgress(context)
+            }
             client.close()
         }
     }
 
-    // ------------------------------------------------------------------ 正常同步
+    // ------------------------------------------------------------------ 单向覆盖上传
 
-    private suspend fun syncOnce(context: Context, client: WebDavClient, config: SyncConfig): SyncStatus {
-        val url = config.fileUrl
-        val localText = ContentStore.read()
-        val localHash = SyncEngine.sha256Hex(localText.toByteArray(Charsets.UTF_8))
-        val remote = client.stat(url)
-
-        return when (val decision = SyncEngine.decide(
-            remote = remote?.toState(),
-            localHash = localHash,
-            lastUploadedHash = SyncSettings.lastUploadedHash(context),
-            seenEtag = SyncSettings.lastRemoteEtag(context),
-            seenMtime = SyncSettings.lastRemoteMtime(context),
-            seenSize = SyncSettings.lastRemoteSize(context)
-        )) {
-            is SyncDecision.UpToDate -> {
-                SyncSettings.recordSuccess(context, localHash, remote)
-                SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
-            }
-
-            is SyncDecision.Create -> upload(
-                context, client, config, localText, localHash,
-                ifNoneMatchStar = true, expected = null
-            )
-
-            is SyncDecision.Upload -> upload(
-                context, client, config, localText, localHash,
-                ifNoneMatchStar = false, expected = remote
-            )
-
-            // 首次同步且云端已有文件：先取回比对，内容相同就只是「确认一致」，
-            // 不同则交给用户决定（绝不默认覆盖）
-            is SyncDecision.CompareWithRemote -> {
-                val bytes = client.get(url, SyncEngine.MAX_REMOTE_BYTES)
-                when {
-                    bytes == null -> upload(
-                        context, client, config, localText, localHash,
-                        ifNoneMatchStar = true, expected = null
-                    )
-
-                    SyncEngine.sha256Hex(bytes) == localHash -> {
-                        SyncSettings.recordSuccess(context, localHash, client.stat(url) ?: remote)
-                        SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
-                    }
-
-                    else -> recordConflict(context, ConflictReason.REMOTE_EXISTS_ON_FIRST_SYNC, remote)
-                }
-            }
-
-            is SyncDecision.Conflict -> recordConflict(context, decision.reason, remote)
-        }
-    }
-
-    private fun upload(
-        context: Context,
-        client: WebDavClient,
-        config: SyncConfig,
-        localText: String,
-        localHash: String,
-        ifNoneMatchStar: Boolean,
-        expected: RemoteFile?
-    ): SyncStatus {
+    private suspend fun uploadOnce(context: Context, client: WebDavClient, config: SyncConfig): SyncStatus {
+        val localText = contentReader()
         val bytes = localText.toByteArray(Charsets.UTF_8)
-        ensureDirectory(client, config)
+        val localHash = SyncEngine.sha256Hex(bytes)
 
-        val result: RemoteFile? = try {
-            client.putAtomic(
-                url = config.fileUrl,
-                body = bytes,
-                ifNoneMatchStar = ifNoneMatchStar,
-                ifMatch = if (ifNoneMatchStar) null else expected?.etag?.takeIf { it.isNotBlank() },
-                ifUnmodifiedSinceMs = if (ifNoneMatchStar) null else expected?.lastModifiedMs?.takeIf { it > 0 }
-            )
-        } catch (e: WebDavException) {
-            if (e.error != WebDavError.PRECONDITION_FAILED) throw e
-            // 决策之后云端又被改过：用最新状态重新判定一次（只重试一次，不形成循环）
-            val fresh = client.stat(config.fileUrl)
-            when (val retry = SyncEngine.decide(
-                remote = fresh?.toState(),
-                localHash = localHash,
-                lastUploadedHash = SyncSettings.lastUploadedHash(context),
-                seenEtag = SyncSettings.lastRemoteEtag(context),
-                seenMtime = SyncSettings.lastRemoteMtime(context),
-                seenSize = SyncSettings.lastRemoteSize(context)
-            )) {
-                is SyncDecision.Upload, is SyncDecision.Create -> client.putAtomic(
-                    url = config.fileUrl,
-                    body = bytes,
-                    ifNoneMatchStar = retry is SyncDecision.Create,
-                    ifMatch = if (retry is SyncDecision.Create) null else fresh?.etag?.takeIf { it.isNotBlank() },
-                    ifUnmodifiedSinceMs = if (retry is SyncDecision.Create) null else fresh?.lastModifiedMs?.takeIf { it > 0 }
-                )
-
-                is SyncDecision.UpToDate -> {
-                    SyncSettings.recordSuccess(context, localHash, fresh)
-                    return SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
-                }
-
-                is SyncDecision.CompareWithRemote -> {
-                    return recordConflict(context, ConflictReason.REMOTE_EXISTS_ON_FIRST_SYNC, fresh)
-                }
-
-                is SyncDecision.Conflict -> return recordConflict(context, retry.reason, fresh)
-            }
+        if (!SyncEngine.hasLocalChanges(localHash, SyncSettings.lastUploadedHash(context))) {
+            // 本地自上次成功上传后没有任何改动：一个请求都不发（省流量、省服务器配额）
+            SyncSettings.recordSuccess(context, localHash)
+            return SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
         }
 
-        SyncSettings.recordSuccess(context, localHash, result)
+        putForceOverwrite(client, config, bytes)
+        SyncSettings.recordSuccess(context, localHash)
         return SyncStatus.Success(System.currentTimeMillis(), uploaded = true)
     }
 
-    // ------------------------------------------------------------------ 冲突解决
-
-    private suspend fun resolve(
-        context: Context,
-        client: WebDavClient,
-        config: SyncConfig,
-        choice: ConflictChoice
-    ): SyncStatus {
-        val url = config.fileUrl
-        val localText = ContentStore.read()
-        val localBytes = localText.toByteArray(Charsets.UTF_8)
-        val localHash = SyncEngine.sha256Hex(localBytes)
-        val remote = client.stat(url)
-
-        return when (choice) {
-            // 保留本地：先把云端那份存成冲突副本，再用本地覆盖主文件
-            ConflictChoice.KEEP_LOCAL -> {
-                if (remote != null) backupRemoteToConflictCopy(client, config, url)
-                ensureDirectory(client, config)
-                val result = client.putAtomic(
-                    url = url,
-                    body = localBytes,
-                    ifNoneMatchStar = remote == null,
-                    ifMatch = remote?.etag?.takeIf { it.isNotBlank() },
-                    ifUnmodifiedSinceMs = remote?.lastModifiedMs?.takeIf { it > 0 }
-                )
-                SyncSettings.clearConflict(context)
-                SyncSettings.recordSuccess(context, localHash, result)
-                SyncStatus.Success(System.currentTimeMillis(), uploaded = true)
-            }
-
-            // 保留云端：先把本地那份上传成冲突副本，再用云端内容覆盖本地编辑器与小组件
-            ConflictChoice.USE_REMOTE -> {
-                val bytes = client.get(url, SyncEngine.MAX_REMOTE_BYTES)
-                    ?: throw WebDavException(
-                        WebDavError.NOT_FOUND, 404, "云端文件已不存在，无法用云端内容覆盖本地"
-                    )
-                putConflictCopy(client, config, localBytes)
-                val remoteText = String(bytes, Charsets.UTF_8)
-                if (!ContentStore.write(remoteText)) {
-                    throw WebDavException(WebDavError.IO, detail = "云端内容已取回，但写入本地失败")
-                }
-                TextWidgetProvider.updateWidgets(context)
-                // 让还活着的编辑页知道自己手里的内容已经过期
-                SyncSettings.setContentReplacedAt(context, System.currentTimeMillis())
-                SyncSettings.clearConflict(context)
-                SyncSettings.recordSuccess(context, SyncEngine.sha256Hex(bytes), remote)
-                SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
-            }
+    /**
+     * 强制覆盖上传：直接 `PUT` 到目标地址，不带任何条件请求头。
+     *
+     * 目标目录不存在时（服务器回 409/404）先 `MKCOL` 再重试一次 ——
+     * 这样正常路径只需要一个请求，而首次使用（用户填的目录还没建）也能自动建好。
+     */
+    private fun putForceOverwrite(client: WebDavClient, config: SyncConfig, bytes: ByteArray) {
+        try {
+            client.put(config.fileUrl, bytes)
+        } catch (e: WebDavException) {
+            if (e.error != WebDavError.PARENT_NOT_FOUND && e.error != WebDavError.NOT_FOUND) throw e
+            Log.i(TAG, "云端目录不存在（${e.error}），先创建目录再重试上传")
+            client.mkcol(config.directoryUrl)
+            client.put(config.fileUrl, bytes)
         }
-    }
-
-    /** 把云端现有内容复制成冲突副本（优先服务端 COPY，不支持时才 GET + PUT） */
-    private fun backupRemoteToConflictCopy(client: WebDavClient, config: SyncConfig, url: String) {
-        val now = System.currentTimeMillis()
-        for (attempt in 0 until MAX_COPY_ATTEMPTS) {
-            val destUrl = config.conflictCopyUrl(SyncEngine.conflictCopyName(config.fileName, now, attempt))
-            try {
-                client.copy(url, destUrl, overwrite = false)
-                return
-            } catch (e: WebDavException) {
-                when (e.error) {
-                    WebDavError.NOT_SUPPORTED -> {
-                        val bytes = client.get(url, SyncEngine.MAX_REMOTE_BYTES)
-                            ?: throw WebDavException(
-                                WebDavError.NOT_FOUND, 404, "云端文件已不存在，无法生成冲突副本"
-                            )
-                        if (putConflictCopyTo(client, destUrl, bytes, attempt)) return
-                    }
-                    // 副本重名（同一秒内的第二次冲突）：换个名字再来
-                    WebDavError.PRECONDITION_FAILED -> Unit
-                    else -> throw e
-                }
-            }
-        }
-        throw WebDavException(WebDavError.PRECONDITION_FAILED, 412, "无法生成冲突副本名称")
-    }
-
-    /** 把本地内容上传成冲突副本 */
-    private fun putConflictCopy(
-        client: WebDavClient,
-        config: SyncConfig,
-        bytes: ByteArray
-    ) {
-        val now = System.currentTimeMillis()
-        for (attempt in 0 until MAX_COPY_ATTEMPTS) {
-            val destUrl = config.conflictCopyUrl(SyncEngine.conflictCopyName(config.fileName, now, attempt))
-            if (putConflictCopyTo(client, destUrl, bytes, attempt)) return
-        }
-        throw WebDavException(WebDavError.PRECONDITION_FAILED, 412, "无法生成冲突副本名称")
-    }
-
-    /** @return true = 已写入；false = 该名字已存在，换下一个 */
-    private fun putConflictCopyTo(
-        client: WebDavClient,
-        destUrl: String,
-        bytes: ByteArray,
-        attempt: Int
-    ): Boolean = try {
-        client.putAtomic(destUrl, bytes, ifNoneMatchStar = true, ifMatch = null, ifUnmodifiedSinceMs = null)
-        true
-    } catch (e: WebDavException) {
-        if (e.error == WebDavError.PRECONDITION_FAILED && attempt < MAX_COPY_ATTEMPTS - 1) false else throw e
     }
 
     // ------------------------------------------------------------------ 工具
-
-    private fun ensureDirectory(client: WebDavClient, config: SyncConfig) {
-        try {
-            client.mkcol(config.directoryUrl)
-        } catch (e: WebDavException) {
-            // 服务器不支持 MKCOL 时不要在这里失败，交给 PUT 报出更准确的错误
-            if (e.error != WebDavError.NOT_SUPPORTED) throw e
-        }
-    }
-
-    private fun recordConflict(context: Context, reason: ConflictReason, remote: RemoteFile?): SyncStatus {
-        SyncSettings.recordConflict(context, reason, remote)
-        return SyncStatus.Conflict(System.currentTimeMillis(), reason)
-    }
 
     private fun classify(e: Throwable): Pair<WebDavError, String> = when (e) {
         is WebDavException -> e.error to e.detail
@@ -394,6 +216,4 @@ object SyncManager {
     /** 日志里绝不能出现口令 */
     private fun sanitize(detail: String, password: String): String =
         if (password.isNotEmpty()) detail.replace(password, "***") else detail
-
-    private const val MAX_COPY_ATTEMPTS = 3
 }

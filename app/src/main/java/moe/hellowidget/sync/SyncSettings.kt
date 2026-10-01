@@ -13,6 +13,10 @@ import moe.hellowidget.MainActivity.Companion.prefs
  *    下，本机加密密钥同样在设备里，边际收益很小；
  *  - 界面明确建议使用 WebDAV 侧的「应用专用密码」，让这份凭据可以随时单独吊销。
  *
+ * ## v7.5：只剩「本地状态」
+ * 因为同步是纯单向上传（不读云端、不比对、无冲突），这里不再保存云端的任何元数据
+ * （ETag / 修改时间 / 大小）与冲突状态，只保留：配置、上次成功上传的内容哈希、结果与时间。
+ *
  * 除 URL / 文件名校验（在 [SyncConfigValidator]）外，本文件只做读写，不含业务判断。
  */
 object SyncSettings {
@@ -30,13 +34,6 @@ object SyncSettings {
     const val KEY_LAST_ATTEMPT_AT = "sync_last_attempt_at"
     const val KEY_LAST_SUCCESS_AT = "sync_last_success_at"
     const val KEY_LAST_UPLOADED_HASH = "sync_last_uploaded_hash"
-    const val KEY_LAST_ETAG = "sync_last_remote_etag"
-    const val KEY_LAST_MTIME = "sync_last_remote_mtime"
-    const val KEY_LAST_SIZE = "sync_last_remote_size"
-
-    const val KEY_PENDING_CONFLICT = "sync_pending_conflict"
-    const val KEY_CONFLICT_REASON = "sync_conflict_reason"
-    const val KEY_CONTENT_REPLACED_AT = "sync_content_replaced_at"
 
     const val DEFAULT_FILE_NAME = "note.txt"
 
@@ -110,36 +107,24 @@ object SyncSettings {
 
     fun lastSuccessAt(context: Context): Long = context.prefs.getLong(KEY_LAST_SUCCESS_AT, 0L)
 
+    /** 上次**成功上传**的内容哈希；null = 本机从未上传过 */
     fun lastUploadedHash(context: Context): String? =
         context.prefs.getString(KEY_LAST_UPLOADED_HASH, null)?.takeIf { it.isNotBlank() }
-
-    fun lastRemoteEtag(context: Context): String? =
-        context.prefs.getString(KEY_LAST_ETAG, null)?.takeIf { it.isNotBlank() }
-
-    fun lastRemoteMtime(context: Context): Long = context.prefs.getLong(KEY_LAST_MTIME, -1L)
-
-    fun lastRemoteSize(context: Context): Long = context.prefs.getLong(KEY_LAST_SIZE, -1L)
 
     fun setLastAttemptAt(context: Context, at: Long) {
         context.prefs.edit().putLong(KEY_LAST_ATTEMPT_AT, at).apply()
     }
 
-    /** 记录一次成功（上传成功或确认已一致）。remote 为 null 时清空云端基线 */
-    fun recordSuccess(
-        context: Context,
-        uploadedHash: String,
-        remote: RemoteFile?
-    ) {
+    /**
+     * 记录一次成功。`uploadedHash` 是本次同步结束时本地内容的哈希 ——
+     * 它既是下一次「本地有没有变」的基准，也是「确认无需上传」时的基准。
+     */
+    fun recordSuccess(context: Context, uploadedHash: String) {
         context.prefs.edit()
             .putString(KEY_LAST_RESULT, SyncEngine.RESULT_SUCCESS)
             .putString(KEY_LAST_ERROR, "")
             .putLong(KEY_LAST_SUCCESS_AT, System.currentTimeMillis())
             .putString(KEY_LAST_UPLOADED_HASH, uploadedHash)
-            .putString(KEY_LAST_ETAG, remote?.etag)
-            .putLong(KEY_LAST_MTIME, remote?.lastModifiedMs ?: -1L)
-            .putLong(KEY_LAST_SIZE, remote?.size ?: -1L)
-            .putBoolean(KEY_PENDING_CONFLICT, false)
-            .remove(KEY_CONFLICT_REASON)
             .apply()
     }
 
@@ -150,43 +135,6 @@ object SyncSettings {
             .apply()
     }
 
-    fun recordConflict(context: Context, reason: ConflictReason, remote: RemoteFile?) {
-        context.prefs.edit()
-            .putString(KEY_LAST_RESULT, SyncEngine.RESULT_CONFLICT)
-            .putString(KEY_LAST_ERROR, "")
-            .putBoolean(KEY_PENDING_CONFLICT, true)
-            .putString(KEY_CONFLICT_REASON, reason.name)
-            .putString(KEY_LAST_ETAG, remote?.etag)
-            .putLong(KEY_LAST_MTIME, remote?.lastModifiedMs ?: -1L)
-            .putLong(KEY_LAST_SIZE, remote?.size ?: -1L)
-            .apply()
-    }
-
-    fun pendingConflict(context: Context): Boolean =
-        context.prefs.getBoolean(KEY_PENDING_CONFLICT, false)
-
-    fun conflictReason(context: Context): ConflictReason? =
-        context.prefs.getString(KEY_CONFLICT_REASON, null)?.let {
-            runCatching { ConflictReason.valueOf(it) }.getOrNull()
-        }
-
-    fun clearConflict(context: Context) {
-        context.prefs.edit().putBoolean(KEY_PENDING_CONFLICT, false).remove(KEY_CONFLICT_REASON).apply()
-    }
-
-    // ------------------------------------------------------------ 本地内容被云端替换
-
-    /**
-     * 最近一次「用云端内容覆盖本地」的时间。
-     * 编辑页 onResume 靠它发现自己手里的内容已经过期（同步页把它换掉了），从而重新载入。
-     */
-    fun contentReplacedAt(context: Context): Long =
-        context.prefs.getLong(KEY_CONTENT_REPLACED_AT, 0L)
-
-    fun setContentReplacedAt(context: Context, at: Long) {
-        context.prefs.edit().putLong(KEY_CONTENT_REPLACED_AT, at).apply()
-    }
-
     /** 仅用于单测/调试：清空全部同步状态（不动用户填的地址与口令） */
     fun resetRuntimeState(context: Context) {
         context.prefs.edit()
@@ -195,12 +143,6 @@ object SyncSettings {
             .remove(KEY_LAST_ATTEMPT_AT)
             .remove(KEY_LAST_SUCCESS_AT)
             .remove(KEY_LAST_UPLOADED_HASH)
-            .remove(KEY_LAST_ETAG)
-            .remove(KEY_LAST_MTIME)
-            .remove(KEY_LAST_SIZE)
-            .remove(KEY_PENDING_CONFLICT)
-            .remove(KEY_CONFLICT_REASON)
-            .remove(KEY_CONTENT_REPLACED_AT)
             .apply()
     }
 }

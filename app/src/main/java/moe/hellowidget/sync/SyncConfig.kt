@@ -2,11 +2,7 @@ package moe.hellowidget.sync
 
 import java.net.URI
 import java.net.URISyntaxException
-import java.text.ParseException
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
-import java.util.TimeZone
 
 /**
  * 一次同步所需的全部配置（已归一化）。
@@ -29,9 +25,6 @@ data class SyncConfig(
 
     /** 主文件的完整 URL（文件名已做百分号编码） */
     val fileUrl: String get() = baseUrl + UrlCodec.encodePathSegment(fileName)
-
-    /** 冲突副本的完整 URL */
-    fun conflictCopyUrl(copyName: String): String = baseUrl + UrlCodec.encodePathSegment(copyName)
 
     /** 是否明文 http（界面需要给出风险提示） */
     val isCleartext: Boolean get() = baseUrl.startsWith("http://", ignoreCase = true)
@@ -175,43 +168,4 @@ object UrlCodec {
     }
 
     private val HEX = "0123456789ABCDEF".toCharArray()
-}
-
-/**
- * HTTP 日期（RFC 1123 / RFC 850 / asctime）解析与格式化。
- *
- * WebDAV 的 `getlastmodified` 与 `Last-Modified` 都是 RFC 1123 GMT 格式；
- * 少数服务器会返回另外两种历史格式，一并兼容。
- * `SimpleDateFormat` 不是线程安全的，因此每次调用都新建（同步频率很低，代价可忽略）。
- */
-object HttpDates {
-
-    private val RFC_1123 = "EEE, dd MMM yyyy HH:mm:ss zzz"
-    private val RFC_850 = "EEEE, dd-MMM-yy HH:mm:ss zzz"
-    private val ASCTIME = "EEE MMM d HH:mm:ss yyyy"
-
-    /** @return epoch 毫秒；无法解析返回 -1 */
-    fun parse(value: String?): Long {
-        if (value.isNullOrBlank()) return -1L
-        for (pattern in listOf(RFC_1123, RFC_850, ASCTIME)) {
-            val sdf = SimpleDateFormat(pattern, Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("GMT")
-                isLenient = false
-            }
-            try {
-                return sdf.parse(value)?.time ?: continue
-            } catch (_: ParseException) {
-                // 换下一种格式
-            }
-        }
-        return -1L
-    }
-
-    /** 格式化成 RFC 1123 GMT（用于 If-Unmodified-Since） */
-    fun format(epochMs: Long): String {
-        val sdf = SimpleDateFormat(RFC_1123, Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("GMT")
-        }
-        return sdf.format(Date(epochMs))
-    }
 }

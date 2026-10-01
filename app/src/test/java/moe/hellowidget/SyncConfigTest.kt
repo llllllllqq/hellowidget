@@ -2,7 +2,6 @@ package moe.hellowidget
 
 import moe.hellowidget.sync.ConfigError
 import moe.hellowidget.sync.ConfigValidation
-import moe.hellowidget.sync.HttpDates
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncConfigValidator
 import moe.hellowidget.sync.UrlCodec
@@ -11,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 配置校验 / URL 编码 / HTTP 日期解析的单元测试（纯 JVM）。
+ * 配置校验 / URL 编码的单元测试（纯 JVM）。
  *
  * 这些是最容易被忽略、又最能坑用户的一层：地址里少一个斜杠、文件名带空格没编码，
  * 表现出来都是「同步失败」而不是「参数写错了」。
@@ -103,7 +102,7 @@ class SyncConfigTest {
     }
 
     @Test
-    fun fileUrl_andConflictCopyUrl_areBuiltFromEncodedSegments() {
+    fun fileUrl_isBuiltFromEncodedSegments() {
         val config = SyncConfig(
             baseUrl = "https://dav.example.com/dav/",
             fileName = "我的 笔记.txt",
@@ -111,27 +110,6 @@ class SyncConfigTest {
             password = "p"
         )
         assertEquals("https://dav.example.com/dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0.txt", config.fileUrl)
-        assertEquals(
-            "https://dav.example.com/dav/note.conflict-20261001-031500.txt",
-            config.conflictCopyUrl("note.conflict-20261001-031500.txt")
-        )
         assertEquals("dav.example.com", config.host)
-    }
-
-    // ------------------------------------------------------------ HTTP 日期
-
-    @Test
-    fun httpDates_parsesAndFormatsRfc1123() {
-        val expected = java.time.Instant.parse("2026-10-01T03:15:00Z").toEpochMilli()
-        val weekday = java.time.LocalDate.of(2026, 10, 1).dayOfWeek.name
-            .lowercase().replaceFirstChar { it.uppercase() }.take(3)
-        val header = "$weekday, 01 Oct 2026 03:15:00 GMT"
-
-        assertEquals(expected, HttpDates.parse(header))
-        assertEquals(header, HttpDates.format(expected))
-        // 无法解析 / 空值时返回 -1，由调用方降级，而不是抛异常打断同步
-        assertEquals(-1L, HttpDates.parse("not a date"))
-        assertEquals(-1L, HttpDates.parse(null))
-        assertEquals(-1L, HttpDates.parse(""))
     }
 }

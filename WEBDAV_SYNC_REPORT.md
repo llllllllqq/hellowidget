@@ -1,5 +1,11 @@
 # HelloWidget v7.2 —— WebDAV 同步：设计、取舍与验证报告
 
+> ⚠️ **本文描述的部分行为已被 v7.5 取代**：v7.5 起同步改为**纯单向上传**——
+> 不再读取/比对云端状态，不再有冲突检测与冲突副本，也不再使用临时文件 + `MOVE`。
+> 现行为见 [V7.5_ONE_WAY_UPLOAD_REPORT.md](V7.5_ONE_WAY_UPLOAD_REPORT.md)；
+> 本文保留为当时的设计与验证记录。
+
+
 > 本文记录 v7.2「WebDAV 同步」这一新功能的设计依据、产品决定、安全取舍，以及**每一条结论由什么证据支撑**。
 > 写作风格与 [V7.1_RELEASE_REPORT.md](V7.1_RELEASE_REPORT.md) / [QA_FIX_REPORT.md](QA_FIX_REPORT.md) 保持一致：只写有证据的结论。
 

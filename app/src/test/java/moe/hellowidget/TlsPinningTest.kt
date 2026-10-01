@@ -29,10 +29,8 @@ import org.junit.Test
  */
 class TlsPinningTest {
 
-    private fun headOk(): StubHttpServer.Response = StubHttpServer.Response(
-        200,
-        headers = listOf("ETag" to "\"e1\"", "Content-Length" to "3")
-    )
+    /** v7.5 起客户端只有 PUT / MKCOL 两个动作，TLS 用例用 PUT 走完整往返 */
+    private fun putOk(): StubHttpServer.Response = StubHttpServer.Response(201, "Created")
 
     private fun clientFor(
         server: StubHttpServer,
@@ -53,9 +51,10 @@ class TlsPinningTest {
     @Test
     fun selfSignedCertificate_isRejectedAndItsFingerprintIsCaptured() {
         var captured: String? = null
-        StubHttpServer(TlsFixtures.sslContext) { headOk() }.use { server ->
+        StubHttpServer(TlsFixtures.sslContext) { putOk() }.use { server ->
             val error = try {
-                clientFor(server, pin = null) { captured = it }.stat(server.baseUrl() + "note.txt")
+                clientFor(server, pin = null) { captured = it }
+                    .put(server.baseUrl() + "note.txt", "abc".toByteArray())
                 fail("未信任的自签名证书必须被拒绝")
                 return
             } catch (e: WebDavException) {
@@ -69,27 +68,27 @@ class TlsPinningTest {
 
     @Test
     fun confirmedFingerprint_letsTheHandshakeThrough() {
-        StubHttpServer(TlsFixtures.sslContext) { headOk() }.use { server ->
-            val remote = try {
+        StubHttpServer(TlsFixtures.sslContext) { putOk() }.use { server ->
+            try {
                 clientFor(server, pin = TlsFixtures.fingerprint)
-                    .stat(server.baseUrl() + "note.txt")
+                    .put(server.baseUrl() + "note.txt", "abc".toByteArray())
             } catch (e: WebDavException) {
                 fail("HTTPS 往返失败：${e.message}；服务端异常：${server.errors}")
                 return
             }
-            assertNotNull("指纹匹配后握手应成功", remote)
-            assertEquals("\"e1\"", remote!!.etag)
-            assertEquals("HEAD /dav/note.txt", server.targets()[0])
+            assertNotNull("指纹匹配后握手应成功", server.requests.firstOrNull())
+            assertEquals("PUT /dav/note.txt", server.targets()[0])
+            assertEquals("abc", server.requests[0].bodyText())
         }
     }
 
     @Test
     fun wrongFingerprint_isStillRejected_andTheRealFingerprintIsReported() {
         var captured: String? = null
-        StubHttpServer(TlsFixtures.sslContext) { headOk() }.use { server ->
+        StubHttpServer(TlsFixtures.sslContext) { putOk() }.use { server ->
             val error = try {
                 clientFor(server, pin = TlsFixtures.wrongFingerprint) { captured = it }
-                    .stat(server.baseUrl() + "note.txt")
+                    .put(server.baseUrl() + "note.txt", "abc".toByteArray())
                 fail("指纹不匹配时必须拒绝")
                 return
             } catch (e: WebDavException) {

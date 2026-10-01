@@ -4,8 +4,6 @@ import android.app.Application
 import android.content.Context
 import android.os.Looper
 import android.widget.EditText
-import moe.hellowidget.sync.ConflictReason
-import moe.hellowidget.sync.RemoteFile
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncLauncher
@@ -28,7 +26,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 
 /**
- * 同步状态的持久化、触发闸门与「未启用时行为与 v7.1 完全一致」的回归测试。
+ * 同步状态的持久化、触发入口，以及「未启用时行为与 v7.1 完全一致」的回归测试。
  *
  * 最后一条尤其重要：同步是 v7.2 新增的能力，**默认关闭**，
  * 未启用时不得启动任何服务、不得触碰编辑器的焦点与光标（v7.1 的「进入即输入」是发布门禁）。
@@ -57,25 +55,27 @@ class SyncSettingsTest {
     // ------------------------------------------------------------ 状态持久化
 
     @Test
-    fun recordSuccess_storesBaselineAndClearsConflict() {
-        SyncSettings.recordConflict(context, ConflictReason.REMOTE_MODIFIED, RemoteFile("\"e1\"", 5L, 5L))
-        assertTrue(SyncSettings.pendingConflict(context))
-        assertEquals(SyncEngine.RESULT_CONFLICT, SyncSettings.lastResult(context))
-
-        SyncSettings.recordSuccess(context, "hash-1", RemoteFile("\"e2\"", 9L, 7L))
+    fun recordSuccess_storesTheUploadedHashAsTheOnlyBaseline() {
+        SyncSettings.recordSuccess(context, "hash-1")
 
         assertEquals(SyncEngine.RESULT_SUCCESS, SyncSettings.lastResult(context))
         assertEquals("hash-1", SyncSettings.lastUploadedHash(context))
-        assertEquals("\"e2\"", SyncSettings.lastRemoteEtag(context))
-        assertEquals(9L, SyncSettings.lastRemoteMtime(context))
-        assertEquals(7L, SyncSettings.lastRemoteSize(context))
-        assertFalse("成功后必须清掉待处理冲突，否则自动同步会一直被暂停", SyncSettings.pendingConflict(context))
+        assertEquals("", SyncSettings.lastError(context))
         assertTrue(SyncSettings.lastSuccessAt(context) > 0)
     }
 
     @Test
+    fun recordSuccess_clearsAPreviousFailure() {
+        SyncSettings.recordFailure(context, WebDavError.UNAUTHORIZED)
+        SyncSettings.recordSuccess(context, "hash-1")
+
+        assertEquals(SyncEngine.RESULT_SUCCESS, SyncSettings.lastResult(context))
+        assertEquals("", SyncSettings.lastError(context))
+    }
+
+    @Test
     fun recordFailure_keepsTheUploadedHashSoPendingChangesAreStillDetected() {
-        SyncSettings.recordSuccess(context, "hash-1", RemoteFile("\"e1\"", 1L, 1L))
+        SyncSettings.recordSuccess(context, "hash-1")
         SyncSettings.recordFailure(context, WebDavError.UNAUTHORIZED)
 
         assertEquals(SyncEngine.RESULT_FAILED, SyncSettings.lastResult(context))
@@ -85,18 +85,24 @@ class SyncSettingsTest {
     }
 
     @Test
-    fun recordConflict_keepsBaselineAndShowsReason() {
-        SyncSettings.recordSuccess(context, "hash-1", RemoteFile("\"e1\"", 1L, 1L))
-        SyncSettings.recordConflict(context, ConflictReason.BOTH_MODIFIED, RemoteFile("\"e9\"", 9L, 9L))
+    fun lastUploadedHash_isNullBeforeTheFirstUpload() {
+        SyncSettings.resetRuntimeState(context)
+        assertNull("从未上传过：第一次同步必须无条件上传", SyncSettings.lastUploadedHash(context))
+    }
 
-        assertTrue(SyncSettings.pendingConflict(context))
-        assertEquals(ConflictReason.BOTH_MODIFIED, SyncSettings.conflictReason(context))
-        assertEquals("\"e9\"", SyncSettings.lastRemoteEtag(context))
-        // 冲突未解决前，哈希基线保持不变：用户解决后仍能正确判断
-        assertEquals("hash-1", SyncSettings.lastUploadedHash(context))
+    @Test
+    fun resetRuntimeState_clearsResultAndHashButKeepsCredentials() {
+        configure(enabled = true)
+        SyncSettings.recordSuccess(context, "hash-1")
+        SyncSettings.setLastAttemptAt(context, 123L)
 
-        SyncSettings.clearConflict(context)
-        assertFalse(SyncSettings.pendingConflict(context))
+        SyncSettings.resetRuntimeState(context)
+
+        assertEquals(SyncEngine.RESULT_NEVER, SyncSettings.lastResult(context))
+        assertNull(SyncSettings.lastUploadedHash(context))
+        assertEquals(0L, SyncSettings.lastAttemptAt(context))
+        assertEquals("note.txt", SyncSettings.fileName(context))
+        assertEquals("http://127.0.0.1:1/dav/", SyncSettings.baseUrl(context))
     }
 
     @Test
@@ -105,12 +111,10 @@ class SyncSettingsTest {
         assertNull("地址为空时不应拿到配置", SyncSettings.config(context))
 
         // 非法的 scheme 同样拿不到配置（避免把请求发到莫名其妙的地方）
-        context.let { ctx ->
-            ctx.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putString(SyncSettings.KEY_BASE_URL, "ftp://x/y/")
-                .apply()
-        }
+        context.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(SyncSettings.KEY_BASE_URL, "ftp://x/y/")
+            .apply()
         assertNull(SyncSettings.config(context))
     }
 
@@ -129,6 +133,8 @@ class SyncSettingsTest {
         assertEquals("AB:CD", config.tlsPinSha256)
     }
 
+    // ------------------------------------------------------------ 打开应用时是否补一次
+
     @Test
     fun needsSyncOnOpen_respectsDisabledSwitch() {
         configure(enabled = false)
@@ -145,16 +151,9 @@ class SyncSettingsTest {
     @Test
     fun needsSyncOnOpen_trueWhenThereAreUnuploadedChanges() {
         configure(enabled = true)
-        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("旧内容".toByteArray()), null)
+        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("旧内容".toByteArray()))
         assertTrue(SyncManager.needsSyncOnOpen(context, "新内容"))
         assertFalse(SyncManager.needsSyncOnOpen(context, "旧内容"))
-    }
-
-    @Test
-    fun needsSyncOnOpen_isFalseWhileAConflictIsPending() {
-        configure(enabled = true)
-        SyncSettings.recordConflict(context, ConflictReason.REMOTE_MODIFIED, null)
-        assertFalse("冲突未解决时不自动发起同步", SyncManager.needsSyncOnOpen(context, "内容"))
     }
 
     // ------------------------------------------------------------ 触发入口

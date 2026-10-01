@@ -1,13 +1,10 @@
 package moe.hellowidget.sync
 
-/** 云端文件的元数据（stat / PUT 的结果） */
-data class RemoteFile(val etag: String?, val lastModifiedMs: Long, val size: Long) {
-    fun toState(): RemoteState = RemoteState(etag, lastModifiedMs, size)
-}
-
 /**
  * 同步失败的可分类原因。界面按它给出本地化文案，测试按它断言。
- * 分类刻意做得细：用户看到「凭据错误」和「服务器不支持原子写入」需要完全不同的动作。
+ * 分类刻意做得细：用户看到「凭据错误」和「服务器不支持写入」需要完全不同的动作。
+ *
+ * v7.5 起不再有「前置条件失败」与「文件过大」两种 —— 上传是强制覆盖、也不下载云端内容。
  */
 enum class WebDavError {
     NOT_CONFIGURED,
@@ -16,7 +13,6 @@ enum class WebDavError {
     NOT_FOUND,
     PARENT_NOT_FOUND,
     NOT_SUPPORTED,
-    PRECONDITION_FAILED,
     LOCKED,
     INSUFFICIENT_STORAGE,
     SERVER_ERROR,
@@ -25,7 +21,6 @@ enum class WebDavError {
     TIMEOUT,
     TLS_UNTRUSTED,
     TLS,
-    TOO_LARGE,
     BAD_RESPONSE,
     IO
 }
@@ -40,42 +35,25 @@ class WebDavException(
 /**
  * WebDAV 客户端抽象。
  *
+ * v7.5 起只保留「单向上传」需要的两个方法：写文件（强制覆盖）与建目录。
+ * 读取（HEAD/PROPFIND/GET）、复制与删除都不再需要 —— 同步不读云端状态，
+ * 因此客户端里也没有任何条件请求。
+ *
  * 所有方法都是**阻塞**的（内部是 Socket IO），调用方负责放到 Dispatchers.IO 上；
  * 接口化是为了让 SyncManager 的测试可以注入假实现。
  */
 interface WebDavClient {
 
-    /** 取远端元数据；文件不存在返回 null。抛 [WebDavException] 表示其他失败。 */
-    fun stat(url: String): RemoteFile?
-
-    /** 读取正文（上限 [maxBytes]，超限抛 TOO_LARGE）；文件不存在返回 null */
-    fun get(url: String, maxBytes: Int): ByteArray?
-
     /**
-     * 原子上传：先 PUT 到 `<url>.uploading` 再 MOVE 覆盖正式文件。
-     * 目的与本地 DataStore 的「写临时文件 + 原子重命名」完全一致 ——
-     * 连接中断时正式文件要么是旧的完整内容，要么是新的完整内容，绝不被截断。
+     * 把正文写到该地址，**强制覆盖**云端已有内容。
      *
-     * @param ifNoneMatchStar true = 只在目标不存在时创建（并发创建会得到 412）
-     * @param ifMatch ETag 前置条件（创建场景传 null）
-     * @param ifUnmodifiedSinceMs 无 ETag 时的退路：目标修改时间不得晚于该时刻
+     * 不带任何 `If-Match` / `If-None-Match` / `If-Unmodified-Since` 条件：
+     * 本应用的产品语义就是「本地是唯一真相，上传即覆盖」。
      */
-    fun putAtomic(
-        url: String,
-        body: ByteArray,
-        ifNoneMatchStar: Boolean,
-        ifMatch: String?,
-        ifUnmodifiedSinceMs: Long?
-    ): RemoteFile?
-
-    /** 服务端复制（不传输正文），用于生成冲突副本 */
-    fun copy(sourceUrl: String, destUrl: String, overwrite: Boolean)
+    fun put(url: String, body: ByteArray)
 
     /** 创建集合（目录）；已存在视为成功 */
     fun mkcol(url: String)
-
-    /** 删除；不存在视为成功 */
-    fun delete(url: String)
 
     fun close()
 }

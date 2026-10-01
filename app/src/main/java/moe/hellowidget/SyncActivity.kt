@@ -21,7 +21,6 @@ import kotlinx.coroutines.launch
 import moe.hellowidget.databinding.ActivitySyncBinding
 import moe.hellowidget.sync.ConfigError
 import moe.hellowidget.sync.ConfigValidation
-import moe.hellowidget.sync.ConflictChoice
 import moe.hellowidget.sync.SyncConfigValidator
 import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncErrorText
@@ -35,20 +34,18 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * WebDAV 同步设置页：地址 / 文件名 / 凭据 / 开关，以及同步状态、明文警告、证书指纹与冲突处理。
+ * WebDAV 同步设置页：地址 / 文件名 / 凭据 / 开关，以及同步状态、明文警告与证书指纹。
  *
  * 交互约定：
  *  - 「立即同步」会先把表单落盘再触发（用户改完地址直接点同步是最自然的操作）；
- *  - 冲突弹窗只在有待处理冲突时出现，选「稍后」本次不再打扰；
+ *  - 同步是**纯单向上传**：本机内容一变就整份覆盖云端，不读取、不比对云端状态，
+ *    因此这个页面没有也不需要冲突处理；
  *  - 自签名证书必须由用户在看到指纹后确认，确认结果按指纹固定（TOFU），
  *    指纹变化会再次要求确认 —— 不是「无条件信任所有证书」。
  */
 class SyncActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySyncBinding
-
-    /** 冲突弹窗每次进入页面只弹一次，选「稍后」后不再反复打扰 */
-    private var conflictDialogShown = false
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 拒绝也能同步，只是没有通知栏进度 */ }
@@ -199,7 +196,6 @@ class SyncActivity : AppCompatActivity() {
         if (cleartext) binding.syncWarning.text = getString(R.string.sync_cleartext_warning)
 
         renderTlsState()
-        renderConflictState()
     }
 
     private fun lastResultLine(): String {
@@ -214,7 +210,6 @@ class SyncActivity : AppCompatActivity() {
                     formatTime(attemptAt),
                     SyncErrorText.ofName(this, SyncSettings.lastError(this)) ?: ""
                 )
-            SyncEngine.RESULT_CONFLICT -> getString(R.string.sync_status_conflict)
             else -> getString(R.string.sync_status_never)
         }
     }
@@ -223,7 +218,6 @@ class SyncActivity : AppCompatActivity() {
         moe.hellowidget.sync.SkipReason.NOT_ENABLED -> R.string.sync_skip_disabled
         moe.hellowidget.sync.SkipReason.NOT_CONFIGURED -> R.string.sync_skip_not_configured
         moe.hellowidget.sync.SkipReason.THROTTLED -> R.string.sync_skip_throttled
-        moe.hellowidget.sync.SkipReason.PENDING_CONFLICT -> R.string.sync_skip_conflict
     }
 
     private fun renderTlsState() {
@@ -247,31 +241,6 @@ class SyncActivity : AppCompatActivity() {
                 binding.syncTrust.visibility = View.GONE
             }
         }
-    }
-
-    private fun renderConflictState() {
-        if (!SyncSettings.pendingConflict(this)) {
-            conflictDialogShown = false
-            return
-        }
-        if (!conflictDialogShown) showConflictDialog()
-    }
-
-    private fun showConflictDialog() {
-        if (conflictDialogShown || isFinishing || isDestroyed) return
-        conflictDialogShown = true
-        val fileName = SyncSettings.config(this)?.fileName ?: SyncSettings.fileName(this)
-        AlertDialog.Builder(this)
-            .setTitle(R.string.sync_conflict_dialog_title)
-            .setMessage(getString(R.string.sync_conflict_dialog_message, fileName))
-            .setPositiveButton(R.string.sync_conflict_keep_local) { _, _ ->
-                SyncLauncher.request(this, SyncTrigger.CONFLICT_RESOLVE, ConflictChoice.KEEP_LOCAL)
-            }
-            .setNeutralButton(R.string.sync_conflict_use_remote) { _, _ ->
-                SyncLauncher.request(this, SyncTrigger.CONFLICT_RESOLVE, ConflictChoice.USE_REMOTE)
-            }
-            .setNegativeButton(R.string.sync_conflict_later, null)
-            .show()
     }
 
     private fun confirmPendingFingerprint() {

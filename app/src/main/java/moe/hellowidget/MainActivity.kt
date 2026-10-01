@@ -23,7 +23,6 @@ import androidx.lifecycle.lifecycleScope
 import moe.hellowidget.databinding.ActivityMainBinding
 import moe.hellowidget.sync.SyncLauncher
 import moe.hellowidget.sync.SyncManager
-import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncTrigger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -72,13 +71,6 @@ class MainActivity : AppCompatActivity() {
 
     /** 「已达最大长度」提示的限流时间戳，避免连续输入时 Toast 刷屏 */
     private var lastTooLongToastAt = 0L
-
-    /**
-     * 本次载入内容时记录的「云端覆盖本地」时间戳（[SyncSettings.contentReplacedAt]）。
-     * onResume 发现它变了，说明同步页用云端内容替换了本地文件，编辑器需要重新载入。
-     * 未使用同步功能时该值恒为 0，v7.1 的行为完全不变。
-     */
-    private var loadedContentVersion = 0L
 
     /**
      * 内容长度上限（字符）。
@@ -135,8 +127,6 @@ class MainActivity : AppCompatActivity() {
 
         // 异步恢复上次保存的内容
         lifecycleScope.launch {
-            // 记录「云端覆盖本地」的版本号：读取内容之前先取，避免与并发的替换动作错位
-            loadedContentVersion = SyncSettings.contentReplacedAt(this@MainActivity)
             val savedText = withContext(Dispatchers.IO) { ContentStore.read() }
             loadCompleted = true
             if (!editorTouched) {
@@ -260,7 +250,6 @@ class MainActivity : AppCompatActivity() {
         openingSettings = false
         savedOnLeave = false
         applyEditorColors()
-        reloadIfContentReplaced()
     }
 
     /**
@@ -435,26 +424,6 @@ class MainActivity : AppCompatActivity() {
     private fun maybeSyncOnOpen(localText: String) {
         if (!SyncManager.needsSyncOnOpen(this, localText)) return
         SyncLauncher.request(this, SyncTrigger.APP_OPEN)
-    }
-
-    /**
-     * 同步页选择「用云端覆盖本地」后，磁盘内容会变成云端那份；本 Activity 还活在后台时
-     * 它手里的文本已经过期。这里在回到前台时同步一次，避免用户看到旧内容又把它覆盖回去。
-     * 未使用同步功能时该时间戳恒为 0，本方法直接返回。
-     */
-    private fun reloadIfContentReplaced() {
-        if (!loadCompleted) return
-        val version = SyncSettings.contentReplacedAt(this)
-        if (version == loadedContentVersion) return
-        loadedContentVersion = version
-        lifecycleScope.launch {
-            val text = withContext(Dispatchers.IO) { ContentStore.read() }
-            binding.editor.setText(text)
-            binding.editor.setSelection(0)
-            Toast.makeText(
-                applicationContext, R.string.sync_remote_applied, Toast.LENGTH_SHORT
-            ).show()
-        }
     }
 
     /** 达到长度上限时提示一次（限流，避免每次按键都弹） */

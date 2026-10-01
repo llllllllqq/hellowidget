@@ -34,13 +34,12 @@ import org.junit.runner.RunWith
 class SyncActivityImeInstrumentedTest {
 
     /**
-     * 清掉可能残留的待处理冲突与待确认指纹：它们会让同步页自动弹出对话框，
-     * 抢走输入焦点、让本用例失去意义（仪器化测试共用同一份 prefs）。
+     * 清掉可能残留的待确认证书指纹：它会让同步页多显示一行并改变布局，
+     * 仪器化测试共用同一份 prefs，必须显式复位。
      */
     @Before
     fun clearPendingState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        SyncSettings.clearConflict(context)
         SyncSettings.setPendingTlsPin(context, null)
     }
 
