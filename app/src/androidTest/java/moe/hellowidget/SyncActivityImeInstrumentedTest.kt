@@ -3,6 +3,7 @@ package moe.hellowidget
 import android.os.SystemClock
 import android.view.View
 import android.widget.EditText
+import android.widget.ScrollView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
@@ -23,10 +24,11 @@ import org.junit.runner.RunWith
  * 键盘就会盖住下半部分表单和「保存设置 / 立即同步」按钮 —— 而官方文档恰好把
  * **设置页**列为「即使自认为已适配也要单独检查的低流量页面」。
  *
- * 这里断言两件事，前者是机制、后者是用户可见的结果：
+ * 用例先把表单滚到底（表单比屏幕高，不滚到底断言就没有意义），再断言三件事：
  *  1. 输入法可见时，滚动容器的高度真的变矮了（`ScrollView.height <= 窗口高 - imeBottom`）
  *     —— 只有外面套一层 FrameLayout、把 ime 高度加在那一层上才成立；
- *  2. 聚焦的输入框与底部按钮都在键盘顶部之上。
+ *  2. 滚到底时底部按钮停在键盘顶部之上；
+ *  3. 聚焦的输入框也在键盘顶部之上。
  */
 @RunWith(AndroidJUnit4::class)
 class SyncActivityImeInstrumentedTest {
@@ -48,7 +50,7 @@ class SyncActivityImeInstrumentedTest {
             scenario.onActivity { activity ->
                 // 表单比屏幕高，先滚到底：这样断言的是「最底部的控件」是否被键盘盖住，
                 // 而不是「碰巧没滚到底所以看得见」
-                val scroll = activity.findViewById<View>(R.id.sync_scroll)
+                val scroll = activity.findViewById<ScrollView>(R.id.sync_scroll)
                 scroll.fullScroll(View.FOCUS_DOWN)
                 activity.findViewById<EditText>(R.id.sync_password).requestFocus()
                 val root = activity.findViewById<View>(android.R.id.content)
@@ -63,13 +65,13 @@ class SyncActivityImeInstrumentedTest {
             // 键盘动画 + 因 insets 变化触发的重新布局/滚动都要落定
             SystemClock.sleep(600)
             scenario.onActivity { activity ->
-                activity.findViewById<View>(R.id.sync_scroll).fullScroll(View.FOCUS_DOWN)
+                activity.findViewById<ScrollView>(R.id.sync_scroll).fullScroll(View.FOCUS_DOWN)
             }
             SystemClock.sleep(300)
 
             scenario.onActivity { activity ->
                 val root = activity.findViewById<View>(android.R.id.content)
-                val scroll = activity.findViewById<View>(R.id.sync_scroll)
+                val scroll = activity.findViewById<ScrollView>(R.id.sync_scroll)
                 val field = activity.findViewById<View>(R.id.sync_password)
                 val button = activity.findViewById<View>(R.id.sync_now)
 
