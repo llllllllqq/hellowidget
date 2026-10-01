@@ -1,22 +1,29 @@
 # HelloWidget
 
-一个轻量 Android 应用：**文本编辑器 + 桌面小组件**。在应用里输入任意长文本，退出后内容以**可上下滚动的小部件**形式展示在桌面，支持自定义外观，且**零后台进程、数据永不损坏**。
+一个轻量 Android 应用：**文本编辑器 + 桌面小组件**。在应用里输入文本，退出后内容以**可上下滚动的小部件**形式展示在桌面，支持自定义外观，且**零后台进程、数据永不损坏**。
+
+当前版本：**v7.0**（versionCode 15，minSdk 21 / targetSdk 35）
 
 ## 功能特性
 
 | 特性 | 说明 |
 |---|---|
 | 📝 文本编辑 | 全屏多行编辑器，内容仅在退出 / 返回 / 切后台时保存（不做编辑自动保存） |
-| 🌙 自适应深色模式 | 编辑页随系统深色模式自动切换黑白（黑底白字 / 白底黑字），切换时自动保存当前内容；小组件颜色不受影响 |
+| 🌙 自适应深色模式 | 编辑页随系统深色模式自动切换黑白，切换时自动保存当前内容；小组件颜色不受影响 |
 | 🪟 可滚动小组件 | ListView 集合式小组件，桌面即可上下滑动阅读全部内容（所有 Android 版本支持） |
 | 🎨 外观自定义 | 设置页可调小组件字体大小(10–34sp)、字体颜色、背景颜色、背景透明度；并可分别自定义**浅色模式 / 深色模式编辑器**的背景色与文字色；实时预览即时生效，支持自定义 RGB 取色 |
 | 🔒 原子写入 | 内容存储采用 **Jetpack DataStore** 官方原子写入（临时文件 + fsync + 原子重命名），任意时刻崩溃都不会产生"写一半"的损坏文件 |
 | ✅ CRC32 校验 | 文件格式 `[UTF-8 内容][4字节 CRC32]`，读取时校验；发现损坏自动保留现场文件并重建 |
 | 🪫 零后台占用 | 无自动保存、无轮询、无常驻服务。小组件数据服务为绑定式，仅桌面渲染时才临时启动；保存完成即结束，CPU 自动释放 |
 | 🔔 保存确认 | 真正写盘成功后才提示「已保存 ✓」；失败提示「保存失败」，旧内容不受影响 |
+| 🔐 隐私优先 | `allowBackup=false` + `dataExtractionRules`：用户文本**既不参与云备份，也不参与设备间迁移** |
+| 📏 长度上限 | 内容上限 100,000 字符，避免超大文本导致内存溢出；超出时给出可见提示 |
+| ♿ 无障碍 | 色板具备可访问名称、选中状态与 48dp 触控目标；滑杆带 `labelFor` 关联标签 |
+| 🌐 中英双语 | 默认中文，`values-en` 提供英文 |
 
 ## 版本历史
 
+- **v7.0** 投产 QA 修复：保存门禁缺陷（加载未完成时的输入丢失）、隐私备份、内存上限、无障碍、边到边适配、图标与国际化；工具链升级至 AGP 8.6.1 / Gradle 8.7 / Kotlin 2.0.21 / targetSdk 35；CI 重建为「质量门禁 + 构建 + 自动发版」
 - **v6.0** 新增自适应系统深色模式（编辑页随系统自动切换黑白，切换时自动保存）；设置页新增浅色/深色模式编辑器颜色自定义；小组件颜色不受影响
 - **v5.8** 修复短内容误滚动半行（内边距移入列表项）；新增可调防误触余量设置（默认 4dp）
 - **v5.7** 小部件整段单条渲染：行高正常、长内容滚动、短内容整块可点击
@@ -36,9 +43,10 @@
 
 推送 `main` 分支或手动触发工作流，自动完成：
 
-1. 编译 Debug + Release（Release 使用仓库内 keystore 签名）
-2. 上传构建产物（Actions 页面 Artifacts）
-3. **自动发布 GitHub Release**，附签名 APK，可直接下载：
+1. **质量门禁**：Android Lint + JVM 单元测试（Robolectric），任一失败即中止
+2. 编译 Debug + Release（Release 使用 secrets 中的 keystore 签名）
+3. 上传构建产物（Actions 页面 Artifacts）
+4. **自动发布 GitHub Release**，附签名 APK，可直接下载：
 
 ```
 https://github.com/llllllllqq/hellowidget/releases/latest
@@ -46,12 +54,12 @@ https://github.com/llllllllqq/hellowidget/releases/latest
 
 ### 触发方式
 
-- **自动**：推送 `main` 分支
-- **手动**：仓库 Actions 页 → **Build Android APK** → **Run workflow**
+- **自动**：推送 `main` 分支（会发版）；推送 `qa/**` 分支（只跑质量门禁与构建，不发版）
+- **手动**：仓库 Actions 页 → **Build & Release** → **Run workflow**
 
 ### 所需 Secrets
 
-Release 签名使用以下仓库 Secrets（已配置）：
+Release 签名使用以下仓库 Secrets（已配置）。**没有 secrets 时（例如 fork 的 PR）流程不会失败**，只是产出未签名的 release 包：
 
 | Secret | 说明 |
 |---|---|
@@ -60,44 +68,67 @@ Release 签名使用以下仓库 Secrets（已配置）：
 | `KEY_ALIAS` | 密钥别名 |
 | `KEY_PASSWORD` | 密钥密码 |
 
+### 发新版流程
+
+只改 `gradle.properties` 两行，提交并推送 `main`：
+
+```properties
+hellowidget.versionName=7.0
+hellowidget.versionCode=15
+```
+
+CI 会自动用 `versionName` 生成 tag（`v7.0`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
+
 ## 本地构建
 
 ```bash
-# 需要 Android SDK（本地 sdk.dir 写入 local.properties）
-gradle assembleDebug     # Debug APK
-gradle assembleRelease   # 签名 Release APK（需上述 4 个环境变量）
+# 需要 Android SDK（把 sdk.dir 写入 local.properties，该文件已被 gitignore）
+./gradlew assembleDebug     # Debug APK
+./gradlew assembleRelease   # Release APK
+
+# 签名 Release 需要以下环境变量；不设置时产出未签名包（不会构建失败）
+export HELLOWIDGET_KEYSTORE=/path/to/hello-release.keystore
+export KEYSTORE_PASSWORD=... KEY_ALIAS=... KEY_PASSWORD=...
+
+# 质量门禁（与 CI 完全一致）
+./gradlew :app:lintDebug :app:testDebugUnitTest
 ```
+
+Gradle 版本由仓库内的 wrapper 固定（`gradle/wrapper/gradle-wrapper.properties` → 8.7），无需本机安装 Gradle。
 
 ## 项目结构
 
 ```
 hellowidget/
-├── .github/workflows/build.yml   # GitHub Actions 云编译 + 发布 Release
+├── .github/workflows/build.yml    # CI：质量门禁 + 构建 + 发布 Release
+├── gradlew / gradle/wrapper/      # Gradle wrapper（版本锁定 8.7）
 ├── app/
-│   ├── build.gradle.kts           # 构建配置（compileSdk 34, minSdk 21）
-│   └── src/main/
-│       ├── AndroidManifest.xml    # 清单（Application/Activity/小组件 Receiver/Service）
-│       ├── java/moe/hellowidget/
-│       │   ├── MainActivity.kt    # 编辑器 + 保存流程（onStop 保存，返回键先存后退；深色模式切换自动保存）
-│       │   ├── SettingsActivity.kt# 外观设置页（小组件 + 编辑器颜色，含 RGB 取色）
-│       │   ├── EditorSettings.kt  # 编辑器颜色设置存取（浅色/深色模式各自背景色与文字色）
-│       │   ├── HelloWidgetApp.kt  # Application：初始化全局 DataStore + 跟随系统深色模式
-│       │   ├── ContentStore.kt    # DataStore 原子写入 + CRC32 序列化 + 旧数据迁移
-│       │   ├── TextWidgetProvider.kt  # 小组件 Provider（绑定数据源/背景色/点击）
-│       │   ├── TextWidgetService.kt   # 绑定式数据服务（按行渲染文本）
-│       │   └── WidgetSettings.kt  # 外观设置存取
-│       └── res/                   # 布局、字符串、主题（含 values-night 深色主题）
-├── build.gradle.kts               # 根构建配置（AGP 8.2.2, Kotlin 1.9.22）
-├── settings.gradle.kts
-├── gradle.properties
-└── hello-release.keystore         # 签名密钥库
+│   ├── build.gradle.kts           # 构建配置（compileSdk 35 / minSdk 21 / targetSdk 35）
+│   └── src/
+│       ├── main/
+│       │   ├── AndroidManifest.xml
+│       │   ├── java/moe/hellowidget/
+│       │   │   ├── MainActivity.kt        # 编辑器 + 保存流程
+│       │   │   ├── SettingsActivity.kt    # 外观设置页（小组件 + 编辑器颜色）
+│       │   │   ├── EditorSettings.kt      # 编辑器颜色存取
+│       │   │   ├── HelloWidgetApp.kt      # Application：初始化 DataStore
+│       │   │   ├── ContentStore.kt        # DataStore 原子写入 + CRC32 + 旧数据迁移
+│       │   │   ├── TextWidgetProvider.kt  # 小组件 Provider
+│       │   │   ├── TextWidgetService.kt   # 绑定式数据服务
+│       │   │   └── WidgetSettings.kt      # 小组件外观设置存取
+│       │   └── res/                       # 布局、字符串（中/英）、主题、图标
+│       └── test/                          # JVM 单元测试（Robolectric，云端运行）
+├── build.gradle.kts               # 根构建配置（AGP 8.6.1, Kotlin 2.0.21）
+├── gradle.properties              # 全局配置 + 版本号唯一来源
+└── settings.gradle.kts
 ```
 
 ## 数据存储说明
 
 - **用户内容**：`filesDir/user_content.dat`（DataStore 格式：`[UTF-8 内容][CRC32]`）
 - **外观设置**：SharedPreferences `hello_prefs`（字体大小/颜色/背景等，非关键数据）
-- **损坏恢复**：CRC 校验失败时自动保留现场文件 `corrupt_<时间戳>.dat` 并重建，应用始终可用
+- **损坏恢复**：CRC 校验失败时保留现场文件 `corrupt_<时间戳>.dat`（**只保留最近 3 份**）并重建，应用始终可用
+- **隐私**：`allowBackup="false"` 且 `dataExtractionRules` 排除全部域 → 内容不会上传 Google 云备份，也不会随设备迁移
 
 ## 开源许可证
 

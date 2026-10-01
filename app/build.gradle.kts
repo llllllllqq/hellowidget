@@ -4,10 +4,12 @@ plugins {
 }
 
 // ---------- 版本号单一来源 ----------
-// CI 通过 -PversionCode / -PversionName 注入（见 .github/workflows/release.yml），
-// 本地与 IDE 直接使用下面的默认值。tag、APK 元数据、Release 说明全部由它派生。
-val appVersionCode: Int = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 15
-val appVersionName: String = (project.findProperty("versionName") as String?) ?: "7.0"
+// 唯一来源是根目录 gradle.properties 的 hellowidget.versionName / hellowidget.versionCode。
+// APK 元数据、Release tag、Release 说明全部由它派生，避免三者互相漂移。
+val appVersionName: String = (findProperty("hellowidget.versionName") as String?)
+    ?: error("gradle.properties 缺少 hellowidget.versionName")
+val appVersionCode: Int = (findProperty("hellowidget.versionCode") as String?)?.toIntOrNull()
+    ?: error("gradle.properties 缺少（或非法）hellowidget.versionCode")
 
 android {
     namespace = "moe.hellowidget"
@@ -32,7 +34,13 @@ android {
      */
     signingConfigs {
         create("release") {
-            val ksFile = rootProject.file("hello-release.keystore")
+            // keystore 路径优先取环境变量（CI 把它放在 $RUNNER_TEMP，不落在工作区里）
+            val envKeystore = System.getenv("HELLOWIDGET_KEYSTORE")
+            val ksFile = if (!envKeystore.isNullOrEmpty()) {
+                file(envKeystore)
+            } else {
+                rootProject.file("hello-release.keystore")
+            }
             val storePwd = System.getenv("KEYSTORE_PASSWORD")
             val aliasName = System.getenv("KEY_ALIAS")
             val keyPwd = System.getenv("KEY_PASSWORD")
@@ -82,7 +90,7 @@ android {
 }
 
 dependencies {
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.appcompat:appcompat:1.8.0")
     // DataStore 官方原子写入（自定义 Serializer + CRC32）
     implementation("androidx.datastore:datastore-core:1.1.1")
     // lifecycleScope（生命周期感知的协程作用域）

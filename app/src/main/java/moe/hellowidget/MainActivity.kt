@@ -317,7 +317,11 @@ class MainActivity : AppCompatActivity() {
         lastTooLongToastAt = now
         Toast.makeText(
             applicationContext,
-            getString(R.string.editor_max_length_reached, MAX_CONTENT_CHARS),
+            resources.getQuantityString(
+                R.plurals.editor_max_length_reached,
+                MAX_CONTENT_CHARS,
+                MAX_CONTENT_CHARS
+            ),
             Toast.LENGTH_SHORT
         ).show()
     }

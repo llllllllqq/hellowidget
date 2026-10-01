@@ -1,86 +1,227 @@
-name: Build Android APK
+name: Build & Release
 
+# 唯一的 CI 流水线：质量门禁 → 构建 APK → 发布 GitHub Release。
+# 所有编译、静态分析、单元测试都在这里完成；本地无需安装任何工具链。
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "qa/**" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch:      # 支持手动触发
+  workflow_dispatch:
 
+# 默认只读；只有 release job 单独申请 contents: write（最小权限原则）
 permissions:
-  contents: write         # 允许创建 GitHub Release
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
 
+  # ---------- 1. 质量门禁：Lint + JVM 单元测试 ----------
+  quality:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.5"
-
-      - name: Create local.properties
+      # 不使用 android-actions/setup-android@v3：该 action 现已因
+      # sdkmanager 报 "Failed to find package 'tools'" 而必然失败。
+      # runner 镜像自带 Android SDK，直接复用即可，还少一个可变 tag 的第三方依赖。
+      - name: Resolve preinstalled Android SDK
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then echo "::error::Android SDK not found at $SDK"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > local.properties
+          echo "Resolved ANDROID_HOME=$SDK"
 
-      - name: Decode Keystore
+      - name: Set up Gradle (from committed wrapper)
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+
+      - name: Wrapper sanity check
+        run: ./gradlew --version
+
+      - name: Android Lint
+        run: ./gradlew :app:lintDebug --stacktrace
+
+      - name: Lint summary
+        if: always()
+        run: |
+          set +e
+          f=app/build/reports/lint-results-debug.xml
+          if [ -f "$f" ]; then
+            echo "===== 按严重度统计 ====="
+            grep -o 'severity="[^"]*"' "$f" | sort | uniq -c | sort -rn
+            echo "===== 按规则 ID 统计 ====="
+            grep -o 'id="[^"]*"' "$f" | sort | uniq -c | sort -rn | head -80
+          fi
+          exit 0
+
+      - name: JVM unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Test summary
+        if: always()
+        run: |
+          set +e
+          d=app/build/test-results/testDebugUnitTest
+          if [ -d "$d" ]; then
+            echo "===== 用例统计（tests/skipped/failures/errors）====="
+            grep -h -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$d"/*.xml || true
+          fi
+          exit 0
+
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quality-reports
+          path: |
+            app/build/reports/lint-results-debug.*
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+
+  # ---------- 2. 构建 Debug / Release APK ----------
+  build:
+    name: Build APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Resolve preinstalled Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then echo "::error::Android SDK not found at $SDK"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > local.properties
+
+      - name: Set up Gradle (from committed wrapper)
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+
+      # 签名密钥只写入 runner 的临时目录，绝不落在工作区（旧实现在仓库根目录解码 keystore）
+      - name: Decode keystore into RUNNER_TEMP
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > hello-release.keystore
+          set +e
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/hello-release.keystore"
+            echo "HELLOWIDGET_KEYSTORE=$RUNNER_TEMP/hello-release.keystore" >> "$GITHUB_ENV"
+            echo "HAS_KEYSTORE=1" >> "$GITHUB_ENV"
+          else
+            echo "HAS_KEYSTORE=0" >> "$GITHUB_ENV"
+            echo "::warning::KEYSTORE_BASE64 不可用（fork PR / Dependabot）——本次只产出未签名 release 包"
+          fi
 
       - name: Build Debug APK
-        run: gradle assembleDebug
+        run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Build Release APK (signed)
+      # 有密钥 → 签名包；无密钥（fork PR）→ 未签名包，流程依然能通过
+      - name: Build Release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle assembleRelease
+        run: ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
+      - name: Clean up keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/hello-release.keystore" || true
+
+      - name: APK evidence
+        if: always()
+        run: |
+          set +e
+          echo "===== APK 产物 ====="
+          find app/build/outputs/apk -name '*.apk' -exec ls -la {} \;
+          echo "===== APK 元数据 ====="
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -1)"
+          for a in $(find app/build/outputs/apk -name '*.apk'); do
+            echo "--- $a ---"
+            "${BT}aapt2" dump badging "$a" 2>/dev/null | head -20
+          done
+          exit 0
+
+      - name: Upload APKs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: apks
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
 
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
+  # ---------- 3. 发布 Release（仅 main 分支 push） ----------
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ quality, build ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # tag / 标题全部从 gradle.properties 派生，不再手工维护
+      # （旧实现把 v6.0.<run_number> 与中文标题硬编码在 workflow 里，每次发版手改）
+      - name: Read version from gradle.properties
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION_NAME=$(sed -n 's/^hellowidget\.versionName=//p' gradle.properties | head -1 | tr -d '[:space:]')
+          VERSION_CODE=$(sed -n 's/^hellowidget\.versionCode=//p' gradle.properties | head -1 | tr -d '[:space:]')
+          if [ -z "$VERSION_NAME" ]; then echo "::error::无法从 gradle.properties 读取 hellowidget.versionName"; exit 1; fi
+          echo "tag=v${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+
+      - name: Download APKs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: app-release-signed
-          path: app/build/outputs/apk/release/app-release.apk
+          name: apks
+          path: dist
 
-      # 推送 main 分支成功后，自动发布一个可下载的 Release（带签名 APK）
+      - name: Verify release APK exists and is signed
+        run: |
+          set -euo pipefail
+          ls -la dist
+          APK=$(find dist -name 'app-release.apk' | head -1)
+          if [ -z "$APK" ]; then echo "::error::未找到已签名的 app-release.apk（未签名包不能发布）"; exit 1; fi
+          unzip -l "$APK" | grep -q 'META-INF/CERT' || { echo "::error::APK 未签名"; exit 1; }
+          echo "release APK: $APK"
+
       - name: Create GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: v6.0.${{ github.run_number }}
-          name: HelloWidget v6.0（编辑器颜色自定义 + 自适应深色模式）· build ${{ github.run_number }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: HelloWidget v${{ steps.ver.outputs.version }}
           body: |
-            ## 本版本改进
-            ### 新增
-            - **自适应系统深色模式**：编辑页随系统深色模式自动切换黑白，切换时自动保存当前内容（小组件颜色不受影响）
-            - **编辑器颜色自定义**：设置页可分别自定义「浅色模式」与「深色模式」编辑器的背景色与文字色（含自定义 RGB 取色）
-            ### 历史功能
-            - 整段内容单条渲染：行高正常、长内容滚动、短内容整块可点击
-            - 失焦即保存并弹 Toast（Home/多任务键/切应用）
-            - DataStore 官方原子写入 + CRC32 校验
-            - 小组件外观设置（字体/颜色/背景/透明度/防误触余量）
-            - 零后台占用
-          files: app/build/outputs/apk/release/app-release.apk
+            ### 安装
+            下载下方的 `app-release.apk` 直接安装（已签名，versionCode ${{ steps.ver.outputs.code }}）。
+
+            完整改动见下方自动生成的 changelog。
+          files: dist/**/*.apk
           generate_release_notes: true
+          make_latest: true

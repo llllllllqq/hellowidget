@@ -396,7 +396,7 @@ class SettingsActivity : AppCompatActivity() {
                 contentDescription = label
             }
             val value = TextView(this).apply {
-                text = rgb[index].toString()
+                text = String.format(Locale.getDefault(), "%d", rgb[index])
                 setTextColor(dialogTextColor)
                 gravity = Gravity.END
             }
@@ -415,7 +415,7 @@ class SettingsActivity : AppCompatActivity() {
             bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     rgb[index] = progress
-                    value.text = progress.toString()
+                    value.text = String.format(Locale.getDefault(), "%d", progress)
                     (preview.background as GradientDrawable).setColor(Color.rgb(rgb[0], rgb[1], rgb[2]))
                 }
 

@@ -2,7 +2,9 @@
 <resources>
     <string name="app_name">HelloWidget</string>
     <string name="editor_hint">在此输入内容，退出自动保存…</string>
-    <string name="editor_max_length_reached">已达最大长度 %1$d 字符</string>
+    <plurals name="editor_max_length_reached">
+        <item quantity="other">已达最大长度 %1$d 字符</item>
+    </plurals>
     <string name="widget_empty_hint">点此编辑</string>
     <string name="widget_description">在桌面显示你的文本，可上下滚动阅读</string>
     <string name="widget_preview_sample">在这里输入内容，\n桌面小组件将以列表形式\n展示全部文字，\n支持上下滑动阅读，\n无需后台进程常驻。</string>

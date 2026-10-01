@@ -4,10 +4,16 @@
     但小组件的色板与预览使用用户自选颜色，不随主题变化。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/settings_bg"
-    android:fillViewport="true">
+    android:fillViewport="true"
+    tools:ignore="Overdraw">
+    <!--
+        tools:ignore="Overdraw"：根布局必须有不透明背景，否则 targetSdk 35 边到边时
+        系统栏区域会露出下层内容/闪黑。这里是有意为之，不是可优化项。
+    -->
 
     <LinearLayout
         android:layout_width="match_parent"
