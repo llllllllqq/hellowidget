@@ -2,13 +2,14 @@
 
 一个轻量 Android 应用：**文本编辑器 + 桌面小组件**。在应用里输入文本，退出后内容以**可上下滚动的小部件**形式展示在桌面，支持自定义外观，且**零后台进程、数据永不损坏**。
 
-当前版本：**v7.0**（versionCode 15，minSdk 21 / targetSdk 35）
+当前版本：**v7.1**（versionCode 16，minSdk 21 / targetSdk 35）
 
 ## 功能特性
 
 | 特性 | 说明 |
 |---|---|
 | 📝 文本编辑 | 全屏多行编辑器，内容仅在退出 / 返回 / 切后台时保存（不做编辑自动保存） |
+| ⌨️ 进入即输入 | 打开应用后光标自动落在**第一行行首**，并**自动弹出输入法**，省掉一次点击（读盘完成后触发，不会先弹键盘后填内容） |
 | 🌙 自适应深色模式 | 编辑页随系统深色模式自动切换黑白，切换时自动保存当前内容；小组件颜色不受影响 |
 | 🪟 可滚动小组件 | ListView 集合式小组件，桌面即可上下滑动阅读全部内容（所有 Android 版本支持） |
 | 🎨 外观自定义 | 设置页可调小组件字体大小(10–34sp)、字体颜色、背景颜色、背景透明度；并可分别自定义**浅色模式 / 深色模式编辑器**的背景色与文字色；实时预览即时生效，支持自定义 RGB 取色 |
@@ -23,6 +24,7 @@
 
 ## 版本历史
 
+- **v7.1** 进入应用即输入：读盘完成后自动聚焦编辑器、光标落在第一行行首，并主动弹出输入法；边到边下自行消费输入法 insets（键盘不再遮挡底部按钮）；CI 新增**模拟器仪器化测试**，发版前在真实 Android 运行环境验证输入法确实弹出
 - **v7.0** 投产 QA 修复：保存门禁缺陷（加载未完成时的输入丢失）、隐私备份、内存上限、无障碍、边到边适配、图标与国际化；工具链升级至 AGP 8.6.1 / Gradle 8.7 / Kotlin 2.0.21 / targetSdk 35；CI 重建为「质量门禁 + 构建 + 自动发版」
 - **v6.0** 新增自适应系统深色模式（编辑页随系统自动切换黑白，切换时自动保存）；设置页新增浅色/深色模式编辑器颜色自定义；小组件颜色不受影响
 - **v5.8** 修复短内容误滚动半行（内边距移入列表项）；新增可调防误触余量设置（默认 4dp）
@@ -45,8 +47,9 @@
 
 1. **质量门禁**：Android Lint + JVM 单元测试（Robolectric），任一失败即中止
 2. 编译 Debug + Release（Release 使用 secrets 中的 keystore 签名）
-3. 上传构建产物（Actions 页面 Artifacts）
-4. **自动发布 GitHub Release**，附签名 APK，可直接下载：
+3. **仪器化测试**：在 CI 的 Android 34 模拟器（KVM 硬件加速）上运行 `androidTest`，验证「自动弹出输入法」这类只能在真实 Android 运行环境观察的行为
+4. 上传构建产物（Actions 页面 Artifacts）
+5. **自动发布 GitHub Release**（仅 `main` 分支，且前三步全部通过），附签名 APK，可直接下载：
 
 ```
 https://github.com/llllllllqq/hellowidget/releases/latest
@@ -73,11 +76,11 @@ Release 签名使用以下仓库 Secrets（已配置）。**没有 secrets 时�
 只改 `gradle.properties` 两行，提交并推送 `main`：
 
 ```properties
-hellowidget.versionName=7.0
-hellowidget.versionCode=15
+hellowidget.versionName=7.1
+hellowidget.versionCode=16
 ```
 
-CI 会自动用 `versionName` 生成 tag（`v7.0`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
+CI 会自动用 `versionName` 生成 tag（`v7.1`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
 
 ## 本地构建
 
@@ -92,6 +95,9 @@ export KEYSTORE_PASSWORD=... KEY_ALIAS=... KEY_PASSWORD=...
 
 # 质量门禁（与 CI 完全一致）
 ./gradlew :app:lintDebug :app:testDebugUnitTest
+
+# 仪器化测试（需要已连接的设备或模拟器；CI 上由 GitHub Actions 自动跑）
+./gradlew :app:connectedDebugAndroidTest
 ```
 
 Gradle 版本由仓库内的 wrapper 固定（`gradle/wrapper/gradle-wrapper.properties` → 8.7），无需本机安装 Gradle。
@@ -117,7 +123,8 @@ hellowidget/
 │       │   │   ├── TextWidgetService.kt   # 绑定式数据服务
 │       │   │   └── WidgetSettings.kt      # 小组件外观设置存取
 │       │   └── res/                       # 布局、字符串（中/英）、主题、图标
-│       └── test/                          # JVM 单元测试（Robolectric，云端运行）
+│       ├── test/                          # JVM 单元测试（Robolectric，云端运行）
+│       └── androidTest/                   # 仪器化测试（CI 模拟器上运行）
 ├── build.gradle.kts               # 根构建配置（AGP 8.6.1, Kotlin 2.0.21）
 ├── gradle.properties              # 全局配置 + 版本号唯一来源
 └── settings.gradle.kts

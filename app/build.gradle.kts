@@ -21,6 +21,8 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
+        // 仪器化测试运行器（v7.1 起在 CI 模拟器上验证「输入法真的弹出来了」这类只能观测真机的行为）
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -106,4 +108,10 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // 投产 QA：Robolectric —— 在云端 JVM 上跑真实 Activity 生命周期，无需模拟器
     testImplementation("org.robolectric:robolectric:4.13")
+
+    // v7.1：仪器化测试（CI 里的 Android 模拟器上运行）。
+    // 只影响 androidTest 变体：不进入发布包，也不改变应用的 minSdk。
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("junit:junit:4.13.2")
 }
