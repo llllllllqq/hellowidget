@@ -270,85 +270,56 @@ class SyncE2eInstrumentedTest {
     /**
      * 用户报障的复现与固化：「上传很快，进度条根本看不到」。
      *
-     * 本地桩服务器上的上传通常几十毫秒就结束；这条用例能在通知栏里**观测到**进度通知，
-     * 正是因为 v7.5 为「确实发生了上传」的同步保证了最短可见时长
-     * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）。上传成功还会额外弹一个 Toast
-     * （Toast 无法在仪器化测试里断言，其行为由 JVM 的 SyncManagerTest 覆盖）。
-     */
-    /**
-     * 用户报障的复现与固化：「上传很快，进度条根本看不到」。
-     *
-     * 本地桩服务器上的上传通常几十毫秒就结束；这条用例能在通知栏里**观测到**进度通知，
-     * 正是因为 v7.5 为「确实发生了上传」的同步保证了最短可见时长
-     * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）。上传成功还会额外弹一个 Toast
-     * （Toast 无法在仪器化测试里断言，其行为由 JVM 的 SyncManagerTest 覆盖）。
+     * 为什么这里断言的是**服务存活时长**而不是「查询到通知」：
+     * 实测（CI 的 API 34 / API 35 模拟器）`NotificationManager.getActiveNotifications()`
+     * **不会返回前台服务的通知** —— 上传成功、服务确实在跑（serviceSeen=true），
+     * 但查询结果始终为空；而本应用自己 `notify()` 发出的通知（见
+     * [inProcessFallback_alsoShowsAProgressNotification]）能被正常查到。
+     * 因此前台服务路径改为断言它的**效果**：进度通知的宿主（前台服务）必须存活足够久，
+     * 让通知真的有机会被渲染出来 —— 这正是 v7.5 修的那个点
+     * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）；没有任何改动前的实现会在上传完成后
+     * 立刻收掉通知，服务存活只有几十毫秒。
      */
     @Test
-    fun fastUpload_stillShowsProgressNotification() {
-        assumeTrue(
-            "此环境无法发出/查询本应用的通知（自检失败），跳过通知可见性断言",
-            notificationQueryReliable
-        )
+    fun fastUpload_keepsTheProgressNotificationAliveLongEnough() {
         assertTrue(runBlocking { ContentStore.write("通知可见性验证") })
         SyncSettings.setEnabled(context, false)
 
         ActivityScenario.launch(MainActivity::class.java).use {
             SyncSettings.setEnabled(context, true)
-            // 节流掉 MainActivity 自己可能触发的 APP_OPEN 同步：否则「另一个同步无事可做」
-            // 会立刻收掉进度通知，干扰观测（用户手点的同步不受节流限制）
+            // 节流掉 MainActivity 自己可能触发的 APP_OPEN 同步，保证只观测这一次上传
             SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
 
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             assertTrue("应启动前台服务", SyncLauncher.request(context, SyncTrigger.MANUAL))
 
-            val observedIds = linkedSetOf<Int>()
-            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            var serviceSeen = false
-            var observed = false
-            val observeDeadline = SystemClock.uptimeMillis() + 10_000
+            var firstSeenAt = 0L
+            var lifetimeMs = -1L
+            val observeDeadline = SystemClock.uptimeMillis() + 20_000
             while (SystemClock.uptimeMillis() < observeDeadline) {
-                manager.activeNotifications.forEach { observedIds += it.id }
-                if (manager.activeNotifications.any { it.id == SyncNotifier.ID_PROGRESS }) {
-                    observed = true
+                val running = activityManager.getRunningServices(Int.MAX_VALUE)
+                    .any { it.service.className == SyncService::class.java.name }
+                val now = SystemClock.uptimeMillis()
+                if (running) {
+                    if (firstSeenAt == 0L) firstSeenAt = now
+                } else if (firstSeenAt != 0L) {
+                    lifetimeMs = now - firstSeenAt
+                    break
                 }
-                if (activityManager.getRunningServices(Int.MAX_VALUE)
-                        .any { it.service.className == SyncService::class.java.name }
-                ) {
-                    serviceSeen = true
-                }
-                if (observed) break
                 SystemClock.sleep(20)
             }
-            assertTrue(
-                "上传期间通知栏里必须真的存在进度通知（用户报障点）" +
-                    "（observedIds=$observedIds, serviceSeen=$serviceSeen, " +
-                    "lastResult=${SyncSettings.lastResult(context)}, " +
-                    "lastError=${SyncSettings.lastError(context)}）",
-                observed
-            )
 
-            val doneDeadline = SystemClock.uptimeMillis() + 90_000
-            while (SystemClock.uptimeMillis() < doneDeadline &&
-                SyncSettings.lastResult(context) != SyncEngine.RESULT_SUCCESS
-            ) {
-                SystemClock.sleep(100)
-            }
             assertEquals(
                 "上传应成功（lastError=${SyncSettings.lastError(context)}）",
                 SyncEngine.RESULT_SUCCESS,
                 SyncSettings.lastResult(context)
             )
             assertEquals("通知可见性验证", cloud(fileName))
-
-            val goneDeadline = SystemClock.uptimeMillis() + 15_000
-            while (SystemClock.uptimeMillis() < goneDeadline &&
-                manager.activeNotifications.any { it.id == SyncNotifier.ID_PROGRESS }
-            ) {
-                SystemClock.sleep(100)
-            }
-            assertFalse(
-                "同步结束后不得留下常驻进度通知",
-                manager.activeNotifications.any { it.id == SyncNotifier.ID_PROGRESS }
+            assertTrue("应观测到前台服务的整个生命周期", lifetimeMs >= 0)
+            assertTrue(
+                "上传极快时进度通知也必须保留 ${SyncNotifier.MIN_PROGRESS_VISIBLE_MS}ms，" +
+                    "否则用户根本看不到（实测服务存活 ${lifetimeMs}ms）",
+                lifetimeMs >= SyncNotifier.MIN_PROGRESS_VISIBLE_MS - 200
             )
         }
     }
