@@ -47,6 +47,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        // android.jar 方法在 JVM 单测中返回默认值而不是抛 "not mocked"
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -55,4 +60,7 @@ dependencies {
     implementation("androidx.datastore:datastore-core:1.1.1")
     // lifecycleScope（生命周期感知的协程作用域）
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+
+    // 投产 QA：JVM 单元测试
+    testImplementation("junit:junit:4.13.2")
 }

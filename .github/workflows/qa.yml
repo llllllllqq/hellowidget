@@ -1,0 +1,212 @@
+name: QA Gate
+
+# 投产 QA 质量门禁：Android Lint + JVM 单元测试 + Debug/Release 构建
+# 全部在 GitHub 云端执行，不依赖本地环境。
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "qa/**" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------- 1. Android Lint 静态分析 ----------
+  lint:
+    name: Android Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.5"
+
+      - name: Toolchain evidence
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          {
+            echo "=== java -version ==="
+            java -version 2>&1
+            echo "=== gradle --version ==="
+            gradle --version 2>&1
+          } | tee toolchain.txt
+
+      - name: Lint debug variant
+        run: gradle :app:lintDebug --stacktrace
+
+      - name: Lint summary
+        if: always()
+        run: |
+          set +e
+          f=app/build/reports/lint-results-debug.xml
+          if [ -f "$f" ]; then
+            echo "===== 按严重度统计 ====="
+            grep -o 'severity="[^"]*"' "$f" | sort | uniq -c | sort -rn
+            echo "===== 按规则 ID 统计 ====="
+            grep -o 'id="[^"]*"' "$f" | sort | uniq -c | sort -rn | head -80
+            echo "===== Error 明细（前 60 行）====="
+            grep -B1 -A2 'severity="Error"' "$f" | head -60
+          else
+            echo "未生成 lint XML：$f"
+          fi
+          exit 0
+
+      - name: Dependency insight
+        if: always()
+        run: gradle :app:dependencies --configuration debugRuntimeClasspath > dependencies-debug.txt 2>&1 || true
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-lint-reports
+          path: |
+            app/build/reports/lint-results-debug.*
+            toolchain.txt
+            dependencies-debug.txt
+          if-no-files-found: warn
+
+  # ---------- 2. JVM 单元测试 ----------
+  unit-tests:
+    name: Unit Tests (JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.5"
+
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Run JVM unit tests
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Test summary
+        if: always()
+        run: |
+          set +e
+          d=app/build/test-results/testDebugUnitTest
+          if [ -d "$d" ]; then
+            echo "===== 测试结果文件 ====="
+            ls -la "$d"
+            echo "===== 用例统计（tests/skipped/failures/errors）====="
+            grep -h -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$d"/*.xml || true
+          else
+            echo "未生成测试结果：$d"
+          fi
+          exit 0
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-unit-test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+
+  # ---------- 3. Debug/Release 构建验证 ----------
+  build:
+    name: Build APKs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.5"
+
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      # 签名密钥仅在仓库自己的 workflow 中可用；fork PR 没有 secrets，需要优雅降级
+      - name: Decode keystore if available
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > hello-release.keystore
+            echo "HAS_KEYSTORE=1" >> "$GITHUB_ENV"
+          else
+            echo "HAS_KEYSTORE=0" >> "$GITHUB_ENV"
+            echo "::warning::KEYSTORE_BASE64 不可用（fork PR？）——跳过 Release 签名构建"
+          fi
+
+      - name: Build Debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Build Release APK (signed)
+        if: env.HAS_KEYSTORE == '1'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Build Release APK (unsigned fallback)
+        if: env.HAS_KEYSTORE != '1'
+        run: gradle :app:assembleRelease --stacktrace || echo "release 构建在无密钥环境下失败（已记录为 QA 缺陷）"
+
+      - name: APK evidence
+        if: always()
+        run: |
+          echo "===== APK 产物 ====="
+          find app/build/outputs/apk -name '*.apk' -exec ls -la {} \; || true
+          echo "===== APK 元数据 ====="
+          for a in $(find app/build/outputs/apk -name '*.apk'); do
+            echo "--- $a ---"
+            ${ANDROID_HOME}/build-tools/*/aapt2 dump badging "$a" 2>/dev/null | head -20 || \
+            ${ANDROID_HOME}/build-tools/*/aapt dump badging "$a" 2>/dev/null | head -20 || echo "badging 不可用"
+          done
+
+      - name: Upload APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-apks
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
