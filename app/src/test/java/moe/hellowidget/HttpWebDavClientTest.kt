@@ -210,12 +210,13 @@ class HttpWebDavClientTest {
                 ifMatch = "\"e1\"",
                 ifUnmodifiedSinceMs = null
             )
-            // 顺序必须是 PUT 临时 → HEAD 二次确认 → MOVE 覆盖
+            // 顺序必须是 PUT 临时 → HEAD 二次确认 → MOVE 覆盖 → HEAD 读回最终状态
             assertEquals(
                 listOf(
                     "PUT /dav/note.txt.uploading",
                     "HEAD /dav/note.txt",
-                    "MOVE /dav/note.txt.uploading"
+                    "MOVE /dav/note.txt.uploading",
+                    "HEAD /dav/note.txt"
                 ),
                 server.targets()
             )
@@ -309,18 +310,19 @@ class HttpWebDavClientTest {
                 ifMatch = null,
                 ifUnmodifiedSinceMs = null
             )
+            // 顺序：PUT 临时 → MOVE(405) → 直接 PUT 正式文件 → 清理临时文件
+            // （Kotlin 的 `return expr` 会先求值 expr 再执行 finally，所以 DELETE 在直接 PUT 之后）
             assertEquals(
                 listOf(
                     "PUT /dav/note.txt.uploading",
                     "MOVE /dav/note.txt.uploading",
-                    "DELETE /dav/note.txt.uploading",
                     "PUT /dav/note.txt",
-                    "HEAD /dav/note.txt"
+                    "DELETE /dav/note.txt.uploading"
                 ),
                 server.targets()
             )
             // 降级路径必须保留「只在不存在时创建」的前置条件语义
-            assertEquals("*", server.requests[3].header("if-none-match"))
+            assertEquals("*", server.requests[2].header("if-none-match"))
             assertEquals("\"d1\"", result!!.etag)
         }
     }

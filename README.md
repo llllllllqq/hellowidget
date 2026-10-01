@@ -2,20 +2,21 @@
 
 一个轻量 Android 应用：**文本编辑器 + 桌面小组件**。在应用里输入文本，退出后内容以**可上下滚动的小部件**形式展示在桌面，支持自定义外观，且**零后台进程、数据永不损坏**。
 
-当前版本：**v7.1**（versionCode 16，minSdk 21 / targetSdk 35）
+当前版本：**v7.2**（versionCode 17，minSdk 21 / targetSdk 35）
 
 ## 功能特性
 
 | 特性 | 说明 |
 |---|---|
 | 📝 文本编辑 | 全屏多行编辑器，内容仅在退出 / 返回 / 切后台时保存（不做编辑自动保存） |
+| ☁️ WebDAV 同步 | 把最新内容上传到你自己的 WebDAV（坚果云 / Nextcloud / 群晖 NAS）。**自动同步只上传**，绝不用云端内容覆盖本机；云端被其他设备改过时不静默覆盖，而是弹窗让你选择保留哪一份（两边版本都会各留一份副本）。同步期间通知栏有进度条，结束立即停止，不留常驻后台 |
 | ⌨️ 进入即输入 | 打开应用后光标自动落在**第一行行首**，并**自动弹出输入法**，省掉一次点击（读盘完成后触发，不会先弹键盘后填内容） |
 | 🌙 自适应深色模式 | 编辑页随系统深色模式自动切换黑白，切换时自动保存当前内容；小组件颜色不受影响 |
 | 🪟 可滚动小组件 | ListView 集合式小组件，桌面即可上下滑动阅读全部内容（所有 Android 版本支持） |
 | 🎨 外观自定义 | 设置页可调小组件字体大小(10–34sp)、字体颜色、背景颜色、背景透明度；并可分别自定义**浅色模式 / 深色模式编辑器**的背景色与文字色；实时预览即时生效，支持自定义 RGB 取色 |
 | 🔒 原子写入 | 内容存储采用 **Jetpack DataStore** 官方原子写入（临时文件 + fsync + 原子重命名），任意时刻崩溃都不会产生"写一半"的损坏文件 |
 | ✅ CRC32 校验 | 文件格式 `[UTF-8 内容][4字节 CRC32]`，读取时校验；发现损坏自动保留现场文件并重建 |
-| 🪫 零后台占用 | 无自动保存、无轮询、无常驻服务。小组件数据服务为绑定式，仅桌面渲染时才临时启动；保存完成即结束，CPU 自动释放 |
+| 🪫 零后台占用 | 无自动保存、无轮询、无常驻服务。小组件数据服务为绑定式，仅桌面渲染时才临时启动；同步只在「关闭编辑器 / 打开应用 / 手动点击」时进行，且自动同步两次至少间隔 30 分钟，结束即停前台服务、不留任何后台任务 |
 | 🔔 保存确认 | 真正写盘成功后才提示「已保存 ✓」；失败提示「保存失败」，旧内容不受影响 |
 | 🔐 隐私优先 | `allowBackup=false` + `dataExtractionRules`：用户文本**既不参与云备份，也不参与设备间迁移** |
 | 📏 长度上限 | 内容上限 100,000 字符，避免超大文本导致内存溢出；超出时给出可见提示 |
@@ -24,6 +25,7 @@
 
 ## 版本历史
 
+- **v7.2** WebDAV 同步：把最新内容上传到自己的 WebDAV（只上传、不自动下载），云端被外部修改时弹窗询问并保留双方副本；关闭编辑器后与打开应用时自动触发，自动同步严格间隔 30 分钟；同步期间前台服务 + 通知栏进度条，结束后立即停止；明文 http 会给出风险提示，自签名证书按用户确认的指纹固定（TOFU）。**不新增任何第三方依赖**（自写零依赖 HTTP/1.1 客户端）；CI 仪器化测试改为打一个真实运行的 WebDAV 服务器，用服务器请求日志证明真的使用了 `MKCOL`/`PUT`/`MOVE`/`COPY`（见 [WEBDAV_SYNC_REPORT.md](WEBDAV_SYNC_REPORT.md)）
 - **v7.1** 进入应用即输入：读盘完成后自动聚焦编辑器、光标落在第一行行首，并主动弹出输入法；边到边下自行消费输入法 insets（键盘不再遮挡底部按钮）；CI 新增**模拟器仪器化测试**，发版前在真实 Android 运行环境验证输入法确实弹出（验证证据见 [V7.1_RELEASE_REPORT.md](V7.1_RELEASE_REPORT.md)）
 - **v7.0** 投产 QA 修复：保存门禁缺陷（加载未完成时的输入丢失）、隐私备份、内存上限、无障碍、边到边适配、图标与国际化；工具链升级至 AGP 8.6.1 / Gradle 8.7 / Kotlin 2.0.21 / targetSdk 35；CI 重建为「质量门禁 + 构建 + 自动发版」
 - **v6.0** 新增自适应系统深色模式（编辑页随系统自动切换黑白，切换时自动保存）；设置页新增浅色/深色模式编辑器颜色自定义；小组件颜色不受影响
@@ -47,7 +49,7 @@
 
 1. **质量门禁**：Android Lint + JVM 单元测试（Robolectric），任一失败即中止
 2. 编译 Debug + Release（Release 使用 secrets 中的 keystore 签名）
-3. **仪器化测试**：在 CI 的 Android 34 模拟器（KVM 硬件加速）上运行 `androidTest`，验证「自动弹出输入法」这类只能在真实 Android 运行环境观察的行为
+3. **仪器化测试**：在 CI 的 Android 34 模拟器（KVM 硬件加速）上运行 `androidTest`。除了「自动弹出输入法」这类只能在真实 Android 运行环境观察的行为，还会在 runner 上启动仓库自带的零依赖 WebDAV 服务器（`.github/scripts/webdav_stub_server.py`，模拟器经 `10.0.2.2` 访问），端到端验证上传、冲突与节流，并把服务器请求日志打印到 Actions 日志里作为证据
 4. 上传构建产物（Actions 页面 Artifacts）
 5. **自动发布 GitHub Release**（仅 `main` 分支，且前三步全部通过），附签名 APK，可直接下载：
 
@@ -76,11 +78,11 @@ Release 签名使用以下仓库 Secrets（已配置）。**没有 secrets 时�
 只改 `gradle.properties` 两行，提交并推送 `main`：
 
 ```properties
-hellowidget.versionName=7.1
-hellowidget.versionCode=16
+hellowidget.versionName=7.2
+hellowidget.versionCode=17
 ```
 
-CI 会自动用 `versionName` 生成 tag（`v7.1`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
+CI 会自动用 `versionName` 生成 tag（`v7.2`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
 
 ## 本地构建
 
@@ -106,7 +108,8 @@ Gradle 版本由仓库内的 wrapper 固定（`gradle/wrapper/gradle-wrapper.pro
 
 ```
 hellowidget/
-├── .github/workflows/build.yml    # CI：质量门禁 + 构建 + 发布 Release
+├── .github/workflows/build.yml    # CI：质量门禁 + 构建 + 仪器化测试 + 发布 Release
+├── .github/scripts/webdav_stub_server.py  # CI 用的零依赖 WebDAV 测试服务器
 ├── gradlew / gradle/wrapper/      # Gradle wrapper（版本锁定 8.7）
 ├── app/
 │   ├── build.gradle.kts           # 构建配置（compileSdk 35 / minSdk 21 / targetSdk 35）
@@ -114,8 +117,20 @@ hellowidget/
 │       ├── main/
 │       │   ├── AndroidManifest.xml
 │       │   ├── java/moe/hellowidget/
-│       │   │   ├── MainActivity.kt        # 编辑器 + 保存流程
+│       │   │   ├── MainActivity.kt        # 编辑器 + 保存流程 + 同步触发
 │       │   │   ├── SettingsActivity.kt    # 外观设置页（小组件 + 编辑器颜色）
+│       │   │   ├── SyncActivity.kt        # WebDAV 同步设置页（凭据/状态/冲突/证书指纹）
+│       │   │   ├── SyncService.kt         # 同步前台服务（dataSync，含通知栏进度条）
+│       │   │   ├── SyncActionReceiver.kt  # 通知栏动作（覆盖云端 / 用云端覆盖本地）
+│       │   │   ├── sync/                  # 同步核心
+│       │   │   │   ├── SyncEngine.kt          # 决策表 + 30 分钟闸门（纯函数，可单测）
+│       │   │   │   ├── HttpWebDavClient.kt    # 零依赖 Socket/SSLSocket HTTP/1.1 + TOFU 证书固定
+│       │   │   │   ├── SyncManager.kt         # 编排：触发、冲突、写回、状态流
+│       │   │   │   ├── SyncSettings.kt        # 同步配置与状态存取
+│       │   │   │   ├── SyncNotifier.kt        # 进度/失败/冲突通知
+│       │   │   │   ├── SyncConfig.kt          # URL 与文件名校验、HTTP 日期
+│       │   │   │   ├── SyncLauncher.kt        # 统一触发入口（前台服务，失败降级为进程内）
+│       │   │   │   └── SyncErrorText.kt       # 错误分类 → 本地化文案
 │       │   │   ├── EditorSettings.kt      # 编辑器颜色存取
 │       │   │   ├── HelloWidgetApp.kt      # Application：初始化 DataStore
 │       │   │   ├── ContentStore.kt        # DataStore 原子写入 + CRC32 + 旧数据迁移
@@ -130,12 +145,32 @@ hellowidget/
 └── settings.gradle.kts
 ```
 
+## WebDAV 同步使用说明
+
+在应用底部点「☁ WebDAV 同步」，填写服务器目录地址、文件名、用户名与口令，打开开关后保存。
+
+| 服务 | 目录地址示例 |
+|---|---|
+| 坚果云 | `https://dav.jianguoyun.com/dav/你的目录/`（需在「账户信息 → 安全选项」生成**应用密码**） |
+| Nextcloud | `https://你的域名/remote.php/dav/files/用户名/目录/` |
+| 群晖 / NAS | `http://192.168.1.5:5005/dav/目录/`（明文 http 会显示风险提示） |
+
+行为约定：
+
+- **只上传**：自动同步（关闭编辑器后、打开应用时）只会把本机内容传上去，不会下载覆盖本机
+- **冲突不静默**：云端被其他设备改过时，同步会暂停并弹窗（应用内对话框 + 通知栏两个按钮）。选择任一方案时，另一方的版本都会以 `note.conflict-日期-时间.txt` 保留在服务器上，绝不丢数据
+- **“用云端覆盖本地”**只在你明确选择时执行；执行后编辑页会自动重新载入新内容
+- **节流**：自动同步之间至少间隔 30 分钟（避免被服务器限流）；「立即同步」不受限制
+- **通知**：Android 13+ 需要通知权限才能看到进度条；拒绝权限时同步照常工作
+- **自签名证书**：https 握手失败时同步页会显示证书指纹，点击「信任并记住」后按该指纹固定校验；指纹变化会再次要求确认（不会无条件信任所有证书）
+
 ## 数据存储说明
 
 - **用户内容**：`filesDir/user_content.dat`（DataStore 格式：`[UTF-8 内容][CRC32]`）
 - **外观设置**：SharedPreferences `hello_prefs`（字体大小/颜色/背景等，非关键数据）
 - **损坏恢复**：CRC 校验失败时保留现场文件 `corrupt_<时间戳>.dat`（**只保留最近 3 份**）并重建，应用始终可用
 - **隐私**：`allowBackup="false"` 且 `dataExtractionRules` 排除全部域 → 内容不会上传 Google 云备份，也不会随设备迁移
+- **同步凭据**：WebDAV 地址/用户名/口令同样存在 `hello_prefs`（因此也在备份排除范围内）；建议使用服务端的「应用专用密码」。开启同步后，**笔记内容会按你的设置上传到你自己的 WebDAV 服务器**（服务端保存的是明文文本）
 
 ## 开源许可证
 

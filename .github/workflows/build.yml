@@ -226,7 +226,9 @@ jobs:
           enable-hw-keyboard: false
           emulator-boot-timeout: 900
           script: |
-            set -uo pipefail
+            # 注意：emulator-runner 用 /usr/bin/sh（dash）执行本脚本，
+            # 因此只能用 POSIX 语法（不能用 set -o pipefail 之类的 bash 特性）
+            set -u
             PORT=8080
             STUB_LOG=/tmp/webdav_stub.log
             STUB_OUT=/tmp/webdav_stub_stdout.log
