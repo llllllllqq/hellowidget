@@ -8,6 +8,8 @@ import java.io.InputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
 import kotlin.concurrent.thread
 
 /**
@@ -19,8 +21,13 @@ import kotlin.concurrent.thread
  *
  * 行为约定（与客户端一致）：一个连接只处理一个请求，响应后立即关闭
  * （客户端固定发送 `Connection: close`）。
+ *
+ * 传入 [sslContext] 即可变成 HTTPS 桩服务器（用于验证自签名证书与指纹固定）。
  */
-class StubHttpServer(private val responder: (Request) -> Response) : Closeable {
+class StubHttpServer(
+    private val responder: (Request) -> Response,
+    sslContext: SSLContext? = null
+) : Closeable {
 
     data class Request(
         val method: String,
@@ -43,7 +50,13 @@ class StubHttpServer(private val responder: (Request) -> Response) : Closeable {
         val omitContentLength: Boolean = false
     )
 
-    private val serverSocket = ServerSocket(0)
+    private val serverSocket: ServerSocket = if (sslContext != null) {
+        sslContext.serverSocketFactory.createServerSocket(0)
+    } else {
+        ServerSocket(0)
+    }
+
+    private val scheme: String = if (sslContext != null) "https" else "http"
 
     /** 按到达顺序记录的所有请求 */
     val requests: MutableList<Request> = CopyOnWriteArrayList()
@@ -54,7 +67,7 @@ class StubHttpServer(private val responder: (Request) -> Response) : Closeable {
 
     fun targets(): List<String> = requests.map { "${it.method} ${it.target}" }
 
-    fun baseUrl(path: String = "/dav/"): String = "http://127.0.0.1:$port$path"
+    fun baseUrl(path: String = "/dav/"): String = "$scheme://127.0.0.1:$port$path"
 
     private fun acceptLoop() {
         while (!serverSocket.isClosed) {
@@ -75,6 +88,8 @@ class StubHttpServer(private val responder: (Request) -> Response) : Closeable {
 
     private fun handle(socket: Socket) {
         socket.soTimeout = 10_000
+        // TLS 握手：客户端拒绝证书时会在这里抛 SSLException，由 acceptLoop 兜住
+        if (socket is SSLSocket) socket.startHandshake()
         val input = BufferedInputStream(socket.getInputStream())
         val output = BufferedOutputStream(socket.getOutputStream())
         val requestLine = readLine(input) ?: return

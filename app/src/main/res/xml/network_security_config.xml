@@ -18,11 +18,26 @@
        「首次连接显示指纹 → 用户确认 → 按指纹固定（TOFU）」，
        不是信任所有证书，也不会用 setDefaultSSLSocketFactory 影响全局。
 -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!--
+        tools:ignore="InsecureBaseConfiguration" —— 这是**刻意**选择并已在界面上明示风险的配置：
+        不允许明文会让绝大多数自建 NAS 完全无法使用；用户看到 http:// 时会收到常驻红色警告，
+        且客户端绝不跟随跳转（防止 Basic 凭据被 302 带到第三方域名）。
+    -->
+    <base-config
+        cleartextTrafficPermitted="true"
+        tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
+            <!--
+                tools:ignore="AcceptsUserCertificates" —— 刻意加回用户证书库：
+                API 24+ 默认不信任用户安装的 CA，不加这一项，用户就无法通过「把自建 CA
+                装进系统证书库」来使用自签名 https。应用内的自签名支持是按用户确认的
+                指纹固定（TOFU），不是信任所有证书。
+            -->
+            <certificates
+                src="user"
+                tools:ignore="AcceptsUserCertificates" />
         </trust-anchors>
     </base-config>
 </network-security-config>

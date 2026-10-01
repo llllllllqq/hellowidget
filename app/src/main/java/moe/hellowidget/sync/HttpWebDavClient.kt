@@ -1,5 +1,6 @@
 package moe.hellowidget.sync
 
+import android.annotation.SuppressLint
 import android.util.Base64
 import android.util.Log
 import java.io.BufferedInputStream
@@ -554,6 +555,15 @@ class HttpWebDavClient(
         return WebDavException(error, response.status, "HTTP ${response.status} ${response.reason}$extra")
     }
 
+    /**
+     * 在「系统默认校验」之上**追加**一层指纹固定（TOFU）。
+     *
+     * lint 的 CustomX509TrustManager 警告针对的是「自己实现校验、绕过系统」的写法；
+     * 这里相反：每个分支都会调用 [delegate]（系统默认 X509TrustManager，含网络安全配置的
+     * 信任锚），只有「用户确认过的指纹」这一种情况才提前放行，而且指纹不匹配时**不是**
+     * 直接失败，而是继续交给系统校验 —— 即安全策略只增不减。
+     */
+    @SuppressLint("CustomX509TrustManager")
     private class PinningTrustManager(
         private val pin: String?,
         private val delegate: X509TrustManager,

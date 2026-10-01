@@ -225,40 +225,9 @@ jobs:
           disable-spellchecker: true
           enable-hw-keyboard: false
           emulator-boot-timeout: 900
-          script: |
-            # 注意：emulator-runner 用 /usr/bin/sh（dash）执行本脚本，
-            # 因此只能用 POSIX 语法（不能用 set -o pipefail 之类的 bash 特性）
-            set -u
-            PORT=8080
-            STUB_LOG=/tmp/webdav_stub.log
-            STUB_OUT=/tmp/webdav_stub_stdout.log
-            python3 .github/scripts/webdav_stub_server.py --port "$PORT" \
-              --user test --password test --log "$STUB_LOG" > "$STUB_OUT" 2>&1 &
-            SERVER_PID=$!
-            READY=0
-            for _ in $(seq 1 20); do
-              if curl -sf "http://127.0.0.1:${PORT}/__control__/count" > /dev/null 2>&1; then READY=1; break; fi
-              sleep 0.5
-            done
-            if [ "$READY" != "1" ]; then
-              echo "::error::WebDAV 桩服务器未就绪"
-              cat "$STUB_OUT" || true
-              kill "$SERVER_PID" 2>/dev/null || true
-              exit 1
-            fi
-            echo "WebDAV 桩服务器已就绪：http://127.0.0.1:${PORT}（模拟器侧为 10.0.2.2）"
-
-            ./gradlew :app:connectedDebugAndroidTest \
-              -Pandroid.testInstrumentationRunnerArguments.webdavUrl="http://10.0.2.2:${PORT}/dav/" \
-              -Pandroid.testInstrumentationRunnerArguments.webdavControlUrl="http://10.0.2.2:${PORT}/__control__/" \
-              --stacktrace
-            STATUS=$?
-
-            echo "===== WebDAV 桩服务器请求日志（WebDAV 动词实证）====="
-            cat "$STUB_LOG" || true
-            kill "$SERVER_PID" 2>/dev/null || true
-            wait "$SERVER_PID" 2>/dev/null || true
-            exit $STATUS
+          # 编排全部收进脚本：emulator-runner 会把 script 的每一行当独立命令执行，
+          # 变量/循环/续行都无法跨行生效，因此这里只留一行调用（脚本里用 bash 明确指定解释器）
+          script: bash .github/scripts/run_webdav_e2e.sh
 
       - name: Instrumented test summary
         if: always()

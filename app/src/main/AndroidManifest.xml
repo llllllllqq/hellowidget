@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
         WebDAV 同步（v7.2）。
@@ -14,6 +15,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        tools:ignore="UnusedAttribute"：networkSecurityConfig 只对 API 24+ 生效，
+        minSdk 21 下 API 21~23 会忽略它 —— 这正是预期行为（这几个版本默认就信任用户 CA，
+        且默认允许明文），无需为它们做任何兼容处理。
+    -->
     <application
         android:name=".HelloWidgetApp"
         android:allowBackup="false"
@@ -24,7 +30,8 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HelloWorld">
+        android:theme="@style/Theme.HelloWorld"
+        tools:ignore="UnusedAttribute">
 
         <!--
             configChanges="uiMode"：系统深色模式切换时不自动重建 Activity，

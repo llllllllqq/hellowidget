@@ -51,7 +51,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:labelFor="@id/sync_server"
             android:text="@string/sync_server_label"
             android:textColor="@color/settings_text"
             android:textSize="16sp" />
@@ -80,7 +79,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:labelFor="@id/sync_file_name"
             android:text="@string/sync_file_name_label"
             android:textColor="@color/settings_text"
             android:textSize="16sp" />

@@ -27,24 +27,31 @@
 
     </ScrollView>
 
+    <!--
+        底部动作栏（两个入口）。按官方建议使用 buttonBarStyle / buttonBarButtonStyle：
+        lint 的 ButtonStyle 检查要求按钮栏内的按钮为 borderless 样式。
+    -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        style="?android:attr/buttonBarStyle">
 
         <Button
             android:id="@+id/btn_settings"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="@string/settings_button" />
+            android:text="@string/settings_button"
+            style="?android:attr/buttonBarButtonStyle" />
 
         <Button
             android:id="@+id/btn_sync"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="@string/sync_button" />
+            android:text="@string/sync_button"
+            style="?android:attr/buttonBarButtonStyle" />
 
     </LinearLayout>
 

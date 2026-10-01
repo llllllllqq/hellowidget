@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.ServiceCompat
@@ -48,11 +49,18 @@ class SyncService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 必须在 startForegroundService 后的 5 秒内进入前台，否则系统直接 ANR/崩溃
         SyncNotifier.ensureChannel(this)
+        // dataSync 类型是 API 29+ 的概念；ServiceCompat 在更低版本会忽略该参数
+        // （显式分支而不是直接引用常量，既避免 InlinedApi 警告，也让意图一目了然）
+        val foregroundServiceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        } else {
+            0
+        }
         ServiceCompat.startForeground(
             this,
             SyncNotifier.ID_PROGRESS,
             SyncNotifier.progressNotification(this),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            foregroundServiceType
         )
 
         val trigger = parseTrigger(intent)
