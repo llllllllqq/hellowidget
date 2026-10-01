@@ -127,11 +127,15 @@ class MainActivityEntryTest {
         awaitEditorEnabled(activity)
 
         // 构造「键盘可见，但焦点已从编辑器脱落」的状态。
-        // 注意：直接 clearFocus() 会被框架立刻重新聚焦（rootViewRequestFocus），
-        // 所以先把编辑器临时设为不可聚焦，造出真正「无控件持有焦点」的现场。
+        // 1) 只调 clearFocus() 不够：View.clearFocusInternal(refocus=true) 会让根视图重新找焦点，
+        //    而编辑器仍然 focusable，于是焦点又被抢回自己身上；
+        // 2) setFocusableInTouchMode(false) 只清 FOCUSABLE_IN_TOUCH_MODE（见 AOSP View 源码），
+        //    所以要显式再清掉 FOCUSABLE，才能真正造出「无控件持有焦点」。
+        editor.isFocusable = false
         editor.isFocusableInTouchMode = false
         editor.clearFocus()
         assertFalse("前置条件：焦点已从编辑器脱落", editor.hasFocus())
+        // 恢复常态（isFocusableInTouchMode=true 会同时把 FOCUSABLE 设回来）
         editor.isFocusableInTouchMode = true
 
         val imeInsets = WindowInsetsCompat.Builder()
