@@ -410,9 +410,11 @@ class SyncE2eInstrumentedTest {
     private fun notificationQueryWorks(manager: NotificationManager): Boolean {
         val probeId = 4099
         val composer = NotificationManagerCompat.from(context)
-        repeat(5) { attempt ->
+        // 最多等 10s：权限刚授予时系统的「通知已启用」状态是异步生效的，
+        // 这段窗口内发出的通知会被静默丢弃（早于本修复时用例被误跳过就是这个原因）
+        repeat(12) { attempt ->
             composer.notify(probeId, SyncNotifier.progressNotification(context, "自检"))
-            val deadline = SystemClock.uptimeMillis() + 600
+            val deadline = SystemClock.uptimeMillis() + 800
             while (SystemClock.uptimeMillis() < deadline) {
                 if (manager.activeNotifications.any { it.id == probeId }) {
                     composer.cancel(probeId)
@@ -421,7 +423,7 @@ class SyncE2eInstrumentedTest {
                 SystemClock.sleep(20)
             }
             composer.cancel(probeId)
-            if (attempt < 4) SystemClock.sleep(300)
+            if (attempt < 11) SystemClock.sleep(200)
         }
         return false
     }
