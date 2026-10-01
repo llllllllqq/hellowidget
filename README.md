@@ -2,7 +2,7 @@
 
 一个轻量 Android 应用：**文本编辑器 + 桌面小组件**。在应用里输入文本，退出后内容以**可上下滚动的小部件**形式展示在桌面，支持自定义外观，且**零后台进程、数据永不损坏**。
 
-当前版本：**v7.2**（versionCode 17，minSdk 21 / targetSdk 35）
+当前版本：**v7.3**（versionCode 18，minSdk 21 / targetSdk 35）
 
 ## 功能特性
 
@@ -25,6 +25,7 @@
 
 ## 版本历史
 
+- **v7.3** Android 15 边到边适配补齐：同步设置页此前只消费系统栏 insets、不处理输入法，边到边后键盘会盖住表单与底部按钮 —— 现改为「外层 FrameLayout 承担 insets + `maxOf(系统栏, 输入法)`」，并给该页补上 `windowSoftInputMode="adjustResize"`；新增同步页键盘遮挡的仪器化回归用例；CI 的模拟器矩阵扩到 **API 34 + API 35**（API 35 才是系统强制边到边的那一档）（见 [V7.3_EDGE_TO_EDGE_REPORT.md](V7.3_EDGE_TO_EDGE_REPORT.md)）
 - **v7.2** WebDAV 同步：把最新内容上传到自己的 WebDAV（只上传、不自动下载），云端被外部修改时弹窗询问并保留双方副本；关闭编辑器后与打开应用时自动触发，自动同步严格间隔 30 分钟；同步期间前台服务 + 通知栏进度条，结束后立即停止；明文 http 会给出风险提示，自签名证书按用户确认的指纹固定（TOFU）。**不新增任何第三方依赖**（自写零依赖 HTTP/1.1 客户端）；CI 仪器化测试改为打一个真实运行的 WebDAV 服务器，用服务器请求日志证明真的使用了 `MKCOL`/`PUT`/`MOVE`/`COPY`（见 [WEBDAV_SYNC_REPORT.md](WEBDAV_SYNC_REPORT.md)）
 - **v7.1** 进入应用即输入：读盘完成后自动聚焦编辑器、光标落在第一行行首，并主动弹出输入法；边到边下自行消费输入法 insets（键盘不再遮挡底部按钮）；CI 新增**模拟器仪器化测试**，发版前在真实 Android 运行环境验证输入法确实弹出（验证证据见 [V7.1_RELEASE_REPORT.md](V7.1_RELEASE_REPORT.md)）
 - **v7.0** 投产 QA 修复：保存门禁缺陷（加载未完成时的输入丢失）、隐私备份、内存上限、无障碍、边到边适配、图标与国际化；工具链升级至 AGP 8.6.1 / Gradle 8.7 / Kotlin 2.0.21 / targetSdk 35；CI 重建为「质量门禁 + 构建 + 自动发版」
@@ -49,7 +50,7 @@
 
 1. **质量门禁**：Android Lint + JVM 单元测试（Robolectric），任一失败即中止
 2. 编译 Debug + Release（Release 使用 secrets 中的 keystore 签名）
-3. **仪器化测试**：在 CI 的 Android 34 模拟器（KVM 硬件加速）上运行 `androidTest`。除了「自动弹出输入法」这类只能在真实 Android 运行环境观察的行为，还会在 runner 上启动仓库自带的零依赖 WebDAV 服务器（`.github/scripts/webdav_stub_server.py`，模拟器经 `10.0.2.2` 访问），端到端验证上传、冲突与节流，并把服务器请求日志打印到 Actions 日志里作为证据
+3. **仪器化测试**：在 CI 的 Android **34 / 35** 双档模拟器（KVM 硬件加速）上运行 `androidTest`。除了「自动弹出输入法」这类只能在真实 Android 运行环境观察的行为，还会在 runner 上启动仓库自带的零依赖 WebDAV 服务器（`.github/scripts/webdav_stub_server.py`，模拟器经 `10.0.2.2` 访问），端到端验证上传、冲突与节流，并把服务器请求日志打印到 Actions 日志里作为证据
 4. 上传构建产物（Actions 页面 Artifacts）
 5. **自动发布 GitHub Release**（仅 `main` 分支，且前三步全部通过），附签名 APK，可直接下载：
 
@@ -78,11 +79,11 @@ Release 签名使用以下仓库 Secrets（已配置）。**没有 secrets 时�
 只改 `gradle.properties` 两行，提交并推送 `main`：
 
 ```properties
-hellowidget.versionName=7.2
-hellowidget.versionCode=17
+hellowidget.versionName=7.3
+hellowidget.versionCode=18
 ```
 
-CI 会自动用 `versionName` 生成 tag（`v7.2`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
+CI 会自动用 `versionName` 生成 tag（`v7.3`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
 
 ## 本地构建
 

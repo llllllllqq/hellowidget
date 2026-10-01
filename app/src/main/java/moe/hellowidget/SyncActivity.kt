@@ -91,17 +91,26 @@ class SyncActivity : AppCompatActivity() {
         renderStatus()
     }
 
-    /** 消费系统栏 insets（targetSdk 35 边到边必需，与设置页一致） */
+    /**
+     * 消费系统栏、刘海与输入法 insets。
+     *
+     * 输入法部分与编辑页同一套写法，但**必须配合布局外的 FrameLayout 根**才有效：
+     * targetSdk 35 边到边之后窗口不再为键盘让位，若把 ime 高度加在 ScrollView 自己的
+     * padding 上，滚动内容的 padding 不会让可视区域变矮，键盘依旧盖住视口底部；
+     * 只有让 ScrollView 的高度真正减掉 ime 高度，聚焦的输入框才会被滚到键盘之上。
+     */
     private fun applySystemBarInsets(root: View) {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
+            // API 30 以下 ime() 由 systemWindowInsets 推导（含导航栏高度），取 max 避免重复叠加
+            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
             view.updatePadding(
                 left = bars.left,
                 top = bars.top,
                 right = bars.right,
-                bottom = bars.bottom
+                bottom = maxOf(bars.bottom, imeBottom)
             )
             WindowInsetsCompat.CONSUMED
         }

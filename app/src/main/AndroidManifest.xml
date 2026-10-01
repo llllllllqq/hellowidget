@@ -56,10 +56,16 @@
             android:name=".SettingsActivity"
             android:exported="false" />
 
-        <!-- WebDAV 同步设置页（地址/凭据/状态/冲突处理） -->
+        <!--
+            WebDAV 同步设置页（地址/凭据/状态/冲突处理）。
+            windowSoftInputMode="adjustResize"：本页有输入框，与编辑页同理 ——
+            API 30 以下只有声明 adjustResize，系统才会把输入法高度报给应用
+            （WindowInsetsCompat.Type.ime()），应用据此把表单顶到键盘之上。
+        -->
         <activity
             android:name=".SyncActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <!--
             同步前台服务：dataSync 类型 → 需要 FOREGROUND_SERVICE_DATA_SYNC 权限（API 34+）。

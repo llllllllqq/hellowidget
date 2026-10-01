@@ -2,222 +2,235 @@
 <!--
     WebDAV 同步设置页。外壳配色沿用设置页的 settings_* 颜色（深浅色模式自动适配）。
 -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/settings_bg"
-    android:fillViewport="true"
     tools:ignore="Overdraw">
     <!--
         tools:ignore="Overdraw"：根布局必须有不透明背景，否则 targetSdk 35 边到边时
         系统栏区域会露出下层内容/闪黑（与设置页同理，是有意为之）。
+
+        为什么外面要套一层 FrameLayout（而不是像设置页那样直接用 ScrollView 当根）：
+        本页有输入框，需要把内容顶到输入法之上。insets 只能作用在根的 padding 上，
+        而如果把 ime 高度加在 ScrollView 自己的 padding 上，**可视区域并不会变矮**
+        （padding 在滚动内容里，键盘依旧盖住视口底部，聚焦的输入框仍可能被遮住）。
+        套一层 FrameLayout 后，ime 的底部 padding 让 ScrollView 的高度真正变矮，
+        ScrollView 自身的「可见范围」计算才正确，聚焦控件也才会被滚到键盘之上。
     -->
 
-    <LinearLayout
+    <ScrollView
+        android:id="@+id/sync_scroll"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
+        android:layout_height="match_parent"
+        android:fillViewport="true">
 
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/sync_title"
-            android:textColor="@color/settings_text"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            android:orientation="vertical"
+            android:padding="16dp">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/sync_subtitle"
-            android:textColor="@color/settings_secondary"
-            android:textSize="12sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/sync_title"
+                android:textColor="@color/settings_text"
+                android:textSize="20sp"
+                android:textStyle="bold" />
 
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/sync_enable"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:minHeight="48dp"
-            android:text="@string/sync_enable"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/sync_subtitle"
+                android:textColor="@color/settings_secondary"
+                android:textSize="12sp" />
 
-        <TextView
-            android:id="@+id/sync_server_label"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/sync_server_label"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp" />
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/sync_enable"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:minHeight="48dp"
+                android:text="@string/sync_enable"
+                android:textColor="@color/settings_text"
+                android:textSize="16sp" />
 
-        <EditText
-            android:id="@+id/sync_server"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/sync_server_hint"
-            android:importantForAutofill="no"
-            android:inputType="textUri"
-            android:maxLines="2"
-            android:textColor="@color/settings_text"
-            android:textColorHint="@color/settings_secondary"
-            android:textSize="15sp" />
+            <TextView
+                android:id="@+id/sync_server_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/sync_server_label"
+                android:textColor="@color/settings_text"
+                android:textSize="16sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/sync_server_examples"
-            android:textColor="@color/settings_secondary"
-            android:textSize="12sp" />
+            <EditText
+                android:id="@+id/sync_server"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/sync_server_hint"
+                android:importantForAutofill="no"
+                android:inputType="textUri"
+                android:maxLines="2"
+                android:textColor="@color/settings_text"
+                android:textColorHint="@color/settings_secondary"
+                android:textSize="15sp" />
 
-        <TextView
-            android:id="@+id/sync_file_name_label"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/sync_file_name_label"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/sync_server_examples"
+                android:textColor="@color/settings_secondary"
+                android:textSize="12sp" />
 
-        <EditText
-            android:id="@+id/sync_file_name"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/sync_file_name_hint"
-            android:importantForAutofill="no"
-            android:inputType="text"
-            android:maxLines="1"
-            android:textColor="@color/settings_text"
-            android:textColorHint="@color/settings_secondary"
-            android:textSize="15sp" />
+            <TextView
+                android:id="@+id/sync_file_name_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/sync_file_name_label"
+                android:textColor="@color/settings_text"
+                android:textSize="16sp" />
 
-        <TextView
-            android:id="@+id/sync_username_label"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:labelFor="@id/sync_username"
-            android:text="@string/sync_username_label"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp" />
+            <EditText
+                android:id="@+id/sync_file_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/sync_file_name_hint"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textColor="@color/settings_text"
+                android:textColorHint="@color/settings_secondary"
+                android:textSize="15sp" />
 
-        <EditText
-            android:id="@+id/sync_username"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:importantForAutofill="no"
-            android:inputType="text"
-            android:maxLines="1"
-            android:textColor="@color/settings_text"
-            android:textSize="15sp" />
+            <TextView
+                android:id="@+id/sync_username_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:labelFor="@id/sync_username"
+                android:text="@string/sync_username_label"
+                android:textColor="@color/settings_text"
+                android:textSize="16sp" />
 
-        <TextView
-            android:id="@+id/sync_password_label"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:labelFor="@id/sync_password"
-            android:text="@string/sync_password_label"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp" />
+            <EditText
+                android:id="@+id/sync_username"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textColor="@color/settings_text"
+                android:textSize="15sp" />
 
-        <EditText
-            android:id="@+id/sync_password"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:importantForAutofill="no"
-            android:inputType="textPassword"
-            android:maxLines="1"
-            android:textColor="@color/settings_text"
-            android:textSize="15sp" />
+            <TextView
+                android:id="@+id/sync_password_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:labelFor="@id/sync_password"
+                android:text="@string/sync_password_label"
+                android:textColor="@color/settings_text"
+                android:textSize="16sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/sync_password_hint"
-            android:textColor="@color/settings_secondary"
-            android:textSize="12sp" />
+            <EditText
+                android:id="@+id/sync_password"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:importantForAutofill="no"
+                android:inputType="textPassword"
+                android:maxLines="1"
+                android:textColor="@color/settings_text"
+                android:textSize="15sp" />
 
-        <Button
-            android:id="@+id/sync_save"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/sync_save" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/sync_password_hint"
+                android:textColor="@color/settings_secondary"
+                android:textSize="12sp" />
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="20dp"
-            android:background="@color/settings_divider" />
+            <Button
+                android:id="@+id/sync_save"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/sync_save" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/sync_status_section"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="20dp"
+                android:background="@color/settings_divider" />
 
-        <TextView
-            android:id="@+id/sync_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/sync_status_never"
-            android:textColor="@color/settings_text"
-            android:textSize="14sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/sync_status_section"
+                android:textColor="@color/settings_text"
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/sync_warning"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:textColor="@color/settings_warning"
-            android:textSize="13sp"
-            android:visibility="gone"
-            tools:text="⚠ 当前使用明文 http，口令与内容可能被网络中的他人读取"
-            tools:visibility="visible" />
+            <TextView
+                android:id="@+id/sync_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/sync_status_never"
+                android:textColor="@color/settings_text"
+                android:textSize="14sp" />
 
-        <TextView
-            android:id="@+id/sync_tls_info"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:textColor="@color/settings_secondary"
-            android:textSize="12sp"
-            android:visibility="gone"
-            tools:text="服务器证书指纹：AB:CD:…"
-            tools:visibility="visible" />
+            <TextView
+                android:id="@+id/sync_warning"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@color/settings_warning"
+                android:textSize="13sp"
+                android:visibility="gone"
+                tools:text="⚠ 当前使用明文 http，口令与内容可能被网络中的他人读取"
+                tools:visibility="visible" />
 
-        <Button
-            android:id="@+id/sync_trust"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/sync_trust_button"
-            android:visibility="gone"
-            tools:visibility="visible" />
+            <TextView
+                android:id="@+id/sync_tls_info"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@color/settings_secondary"
+                android:textSize="12sp"
+                android:visibility="gone"
+                tools:text="服务器证书指纹：AB:CD:…"
+                tools:visibility="visible" />
 
-        <Button
-            android:id="@+id/sync_now"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/sync_now" />
+            <Button
+                android:id="@+id/sync_trust"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/sync_trust_button"
+                android:visibility="gone"
+                tools:visibility="visible" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/sync_behavior_hint"
-            android:textColor="@color/settings_secondary"
-            android:textSize="12sp" />
+            <Button
+                android:id="@+id/sync_now"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/sync_now" />
 
-    </LinearLayout>
-</ScrollView>
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/sync_behavior_hint"
+                android:textColor="@color/settings_secondary"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

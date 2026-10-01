@@ -175,9 +175,16 @@ jobs:
   # JVM/Robolectric 测不到「输入法到底有没有真的弹出来」这类行为，
   # 因此 v7.1 起在 CI 的模拟器上跑 androidTest；发布必须等它通过。
   instrumented:
-    name: Instrumented Tests (emulator)
+    name: Instrumented Tests (emulator API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # v7.3：同时跑 API 34 与 API 35。API 35（Android 15）才会**由系统强制**边到边，
+    # 而 34 上我们靠显式 enableEdgeToEdge() 得到等价行为 —— 两个都跑才能覆盖
+    # 「强制边到边」这条平台行为差异（键盘 insets、系统栏、刘海）。
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [ 34, 35 ]
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -218,7 +225,7 @@ jobs:
       - name: Run instrumented tests on emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: 34
+          api-level: ${{ matrix.api-level }}
           target: default
           arch: x86_64
           disable-animations: true
