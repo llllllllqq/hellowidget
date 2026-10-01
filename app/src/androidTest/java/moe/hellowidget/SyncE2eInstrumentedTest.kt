@@ -78,6 +78,9 @@ class SyncE2eInstrumentedTest {
             !davUrl.isNullOrBlank() && !controlUrl.isNullOrBlank()
         )
         ensureNotificationPermission()
+        // 渠道必须显式创建：API 26+ 往不存在的渠道发通知会被系统静默丢弃
+        // （生产代码里由 SyncService.onCreate / SyncNotifier.postProgress 负责创建）
+        SyncNotifier.ensureChannel(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationQueryReliable = notificationQueryWorks(manager)
         SyncSettings.setEnabled(context, true)
