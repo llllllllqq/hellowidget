@@ -11,3 +11,4 @@ local.properties
 *.keystore
 *.jks
 apk-output/
+.qa-tmp/

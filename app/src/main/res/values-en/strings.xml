@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    English (default-locale fallback is Chinese, so this file provides English for en-* locales).
+-->
+<resources>
+    <string name="app_name">HelloWidget</string>
+    <string name="editor_hint">Type here — saved automatically when you leave…</string>
+    <plurals name="editor_max_length_reached">
+        <item quantity="one">Maximum length reached (%1$d character)</item>
+        <item quantity="other">Maximum length reached (%1$d characters)</item>
+    </plurals>
+    <string name="widget_empty_hint">Tap to edit</string>
+    <string name="widget_description">Show your text on the home screen, scrollable</string>
+    <string name="widget_preview_sample">Type your text here.\nThe widget shows all of it\nas a scrollable list,\nwith no background process.</string>
+    <string name="save_success">Saved ✓</string>
+    <string name="save_failed">Save failed, please try again</string>
+
+    <!-- Settings -->
+    <string name="settings_button">⚙ Widget appearance</string>
+    <string name="settings_title">Widget appearance</string>
+    <string name="settings_preview">Live preview</string>
+    <string name="settings_preview_sample">Sample text: font, color and background follow your settings live.\nThe second line shows the line spacing.</string>
+    <string name="settings_font_size">Font size</string>
+    <string name="settings_font_size_value">%1$dsp</string>
+    <string name="settings_text_color">Text color</string>
+    <string name="settings_bg_color">Background color</string>
+    <string name="settings_bg_alpha">Background opacity (opaque ← transparent)</string>
+    <string name="settings_bg_alpha_value">%1$d%%</string>
+    <string name="settings_fill_margin">Tap-safety margin</string>
+    <string name="settings_fill_margin_hint">Bottom margin removed for short content: a larger margin prevents accidental scrolling but leaves a small blank strip; increase it if scrolling happens by mistake, decrease it if the blank strip is too visible</string>
+    <string name="settings_fill_margin_value">%1$ddp</string>
+    <string name="settings_reset">Restore defaults</string>
+    <string name="color_picker_title_text">Custom text color</string>
+    <string name="color_picker_title_bg">Custom background color</string>
+    <string name="color_preview_text">Color preview</string>
+
+    <!-- Placeholders shown in the layout editor; replaced at runtime -->
+    <string name="settings_font_size_placeholder">14sp</string>
+    <string name="settings_bg_alpha_placeholder">100%</string>
+    <string name="settings_fill_margin_placeholder">4dp</string>
+
+    <!-- Accessibility -->
+    <string name="a11y_swatch_description">%1$s: %2$s</string>
+    <string name="a11y_selected">Selected</string>
+    <string name="a11y_not_selected">Not selected</string>
+    <string name="a11y_custom_color">%1$s (custom color)</string>
+    <string name="color_none">No background</string>
+
+    <!-- Editor colors (light / dark) -->
+    <string name="settings_section_widget">Widget appearance</string>
+    <string name="settings_section_editor_light">Editor colors (light mode)</string>
+    <string name="settings_section_editor_dark">Editor colors (dark mode)</string>
+    <string name="settings_editor_text_color">Text color</string>
+    <string name="settings_editor_bg_hint">"No background" follows the system theme (white in light, black in dark)</string>
+    <string name="color_picker_title_editor_light_bg">Custom light-mode editor background</string>
+    <string name="color_picker_title_editor_light_text">Custom light-mode editor text color</string>
+    <string name="color_picker_title_editor_dark_bg">Custom dark-mode editor background</string>
+    <string name="color_picker_title_editor_dark_text">Custom dark-mode editor text color</string>
+</resources>

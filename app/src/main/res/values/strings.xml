@@ -2,7 +2,12 @@
 <resources>
     <string name="app_name">HelloWidget</string>
     <string name="editor_hint">在此输入内容，退出自动保存…</string>
+    <plurals name="editor_max_length_reached">
+        <item quantity="other">已达最大长度 %1$d 字符</item>
+    </plurals>
     <string name="widget_empty_hint">点此编辑</string>
+    <string name="widget_description">在桌面显示你的文本，可上下滚动阅读</string>
+    <string name="widget_preview_sample">在这里输入内容，\n桌面小组件将以列表形式\n展示全部文字，\n支持上下滑动阅读，\n无需后台进程常驻。</string>
     <string name="save_success">已保存 ✓</string>
     <string name="save_failed">保存失败，请重试</string>
 
@@ -12,9 +17,11 @@
     <string name="settings_preview">实时预览</string>
     <string name="settings_preview_sample">示例文字：字体、颜色、背景会实时跟随设置变化。\n第二行用于观察行距效果。</string>
     <string name="settings_font_size">字体大小</string>
+    <string name="settings_font_size_value">%1$dsp</string>
     <string name="settings_text_color">字体颜色</string>
     <string name="settings_bg_color">背景颜色</string>
     <string name="settings_bg_alpha">背景透明度（不透明 ← 透明）</string>
+    <string name="settings_bg_alpha_value">%1$d%%</string>
     <string name="settings_fill_margin">防误触余量</string>
     <string name="settings_fill_margin_hint">短内容时底部扣除的余量：余量越大越不易误滚动，但底部留白略增；如出现误滚动可调大，底部有明显留白可调小</string>
     <string name="settings_fill_margin_value">%1$ddp</string>
@@ -22,6 +29,18 @@
     <string name="color_picker_title_text">自定义字体颜色</string>
     <string name="color_picker_title_bg">自定义背景颜色</string>
     <string name="color_preview_text">颜色预览</string>
+
+    <!-- 布局中的占位文本（运行时会被真实数值覆盖，仅用于可视化编辑） -->
+    <string name="settings_font_size_placeholder">14sp</string>
+    <string name="settings_bg_alpha_placeholder">100%</string>
+    <string name="settings_fill_margin_placeholder">4dp</string>
+
+    <!-- 无障碍 -->
+    <string name="a11y_swatch_description">%1$s：%2$s</string>
+    <string name="a11y_selected">已选中</string>
+    <string name="a11y_not_selected">未选中</string>
+    <string name="a11y_custom_color">%1$s（自定义颜色）</string>
+    <string name="color_none">无背景</string>
 
     <!-- 编辑器颜色（浅色/深色模式） -->
     <string name="settings_section_widget">小组件外观</string>

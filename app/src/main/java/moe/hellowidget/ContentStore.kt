@@ -35,6 +35,8 @@ import java.util.zip.CRC32
 object ContentStore {
 
     private const val FILE_NAME = "user_content.dat"
+    private const val CORRUPT_PREFIX = "corrupt_"
+    private const val MAX_CORRUPT_BACKUPS = 3
     private const val TAG = "ContentStore"
 
     /**
@@ -94,9 +96,27 @@ object ContentStore {
                 val dest = File(context.filesDir, "corrupt_${System.currentTimeMillis()}.dat")
                 src.copyTo(dest, overwrite = true)
                 Log.w(TAG, "损坏文件已备份为 ${dest.name}（可用于人工恢复）")
+                pruneCorruptBackups(context)
             }
         } catch (e: IOException) {
             Log.w(TAG, "损坏文件备份失败", e)
+        }
+    }
+
+    /**
+     * 只保留最近 [MAX_CORRUPT_BACKUPS] 份损坏备份。
+     * 旧实现每次损坏都新增一份且从不清理，用户私密文本会无限累积，
+     * 还会一起计入系统备份配额。
+     */
+    private fun pruneCorruptBackups(context: Context) {
+        val backups = context.filesDir
+            .listFiles { f -> f.isFile && f.name.startsWith(CORRUPT_PREFIX) && f.name.endsWith(".dat") }
+            ?.sortedByDescending { it.lastModified() }
+            ?: return
+        backups.drop(MAX_CORRUPT_BACKUPS).forEach { stale ->
+            if (stale.delete()) {
+                Log.w(TAG, "已清理过期的损坏备份 ${stale.name}")
+            }
         }
     }
 }
@@ -115,13 +135,15 @@ object ContentSerializer : Serializer<String> {
         if (bytes.size < Int.SIZE_BYTES) {
             throw CorruptionException("内容文件损坏：长度不足（${bytes.size} 字节）")
         }
-        val payload = bytes.copyOfRange(0, bytes.size - Int.SIZE_BYTES)
-        val storedCrc = bytes.readBigEndianInt(bytes.size - Int.SIZE_BYTES)
-        val actualCrc = crc32(payload)
+        val payloadLength = bytes.size - Int.SIZE_BYTES
+        val storedCrc = bytes.readBigEndianInt(payloadLength)
+        val actualCrc = crc32(bytes, payloadLength)
         if (storedCrc != actualCrc) {
             throw CorruptionException("CRC32 校验失败：期望 $storedCrc，实际 $actualCrc")
         }
-        return payload.toString(Charsets.UTF_8)
+        // 直接用 (数组, 偏移, 长度) 构造字符串，省掉 copyOfRange 的那一份 payload 副本，
+        // 大内容下内存峰值明显下降
+        return String(bytes, 0, payloadLength, Charsets.UTF_8)
     }
 
     override suspend fun writeTo(value: String, output: OutputStream) {
@@ -130,8 +152,8 @@ object ContentSerializer : Serializer<String> {
         output.write(intToBigEndianBytes(crc32(payload)))
     }
 
-    private fun crc32(bytes: ByteArray): Int =
-        CRC32().apply { update(bytes) }.value.toInt()
+    private fun crc32(bytes: ByteArray, length: Int = bytes.size): Int =
+        CRC32().apply { update(bytes, 0, length) }.value.toInt()
 
     private fun ByteArray.readBigEndianInt(offset: Int): Int =
         ((this[offset].toInt() and 0xFF) shl 24) or

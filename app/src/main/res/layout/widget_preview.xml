@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:lineSpacingExtra="2dp"
-        android:text="在这里输入内容，\n桌面小组件将以列表形式\n展示全部文字，\n支持上下滑动阅读，\n无需后台进程常驻。"
+        android:text="@string/widget_preview_sample"
         android:textColor="#FFFFFF"
         android:textSize="14sp" />
 

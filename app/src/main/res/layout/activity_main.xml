@@ -19,6 +19,7 @@
             android:background="@null"
             android:gravity="start|top"
             android:hint="@string/editor_hint"
+            android:importantForAutofill="no"
             android:inputType="textMultiLine"
             android:isScrollContainer="false"
             android:padding="16dp"

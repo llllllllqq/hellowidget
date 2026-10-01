@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    tools:ignore="UnusedAttribute" 的原因：previewLayout / targetCellWidth / targetCellHeight
+    只被 API 31+ 读取，但旧平台的解析器会直接忽略未知属性（不会崩溃），
+    同时保留了 minWidth/minHeight 供 API 21–30 使用，属于有意为之的前向兼容写法。
+-->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_description"
     android:initialLayout="@layout/widget_layout"
     android:minWidth="180dp"
     android:minHeight="100dp"
@@ -8,4 +15,5 @@
     android:targetCellWidth="4"
     android:targetCellHeight="3"
     android:updatePeriodMillis="0"
-    android:widgetCategory="home_screen" />
+    android:widgetCategory="home_screen"
+    tools:ignore="UnusedAttribute" />
