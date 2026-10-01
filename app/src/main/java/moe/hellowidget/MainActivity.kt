@@ -12,9 +12,12 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import moe.hellowidget.databinding.ActivityMainBinding
@@ -28,6 +31,22 @@ class MainActivity : AppCompatActivity() {
 
     /** 异步加载内容是否已完成（用于判断编辑器可否编辑） */
     private var loadCompleted = false
+
+    /**
+     * 本次是否为「全新进入应用」（false = 系统重建：旋转 / 深色模式切换 / 进程恢复）。
+     * 只影响光标位置：全新进入时按设计放到第一行行首，系统重建时保留框架恢复出来的选区。
+     */
+    private var freshEntry = false
+
+    /**
+     * 已向系统发出「弹出输入法」请求的次数。
+     *
+     * Robolectric/JVM 里没有真实输入法，单测只能验证**请求时机**（加载完成后、且仅一次）；
+     * 输入法在真机上究竟有没有弹出来，由 androidTest 里的模拟器仪器化测试覆盖。
+     */
+    @VisibleForTesting
+    internal var imeRequestCount = 0
+        private set
 
     /** 用户是否已手动输入过（含系统恢复实例状态时触发的文本变化） */
     private var editorTouched = false
@@ -77,6 +96,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // savedInstanceState == null ⇔ 全新进入应用；非 null ⇔ 系统重建（旋转/深色模式/进程恢复）
+        freshEntry = savedInstanceState == null
         // targetSdk 35 起系统强制边到边（Android 15+），必须自行消费系统栏 insets
         enableEdgeToEdge()
 
@@ -107,11 +128,19 @@ class MainActivity : AppCompatActivity() {
             loadCompleted = true
             if (!editorTouched) {
                 binding.editor.setText(savedText)
-                if (savedText.isNotEmpty()) {
-                    binding.editor.setSelection(savedText.length)
-                }
             }
+            // 顺序很重要：先解禁编辑（disabled 的 View 拿不到焦点），再聚焦，最后才定位光标
             binding.editor.isEnabled = true
+            binding.editor.requestFocus()
+            // 光标定位必须放在 requestFocus() **之后**：EditText 获得焦点时框架会按
+            // 「获得焦点默认行为」把光标带到文末（Editor.onFocusChanged → MovementMethod.onTakeFocus），
+            // 聚焦前设的选区会被这次行为覆盖（已由 MainActivityEntryTest 固化）。
+            // 只在全新进入应用时置 0；系统重建（旋转/深色模式/进程恢复）不动选区，
+            // 保留框架恢复出来的光标位置。
+            if (freshEntry) {
+                binding.editor.setSelection(0)
+            }
+            requestImeShow()
         }
 
         // 打开小组件外观设置页
@@ -207,19 +236,52 @@ class MainActivity : AppCompatActivity() {
         applyEditorColors()
     }
 
-    /** 消费系统栏与刘海 insets，把内容避开状态栏/导航栏（targetSdk 35 边到边必需） */
+    /**
+     * 消费系统栏、刘海与输入法 insets，把内容避开状态栏/导航栏/键盘（targetSdk 35 边到边必需）。
+     *
+     * 输入法部分是本版新增：targetSdk 35 + enableEdgeToEdge() 之后，窗口不再为键盘让位
+     * （adjustResize 不再自动生效），必须自己把内容顶到键盘之上，
+     * 否则「进入应用自动弹出输入法」时底部按钮会被键盘永久挡住。
+     */
     private fun applySystemBarInsets(root: View) {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
+            // API 30 以下 ime() 由 systemWindowInsets 推导（含导航栏高度），取 max 避免重复叠加
+            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
             view.updatePadding(
                 left = bars.left,
                 top = bars.top,
                 right = bars.right,
-                bottom = bars.bottom
+                bottom = maxOf(bars.bottom, imeBottom)
             )
             WindowInsetsCompat.CONSUMED
+        }
+    }
+
+    /**
+     * 主动请求弹出输入法（调用前编辑器必须已解禁并已获得焦点）。
+     *
+     * 为什么不只用 Manifest 的 `windowSoftInputMode="stateVisible"`：
+     * 编辑器在异步读盘完成前是 disabled 的（防止用户输入被磁盘旧内容覆盖），
+     * 而禁用的 View 拿不到焦点，系统也就不会为它弹出输入法。
+     * 因此只能在读盘完成、编辑器解禁之后主动请求。
+     *
+     * 为什么用 WindowInsetsControllerCompat#show(ime()) 而不是
+     * InputMethodManager.showSoftInput()：官方文档明确指出后者在 Activity 启动阶段
+     * 常被系统忽略（窗口尚未聚焦时编辑器不被视为已连上输入法），
+     * 而前者「guaranteed to be scheduled after the window is focused」——
+     * AOSP 里 ImeInsetsSourceConsumer 会先把请求记入 requested-visible 类型，
+     * 并在窗口获得焦点（onWindowFocusGained）时补上，所以此刻窗口还没聚焦也不会丢请求。
+     */
+    private fun requestImeShow() {
+        if (isFinishing || isDestroyed) return
+        val controller: WindowInsetsControllerCompat? =
+            WindowCompat.getInsetsController(window, binding.editor)
+        if (controller != null) {
+            imeRequestCount++
+            controller.show(WindowInsetsCompat.Type.ime())
         }
     }
 

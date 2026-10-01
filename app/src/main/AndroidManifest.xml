@@ -15,11 +15,16 @@
         <!--
             configChanges="uiMode"：系统深色模式切换时不自动重建 Activity，
             改由 onConfigurationChanged 处理：先触发一次自动保存，再重建应用新主题。
+
+            windowSoftInputMode="adjustResize"：WindowInsetsCompat 官方推荐的设置——
+            API 30 以下只有声明 adjustResize，系统才会把输入法高度报给应用
+            （WindowInsetsCompat.Type.ime()），本版的「自动弹出输入法」靠它把内容顶到键盘之上。
         -->
         <activity
             android:name=".MainActivity"
             android:configChanges="uiMode"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
