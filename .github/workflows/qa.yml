@@ -56,7 +56,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.5"
+          gradle-version: "8.7"
 
       - name: Toolchain evidence
         run: |
@@ -128,7 +128,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.5"
+          gradle-version: "8.7"
 
       - name: Run JVM unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
@@ -186,7 +186,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.5"
+          gradle-version: "8.7"
 
       # 签名密钥仅在仓库自己的 workflow 中可用；fork PR 没有 secrets，需要优雅降级
       - name: Decode keystore if available
@@ -223,10 +223,10 @@ jobs:
           echo "===== APK 产物 ====="
           find app/build/outputs/apk -name '*.apk' -exec ls -la {} \;
           echo "===== APK 元数据 ====="
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -1)"
           for a in $(find app/build/outputs/apk -name '*.apk'); do
             echo "--- $a ---"
-            "${ANDROID_HOME}/build-tools/34.0.0/aapt2" dump badging "$a" 2>/dev/null | head -25 \
-              || echo "badging 不可用"
+            "${BT}aapt2" dump badging "$a" 2>/dev/null | head -25 || echo "badging 不可用"
           done
           exit 0
 
