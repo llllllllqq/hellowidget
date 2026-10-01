@@ -46,8 +46,11 @@ class SyncActivityImeInstrumentedTest {
     fun focusingFormField_keepsFormAboveIme() {
         ActivityScenario.launch(SyncActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                val field = activity.findViewById<EditText>(R.id.sync_password)
-                field.requestFocus()
+                // 表单比屏幕高，先滚到底：这样断言的是「最底部的控件」是否被键盘盖住，
+                // 而不是「碰巧没滚到底所以看得见」
+                val scroll = activity.findViewById<View>(R.id.sync_scroll)
+                scroll.fullScroll(View.FOCUS_DOWN)
+                activity.findViewById<EditText>(R.id.sync_password).requestFocus()
                 val root = activity.findViewById<View>(android.R.id.content)
                 ViewCompat.getWindowInsetsController(root)?.show(WindowInsetsCompat.Type.ime())
             }
@@ -56,6 +59,13 @@ class SyncActivityImeInstrumentedTest {
                 "输入法必须真的弹出（JVM/Robolectric 里没有输入法，只能在这一层验证）",
                 awaitImeVisible(scenario)
             )
+
+            // 键盘动画 + 因 insets 变化触发的重新布局/滚动都要落定
+            SystemClock.sleep(600)
+            scenario.onActivity { activity ->
+                activity.findViewById<View>(R.id.sync_scroll).fullScroll(View.FOCUS_DOWN)
+            }
+            SystemClock.sleep(300)
 
             scenario.onActivity { activity ->
                 val root = activity.findViewById<View>(android.R.id.content)
@@ -68,29 +78,32 @@ class SyncActivityImeInstrumentedTest {
                 val imeBottom = insets!!.getInsets(WindowInsetsCompat.Type.ime()).bottom
                 assertTrue("输入法可见时其 inset 高度必须大于 0", imeBottom > 0)
 
-                // 1) 机制：滚动容器的高度必须真的让出键盘那块空间
+                // 1) 机制：滚动容器的高度必须真的让出键盘那块空间。
+                //    把 ime 高度加在 ScrollView 自己的 padding 上不会让视口变矮 —— 这条断言正是防那个坑。
                 assertTrue(
                     "滚动容器必须被键盘顶矮：ScrollView 高=${scroll.height}，" +
                         "窗口高=${root.height}，imeBottom=$imeBottom",
                     scroll.height <= root.height - imeBottom + 16
                 )
 
-                // 2) 结果：聚焦的输入框与底部按钮都要在键盘之上
                 val imeTop = activity.resources.displayMetrics.heightPixels - imeBottom
-                val fieldLocation = IntArray(2)
-                field.getLocationOnScreen(fieldLocation)
-                val fieldBottom = fieldLocation[1] + field.height
-                assertTrue(
-                    "聚焦的输入框不能被输入法遮挡：输入框底部=$fieldBottom，键盘顶部=$imeTop",
-                    fieldBottom <= imeTop + 16
-                )
 
+                // 2) 结果：滚到底时，底部按钮必须停在键盘之上
                 val buttonLocation = IntArray(2)
                 button.getLocationOnScreen(buttonLocation)
                 val buttonBottom = buttonLocation[1] + button.height
                 assertTrue(
                     "底部按钮不能被输入法遮挡：按钮底部=$buttonBottom，键盘顶部=$imeTop",
                     buttonBottom <= imeTop + 16
+                )
+
+                // 3) 结果：聚焦的输入框也不能被遮挡
+                val fieldLocation = IntArray(2)
+                field.getLocationOnScreen(fieldLocation)
+                val fieldBottom = fieldLocation[1] + field.height
+                assertTrue(
+                    "聚焦的输入框不能被输入法遮挡：输入框底部=$fieldBottom，键盘顶部=$imeTop",
+                    fieldBottom <= imeTop + 16
                 )
             }
         }
