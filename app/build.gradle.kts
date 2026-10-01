@@ -88,6 +88,19 @@ android {
         unitTests.isReturnDefaultValues = true
         // Robolectric 需要真实资源（布局/主题）
         unitTests.isIncludeAndroidResources = true
+        // JDK 17 起 java.base 的内部包默认不再对外开放。JSSE 的服务端握手（TlsPinningTest
+        // 里的 SSLServerSocket 桩）需要反射 java.net.InetAddress 的私有字段，
+        // 不加这几行会直接抛 InaccessibleObjectException：
+        //   Unable to make java.net.InetAddress$InetAddressHolder ... accessible:
+        //   module java.base does not "opens java.net" to unnamed module
+        unitTests.all { test ->
+            test.jvmArgs(
+                "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.util=ALL-UNNAMED",
+                "--add-opens=java.base/java.io=ALL-UNNAMED"
+            )
+        }
     }
 }
 

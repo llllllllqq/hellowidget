@@ -5,6 +5,8 @@ import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.InputStream
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
@@ -87,7 +89,8 @@ class StubHttpServer(
             } catch (e: Exception) {
                 // 连接被客户端提前关掉是正常情况（例如 TOO_LARGE 直接放弃读取、
                 // 或证书不受信任时客户端主动断开），但这正是失败时要看的信息
-                errors.add("${e.javaClass.simpleName}: ${e.message}")
+                val trace = StringWriter().also { w -> e.printStackTrace(PrintWriter(w)) }.toString()
+                errors.add("${e.javaClass.simpleName}: ${e.message}\n$trace")
             } finally {
                 runCatching { socket.close() }
             }
