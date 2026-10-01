@@ -1,9 +1,14 @@
 package moe.hellowidget
 
 import android.os.Looper
+import android.view.View
 import android.widget.EditText
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -103,4 +108,37 @@ class MainActivityEntryTest {
         assertEquals("系统重建必须保留用户原有光标位置（不能跳回行首）", 5, editor.selectionStart)
         assertEquals("系统重建后同样要自动弹出输入法", 1, activity.imeRequestCount)
     }
+
+    /**
+     * 需求 4（兜底）：输入法可见时如果焦点已从编辑器脱落，必须自动拉回编辑器。
+     *
+     * 这条不是假想：CI 的 API 34 模拟器上实测到「输入法首帧可见时 Activity 仍有窗口焦点、
+     * 但没有任何 View 持有焦点」的时序，此时光标不闪烁、按键无处可去。
+     */
+    @Test
+    fun imeVisible_withoutViewFocus_pullsFocusBackToEditor() {
+        // 空内容：让「重新获得焦点会不会把光标移到文末」不干扰行首断言
+        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("") })
+
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val editor = editorOf(activity)
+        awaitEditorEnabled(activity)
+
+        // 构造「键盘可见，但焦点已脱落」的状态
+        editor.clearFocus()
+        assertFalse("前置条件：焦点已从编辑器脱落", editor.hasFocus())
+
+        val imeInsets = WindowInsetsCompat.Builder()
+            .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, 800))
+            .build()
+        ViewCompat.dispatchApplyWindowInsets(rootOf(activity), imeInsets)
+
+        assertTrue("输入法可见时编辑器必须重新获得焦点", editor.hasFocus())
+        assertEquals("重新获得焦点后光标仍应在第一行行首", 0, editor.selectionStart)
+    }
+
+    /** setContentView 传进去的那个根布局（insets 监听器装在它身上） */
+    private fun rootOf(activity: MainActivity): View =
+        activity.findViewById<View>(android.R.id.content).getChildAt(0)
 }

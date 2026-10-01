@@ -256,8 +256,24 @@ class MainActivity : AppCompatActivity() {
                 right = bars.right,
                 bottom = maxOf(bars.bottom, imeBottom)
             )
+            keepEditorFocusedWhileImeVisible(insets)
             WindowInsetsCompat.CONSUMED
         }
+    }
+
+    /**
+     * 输入法可见时把焦点维持在编辑器上。
+     *
+     * 实测（CI 的 API 34 模拟器，见 V7.1_RELEASE_REPORT.md）：输入法首帧可见时，焦点偶尔会从
+     * 编辑器上脱落 —— Activity 仍有窗口焦点，但没有任何 View 持有焦点，此时光标不闪烁、
+     * 按键无处可去，而这恰好发生在「自动弹出输入法」这条新路径上。
+     * 本应用只有一个可输入控件（另一个控件是触摸模式下不可聚焦的按钮），
+     * 因此这里幂等地把焦点拉回编辑器，让「打开即输入」在任何时序下都成立。
+     */
+    private fun keepEditorFocusedWhileImeVisible(insets: WindowInsetsCompat) {
+        if (!insets.isVisible(WindowInsetsCompat.Type.ime())) return
+        if (!binding.editor.isEnabled || binding.editor.hasFocus()) return
+        binding.editor.requestFocus()
     }
 
     /**
