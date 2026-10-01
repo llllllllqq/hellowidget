@@ -90,7 +90,9 @@ android {
 }
 
 dependencies {
-    implementation("androidx.appcompat:appcompat:1.8.0")
+    // 注意：appcompat 1.8.0 的 appcompat-resources 要求 minSdk 23，本项目 minSdk 21，
+    // 因此锁定在 1.7.0（最后一个支持 minSdk 21 的版本）。
+    implementation("androidx.appcompat:appcompat:1.7.0")
     // DataStore 官方原子写入（自定义 Serializer + CRC32）
     implementation("androidx.datastore:datastore-core:1.1.1")
     // lifecycleScope（生命周期感知的协程作用域）
