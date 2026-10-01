@@ -150,9 +150,44 @@ MOVE <file>.uploading → <file>   Overwrite: T（覆盖）/ F（创建）
 | 「真的用了 WebDAV 动词」 | 模拟器测试读取**服务器端请求日志**（`HEAD/PROPFIND`、`MKCOL`、`PUT *.uploading`、`MOVE`、`COPY`），日志同时打印在 Actions 里 | CI `instrumented` |
 | 自签名证书 → 报 `TLS_UNTRUSTED` 并回传指纹；确认指纹后放行；指纹不对仍拒绝 | `TlsPinningTest`（测试专用自签名证书 + 真实 `SSLServerSocket` 握手，见 `app/src/test/resources/tls/`） | CI `quality` |
 
+### 5.2 本轮实测结果（`qa/7.2-webdav`）
+
+运行：[Build & Release #36835813525](https://github.com/llllllllqq/hellowidget/actions/runs/36835813525)（head `c281b9a`）
+
+| 作业 | 结果 |
+|---|---|
+| Lint & Unit Tests | ✅ Lint **0 error / 6 warning**（5×GradleDependency + 1×OldTargetApi，与 v7.1 基线完全一致）；JVM 单测 **87 个全通过**（v7.1 为 24 个） |
+| Build APKs | ✅ Debug + Release 均构建成功 |
+| Instrumented Tests (emulator) | ✅ **7 个用例全通过**（1 个 v7.1 输入法用例 + 6 个 WebDAV 端到端用例），跑在 API 34 模拟器上 |
+| Publish GitHub Release | ⏭️ 仅 `main` 分支才发布（`qa/**` 故意跳过） |
+
+服务器端请求日志（CI 原样打印，每个用例用独立文件名，因此一次运行里所有场景都在证据里）：
+
+```
+HEAD /dav/note-...txt            -> 404 missing        ← 先取云端元数据
+MKCOL /dav                       -> 201 created         ← 自动创建目标目录
+PUT  /dav/note-...txt.uploading  -> 201 len=51 created  ← 先写临时文件（不碰正式文件）
+MOVE /dav/note-...txt.uploading  -> 201 Dest=/dav/note-...txt Overwrite=F   ← 原子换名＝创建
+HEAD /dav/note-...txt            -> 200 size=51         ← 记录新基线
+
+HEAD /dav/note-...txt            -> 200 size=21         ← 云端被外部改过（ETag/大小已变）
+COPY /dav/note-...txt            -> 201 Dest=...conflict-20261001-082433.txt ← 冲突：先留副本
+MKCOL /dav                       -> 405 exists
+PUT  /dav/note-...txt.uploading  -> 201 len=15 created
+HEAD /dav/note-...txt            -> 200 size=21         ← 覆盖前二次确认云端仍是决策时版本
+MOVE /dav/note-...txt.uploading  -> 204 Dest=...txt Overwrite=T  ← 确认后才覆盖
+
+GET  /dav/note-...txt            -> 200 size=12         ← 「用云端覆盖本地」：先取云端内容
+PUT  /dav/note-...useRemote...conflict-20261001-082443.txt.uploading -> 201 len=12 ← 本地版本先留副本
+MOVE ...conflict-20261001-082443.txt.uploading -> 201 Overwrite=F                  ← 副本落盘，官网端可查
+HEAD /dav/note-...txt            -> 200 size=12         ← 云端主文件始终未被改动
+```
+
+这份日志回答了两个「光看代码说不清」的问题：**Android 网络栈确实接受 `MKCOL`/`MOVE`/`COPY`**（§3.1 的取舍成立），以及**冲突与二次确认真的在设备上按设计执行**（不是只在单测的假桩里成立）。
+
 在 CI 上跑的 WebDAV 服务器是仓库自带的零依赖实现 `.github/scripts/webdav_stub_server.py`（仅标准库，绑定 `127.0.0.1`，模拟器经 `10.0.2.2` 访问），支持 `OPTIONS/HEAD/GET/PUT/DELETE/PROPFIND/MKCOL/MOVE/COPY`、Basic 鉴权、`If-Match`/`If-None-Match`/`If-Unmodified-Since` 求值，并提供只读控制面（`reset`/`log`/`count`/`file`/`etag`/`exists`）供测试断言服务器侧状态。已用 28 项本地脚本复查其与客户端的交互序列（含 `PUT temp → HEAD → MOVE`、`Overwrite=F` 并发创建返回 412 等）。
 
-### 5.2 尚未被自动化覆盖的部分（如实说明）
+### 5.3 尚未被自动化覆盖的部分（如实说明）
 
 | 缺口 | 原因 | 建议的验证方式 |
 |---|---|---|
