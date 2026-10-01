@@ -51,6 +51,8 @@ android {
     testOptions {
         // android.jar 方法在 JVM 单测中返回默认值而不是抛 "not mocked"
         unitTests.isReturnDefaultValues = true
+        // Robolectric 需要真实资源（布局/主题）
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -63,4 +65,6 @@ dependencies {
 
     // 投产 QA：JVM 单元测试
     testImplementation("junit:junit:4.13.2")
+    // 投产 QA：Robolectric —— 在云端 JVM 上跑真实 Activity 生命周期，无需模拟器
+    testImplementation("org.robolectric:robolectric:4.13")
 }
