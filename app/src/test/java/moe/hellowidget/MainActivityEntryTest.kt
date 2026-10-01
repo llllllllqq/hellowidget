@@ -2,6 +2,7 @@ package moe.hellowidget
 
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -140,5 +141,5 @@ class MainActivityEntryTest {
 
     /** setContentView 传进去的那个根布局（insets 监听器装在它身上） */
     private fun rootOf(activity: MainActivity): View =
-        activity.findViewById<View>(android.R.id.content).getChildAt(0)
+        activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
 }
