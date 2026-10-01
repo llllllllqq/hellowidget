@@ -111,7 +111,7 @@ dependencies {
 
     // v7.1：仪器化测试（CI 里的 Android 模拟器上运行）。
     // 只影响 androidTest 变体：不进入发布包，也不改变应用的 minSdk。
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("junit:junit:4.13.2")
 }
