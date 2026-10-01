@@ -1,5 +1,6 @@
 package moe.hellowidget
 
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -9,14 +10,25 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.content.res.AppCompatResources
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import moe.hellowidget.MainActivity.Companion.prefs
 import moe.hellowidget.databinding.ActivitySettingsBinding
+import java.util.Locale
 
 /**
- * 小组件外观设置页：字体大小、字体颜色、背景颜色、背景透明度。
- * 所有修改即时保存并刷新桌面小组件。
+ * 小组件外观设置页：字体大小、字体颜色、背景颜色、背景透明度、防误触余量，
+ * 以及浅色/深色模式各自的编辑器配色。
+ *
+ * QA 修复要点：
+ *  - 滑杆拖动时只做廉价的本地预览，**松手才落盘 + 刷新桌面小组件**（原来每帧一次全量刷新）
+ *  - 色板补齐无障碍语义（可访问名称、选中状态、48dp 触控目标）
+ *  - targetSdk 35 边到边：消费系统栏 insets
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -53,8 +65,10 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        applySystemBarInsets(binding.root)
         title = getString(R.string.settings_title)
 
         loadSettings()
@@ -71,6 +85,22 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnReset.setOnClickListener { resetSettings() }
     }
 
+    /** 消费系统栏 insets，避免内容被状态栏/导航栏遮挡（targetSdk 35 边到边必需） */
+    private fun applySystemBarInsets(root: View) {
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updatePadding(
+                left = bars.left,
+                top = bars.top,
+                right = bars.right,
+                bottom = bars.bottom
+            )
+            WindowInsetsCompat.CONSUMED
+        }
+    }
+
     // ---------- 读取 / 保存 ----------
 
     private fun loadSettings() {
@@ -85,7 +115,7 @@ class SettingsActivity : AppCompatActivity() {
         editorDarkText = EditorSettings.darkText(this)
     }
 
-    /** 保存全部设置并立即刷新桌面小组件 */
+    /** 保存全部设置并立即刷新桌面小组件（只在交互结束时调用，不在拖动过程中每帧调用） */
     private fun persist() {
         prefs.edit()
             .putFloat(WidgetSettings.KEY_FONT_SIZE, fontSp)
@@ -101,44 +131,45 @@ class SettingsActivity : AppCompatActivity() {
         TextWidgetProvider.updateWidgets(this)
     }
 
-    // ---------- 字体大小 ----------
+    // ---------- 滑杆：拖动只预览，松手才落盘 ----------
 
     private fun setupFontSizeSeek() {
         // 进度 0..24 → 10..34sp
         binding.fontSizeSeek.progress = (fontSp - 10).toInt().coerceIn(0, 24)
-        binding.fontSizeValue.text = "${fontSp.toInt()}sp"
+        binding.fontSizeValue.text = getString(R.string.settings_font_size_value, fontSp.toInt())
         binding.fontSizeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 fontSp = 10f + progress
-                binding.fontSizeValue.text = "${fontSp.toInt()}sp"
-                persist()
+                binding.fontSizeValue.text =
+                    getString(R.string.settings_font_size_value, fontSp.toInt())
                 updatePreview()
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                persist()
+            }
         })
     }
-
-    // ---------- 背景透明度 ----------
 
     private fun setupBgAlphaSeek() {
         binding.bgAlphaSeek.progress = bgAlpha
-        binding.bgAlphaValue.text = "$bgAlpha%"
+        binding.bgAlphaValue.text = getString(R.string.settings_bg_alpha_value, bgAlpha)
         binding.bgAlphaSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 bgAlpha = progress
-                binding.bgAlphaValue.text = "$progress%"
-                persist()
+                binding.bgAlphaValue.text = getString(R.string.settings_bg_alpha_value, progress)
                 updatePreview()
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                persist()
+            }
         })
     }
-
-    // ---------- 防误触余量 ----------
 
     private fun setupFillMarginSeek() {
         binding.fillMarginSeek.progress = fillMarginDp.coerceIn(0, 20)
@@ -146,12 +177,15 @@ class SettingsActivity : AppCompatActivity() {
         binding.fillMarginSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 fillMarginDp = progress
-                binding.fillMarginValue.text = getString(R.string.settings_fill_margin_value, progress)
-                persist()
+                binding.fillMarginValue.text =
+                    getString(R.string.settings_fill_margin_value, progress)
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                persist()
+            }
         })
     }
 
@@ -159,9 +193,10 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun renderTextSwatches() {
         binding.textColorSwatches.removeAllViews()
+        val section = getString(R.string.settings_text_color)
         textColors.forEach { color ->
             binding.textColorSwatches.addView(
-                makeSwatch(color, color == textColor) {
+                makeSwatch(color, color == textColor, swatchDescription(section, color)) {
                     textColor = it
                     persist()
                     renderTextSwatches()
@@ -169,9 +204,8 @@ class SettingsActivity : AppCompatActivity() {
                 }
             )
         }
-        // 自定义取色按钮
         binding.textColorSwatches.addView(
-            makeCustomSwatch(textColor !in textColors) {
+            makeCustomSwatch(textColor !in textColors, section) {
                 showColorDialog(getString(R.string.color_picker_title_text), textColor) { color ->
                     textColor = color
                     persist()
@@ -184,9 +218,10 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun renderBgSwatches() {
         binding.bgColorSwatches.removeAllViews()
+        val section = getString(R.string.settings_bg_color)
         bgColors.forEach { color ->
             binding.bgColorSwatches.addView(
-                makeSwatch(color, color == bgColor) {
+                makeSwatch(color, color == bgColor, swatchDescription(section, color)) {
                     bgColor = it
                     persist()
                     renderBgSwatches()
@@ -195,7 +230,7 @@ class SettingsActivity : AppCompatActivity() {
             )
         }
         binding.bgColorSwatches.addView(
-            makeCustomSwatch(bgColor !in bgColors) {
+            makeCustomSwatch(bgColor !in bgColors, section) {
                 showColorDialog(getString(R.string.color_picker_title_bg), bgColor) { color ->
                     bgColor = color
                     persist()
@@ -217,21 +252,24 @@ class SettingsActivity : AppCompatActivity() {
         palette: List<Int>,
         selected: Int,
         pickerTitleRes: Int,
+        section: String,
         onPick: (Int) -> Unit
     ) {
         container.removeAllViews()
         palette.forEach { color ->
-            container.addView(makeSwatch(color, color == selected) {
-                onPick(it)
-                // 重绘整行，让选中边框立即同步（与小组件色板 renderTextSwatches/renderBgSwatches 逻辑一致）
-                renderSwatchRow(container, palette, it, pickerTitleRes, onPick)
-            })
+            container.addView(
+                makeSwatch(color, color == selected, swatchDescription(section, color)) {
+                    onPick(it)
+                    // 重绘整行，让选中边框立即同步
+                    renderSwatchRow(container, palette, it, pickerTitleRes, section, onPick)
+                }
+            )
         }
         container.addView(
-            makeCustomSwatch(selected !in palette) {
+            makeCustomSwatch(selected !in palette, section) {
                 showColorDialog(getString(pickerTitleRes), selected) { color ->
                     onPick(color)
-                    renderSwatchRow(container, palette, color, pickerTitleRes, onPick)
+                    renderSwatchRow(container, palette, color, pickerTitleRes, section, onPick)
                 }
             }
         )
@@ -240,26 +278,57 @@ class SettingsActivity : AppCompatActivity() {
     private fun renderEditorSwatches() {
         renderSwatchRow(
             binding.editorLightBgSwatches, bgColors, editorLightBg,
-            R.string.color_picker_title_editor_light_bg
+            R.string.color_picker_title_editor_light_bg,
+            getString(R.string.settings_section_editor_light) + " " + getString(R.string.settings_bg_color)
         ) { editorLightBg = it; persist() }
         renderSwatchRow(
             binding.editorLightTextSwatches, textColors, editorLightText,
-            R.string.color_picker_title_editor_light_text
+            R.string.color_picker_title_editor_light_text,
+            getString(R.string.settings_section_editor_light) + " " + getString(R.string.settings_editor_text_color)
         ) { editorLightText = it; persist() }
         renderSwatchRow(
             binding.editorDarkBgSwatches, bgColors, editorDarkBg,
-            R.string.color_picker_title_editor_dark_bg
+            R.string.color_picker_title_editor_dark_bg,
+            getString(R.string.settings_section_editor_dark) + " " + getString(R.string.settings_bg_color)
         ) { editorDarkBg = it; persist() }
         renderSwatchRow(
             binding.editorDarkTextSwatches, textColors, editorDarkText,
-            R.string.color_picker_title_editor_dark_text
+            R.string.color_picker_title_editor_dark_text,
+            getString(R.string.settings_section_editor_dark) + " " + getString(R.string.settings_editor_text_color)
         ) { editorDarkText = it; persist() }
     }
 
-    /** 一个颜色方块；选中时显示高亮边框 */
-    private fun makeSwatch(color: Int, selected: Boolean, onClick: (Int) -> Unit): View {
+    /** 颜色 → 可读标签（无障碍朗读用） */
+    private fun swatchDescription(section: String, color: Int): String {
+        val label = if (color == Color.TRANSPARENT) {
+            getString(R.string.color_none)
+        } else {
+            String.format(Locale.US, "#%06X", 0xFFFFFF and color)
+        }
+        return getString(R.string.a11y_swatch_description, section, label)
+    }
+
+    /**
+     * 一个颜色方块；选中时显示高亮边框。
+     *
+     * 无障碍：48dp 触控目标、可聚焦、带可访问名称，并用 stateDescription 表达选中状态
+     * （旧实现是裸 View，TalkBack 只能看到一堆没有名字的方块，且选中仅靠颜色区分）。
+     */
+    private fun makeSwatch(
+        color: Int,
+        selected: Boolean,
+        description: String,
+        onClick: (Int) -> Unit
+    ): View {
         val swatch = View(this)
-        swatch.layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(10) }
+        swatch.layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(8) }
+        swatch.contentDescription = description
+        swatch.isFocusable = true
+        swatch.isSelected = selected
+        ViewCompat.setStateDescription(
+            swatch,
+            getString(if (selected) R.string.a11y_selected else R.string.a11y_not_selected)
+        )
 
         val gd = GradientDrawable().apply {
             cornerRadius = dp(8).toFloat()
@@ -278,19 +347,21 @@ class SettingsActivity : AppCompatActivity() {
         return swatch
     }
 
-    /** "＋"自定义颜色按钮 */
-    private fun makeCustomSwatch(active: Boolean, onClick: () -> Unit): TextView {
+    /** "＋"自定义颜色按钮（同样补齐无障碍语义与 48dp 触控目标） */
+    private fun makeCustomSwatch(active: Boolean, section: String, onClick: () -> Unit): TextView {
         return TextView(this).apply {
             text = "＋"
             gravity = Gravity.CENTER
             textSize = 18f
             setTextColor(Color.parseColor("#555555"))
+            contentDescription = getString(R.string.a11y_custom_color, section)
+            isFocusable = true
             background = GradientDrawable().apply {
                 cornerRadius = dp(8).toFloat()
                 setStroke(dp(if (active) 3 else 1),
                     if (active) Color.parseColor("#FF4081") else Color.parseColor("#BBBBBB"))
             }
-            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(10) }
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(8) }
             setOnClickListener { onClick() }
         }
     }
@@ -319,7 +390,11 @@ class SettingsActivity : AppCompatActivity() {
         // R / G / B 三根滑杆
         val dialogTextColor = themeAttrColor(android.R.attr.textColorPrimary)
         listOf("R", "G", "B").forEachIndexed { index, label ->
-            val bar = SeekBar(this).apply { max = 255; progress = rgb[index] }
+            val bar = SeekBar(this).apply {
+                max = 255
+                progress = rgb[index]
+                contentDescription = label
+            }
             val value = TextView(this).apply {
                 text = rgb[index].toString()
                 setTextColor(dialogTextColor)
@@ -398,10 +473,31 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    /** 从当前主题解析属性颜色（浅色/深色模式自动适配） */
+    /**
+     * 从当前主题解析颜色属性（浅色/深色模式自动适配）。
+     * 主题属性可能解析成 ColorStateList 资源而不是直接的 ARGB 整数，
+     * 此时 `TypedValue.data` 不是颜色，需要按资源取默认色（旧实现直接用了 data）。
+     */
     private fun themeAttrColor(attr: Int): Int {
         val value = TypedValue()
-        theme.resolveAttribute(attr, value, true)
-        return value.data
+        if (!theme.resolveAttribute(attr, value, true)) return fallbackTextColor()
+        val isColor = value.type >= TypedValue.TYPE_FIRST_COLOR_INT &&
+            value.type <= TypedValue.TYPE_LAST_COLOR_INT
+        if (isColor) return value.data
+        if (value.resourceId != 0) {
+            try {
+                AppCompatResources.getColorStateList(this, value.resourceId)
+                    ?.defaultColor
+                    ?.let { return it }
+            } catch (_: Exception) {
+                // 不是 ColorStateList，走兜底
+            }
+        }
+        return fallbackTextColor()
     }
+
+    private fun fallbackTextColor(): Int =
+        if ((resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        ) Color.WHITE else Color.BLACK
 }

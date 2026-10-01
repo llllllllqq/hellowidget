@@ -72,6 +72,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
+            android:labelFor="@id/font_size_seek"
             android:text="@string/settings_font_size"
             android:textColor="@color/settings_text"
             android:textSize="16sp" />
@@ -94,7 +95,7 @@
                 android:layout_width="56dp"
                 android:layout_height="wrap_content"
                 android:gravity="end"
-                android:text="14sp"
+                android:text="@string/settings_font_size_placeholder"
                 android:textColor="@color/settings_text"
                 android:textSize="15sp" />
         </LinearLayout>
@@ -151,6 +152,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
+            android:labelFor="@id/bg_alpha_seek"
             android:text="@string/settings_bg_alpha"
             android:textColor="@color/settings_text"
             android:textSize="16sp" />
@@ -173,7 +175,7 @@
                 android:layout_width="56dp"
                 android:layout_height="wrap_content"
                 android:gravity="end"
-                android:text="100%"
+                android:text="@string/settings_bg_alpha_placeholder"
                 android:textColor="@color/settings_text"
                 android:textSize="15sp" />
         </LinearLayout>
@@ -184,6 +186,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
+            android:labelFor="@id/fill_margin_seek"
             android:text="@string/settings_fill_margin"
             android:textColor="@color/settings_text"
             android:textSize="16sp" />
@@ -206,7 +209,7 @@
                 android:layout_width="56dp"
                 android:layout_height="wrap_content"
                 android:gravity="end"
-                android:text="4dp"
+                android:text="@string/settings_fill_margin_placeholder"
                 android:textColor="@color/settings_text"
                 android:textSize="15sp" />
         </LinearLayout>

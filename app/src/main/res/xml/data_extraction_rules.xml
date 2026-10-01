@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12（API 31）及以上的备份 / 迁移规则。
+
+    本应用的全部内容就是用户的私人文本，因此**既不参与云备份，也不参与设备间迁移**。
+
+    为什么不能只写 android:allowBackup="false"：
+    官方文档明确指出，在部分厂商的 Android 12+ 设备上，allowBackup="false"
+    只停掉云备份，**不会**阻止 device-to-device 迁移，必须靠本文件显式排除。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

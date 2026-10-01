@@ -89,6 +89,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     // enableEdgeToEdge + WindowInsetsCompat（targetSdk 35 起系统强制边到边）
     implementation("androidx.activity:activity-ktx:1.9.3")
+    // ViewCompat.setStateDescription / updatePadding 等 View 扩展
+    implementation("androidx.core:core-ktx:1.13.1")
 
     // 投产 QA：JVM 单元测试
     testImplementation("junit:junit:4.13.2")
