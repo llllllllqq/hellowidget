@@ -128,16 +128,19 @@ class MainActivity : AppCompatActivity() {
             loadCompleted = true
             if (!editorTouched) {
                 binding.editor.setText(savedText)
-                // 全新进入应用 → 光标放到第一行行首（本版需求，即使已有内容也从行首开始）；
-                // 系统重建（旋转/深色模式/进程恢复）→ 完全不动选区，保留框架恢复出来的光标位置
-                if (freshEntry) {
-                    binding.editor.setSelection(0)
-                }
             }
-            // 先解禁编辑，再聚焦并请求输入法：disabled 的 View 无法获得焦点，
-            // 顺序反了会导致系统不认为编辑器「可输入」，输入法不会弹出
+            // 顺序很重要：先解禁编辑（disabled 的 View 拿不到焦点），再聚焦，最后才定位光标
             binding.editor.isEnabled = true
-            focusEditorAndShowIme()
+            binding.editor.requestFocus()
+            // 光标定位必须放在 requestFocus() **之后**：EditText 获得焦点时框架会按
+            // 「获得焦点默认行为」把光标带到文末（Editor.onFocusChanged → MovementMethod.onTakeFocus），
+            // 聚焦前设的选区会被这次行为覆盖（已由 MainActivityEntryTest 固化）。
+            // 只在全新进入应用时置 0；系统重建（旋转/深色模式/进程恢复）不动选区，
+            // 保留框架恢复出来的光标位置。
+            if (freshEntry) {
+                binding.editor.setSelection(0)
+            }
+            requestImeShow()
         }
 
         // 打开小组件外观设置页
@@ -258,21 +261,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 进入应用后把焦点交给编辑器，并主动请求弹出输入法。
+     * 主动请求弹出输入法（调用前编辑器必须已解禁并已获得焦点）。
      *
      * 为什么不只用 Manifest 的 `windowSoftInputMode="stateVisible"`：
      * 编辑器在异步读盘完成前是 disabled 的（防止用户输入被磁盘旧内容覆盖），
      * 而禁用的 View 拿不到焦点，系统也就不会为它弹出输入法。
-     * 因此只能在读盘完成、编辑器解禁之后主动请求（见 onCreate 里的加载回调）。
+     * 因此只能在读盘完成、编辑器解禁之后主动请求。
      *
      * 为什么用 WindowInsetsControllerCompat#show(ime()) 而不是
      * InputMethodManager.showSoftInput()：官方文档明确指出后者在 Activity 启动阶段
      * 常被系统忽略（窗口尚未聚焦时编辑器不被视为已连上输入法），
-     * 而前者「guaranteed to be scheduled after the window is focused」。
+     * 而前者「guaranteed to be scheduled after the window is focused」——
+     * AOSP 里 ImeInsetsSourceConsumer 会先把请求记入 requested-visible 类型，
+     * 并在窗口获得焦点（onWindowFocusGained）时补上，所以此刻窗口还没聚焦也不会丢请求。
      */
-    private fun focusEditorAndShowIme() {
+    private fun requestImeShow() {
         if (isFinishing || isDestroyed) return
-        binding.editor.requestFocus()
         val controller: WindowInsetsControllerCompat? =
             WindowCompat.getInsetsController(window, binding.editor)
         if (controller != null) {
