@@ -2,6 +2,11 @@ name: QA Gate
 
 # 投产 QA 质量门禁：Android Lint + JVM 单元测试 + Debug/Release 构建
 # 全部在 GitHub 云端执行，不依赖本地环境。
+#
+# 注意：不使用 android-actions/setup-android@v3 —— 该 action 目前在
+# GitHub runner 上会因 `Failed to find package 'tools'` 而失败（已在
+# main 的 Build Android APK 工作流中复现）。这里改用 runner 预装 SDK，
+# 同时去掉一个可变 tag 的第三方依赖（供应链风险）。
 on:
   workflow_dispatch:
   push:
@@ -32,8 +37,21 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Resolve preinstalled Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then echo "::error::Android SDK not found at $SDK"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > local.properties
+          echo "Resolved ANDROID_HOME=$SDK"
+          echo "--- platforms ---";  ls "$SDK/platforms"   2>/dev/null || true
+          echo "--- build-tools ---"; ls "$SDK/build-tools" 2>/dev/null || true
+          if [ ! -d "$SDK/platforms/android-34" ]; then
+            echo "android-34 缺失，尝试安装"
+            yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null 2>&1 || true
+            ls "$SDK/platforms" 2>/dev/null || true
+          fi
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -42,7 +60,6 @@ jobs:
 
       - name: Toolchain evidence
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
           {
             echo "=== java -version ==="
             java -version 2>&1
@@ -63,8 +80,8 @@ jobs:
             grep -o 'severity="[^"]*"' "$f" | sort | uniq -c | sort -rn
             echo "===== 按规则 ID 统计 ====="
             grep -o 'id="[^"]*"' "$f" | sort | uniq -c | sort -rn | head -80
-            echo "===== Error 明细（前 60 行）====="
-            grep -B1 -A2 'severity="Error"' "$f" | head -60
+            echo "===== Error 明细 ====="
+            grep -B1 -A2 'severity="Error"' "$f" | head -80
           else
             echo "未生成 lint XML：$f"
           fi
@@ -99,16 +116,19 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Resolve preinstalled Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then echo "::error::Android SDK not found at $SDK"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > local.properties
+          echo "Resolved ANDROID_HOME=$SDK"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.5"
-
-      - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Run JVM unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
@@ -123,6 +143,8 @@ jobs:
             ls -la "$d"
             echo "===== 用例统计（tests/skipped/failures/errors）====="
             grep -h -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$d"/*.xml || true
+            echo "===== 失败用例明细 ====="
+            grep -h -B2 -A8 "<failure\|<error" "$d"/*.xml | head -120
           else
             echo "未生成测试结果：$d"
           fi
@@ -152,16 +174,19 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Resolve preinstalled Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then echo "::error::Android SDK not found at $SDK"; exit 1; fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > local.properties
+          echo "Resolved ANDROID_HOME=$SDK"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.5"
-
-      - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       # 签名密钥仅在仓库自己的 workflow 中可用；fork PR 没有 secrets，需要优雅降级
       - name: Decode keystore if available
@@ -194,14 +219,16 @@ jobs:
       - name: APK evidence
         if: always()
         run: |
+          set +e
           echo "===== APK 产物 ====="
-          find app/build/outputs/apk -name '*.apk' -exec ls -la {} \; || true
+          find app/build/outputs/apk -name '*.apk' -exec ls -la {} \;
           echo "===== APK 元数据 ====="
           for a in $(find app/build/outputs/apk -name '*.apk'); do
             echo "--- $a ---"
-            ${ANDROID_HOME}/build-tools/*/aapt2 dump badging "$a" 2>/dev/null | head -20 || \
-            ${ANDROID_HOME}/build-tools/*/aapt dump badging "$a" 2>/dev/null | head -20 || echo "badging 不可用"
+            "${ANDROID_HOME}/build-tools/34.0.0/aapt2" dump badging "$a" 2>/dev/null | head -25 \
+              || echo "badging 不可用"
           done
+          exit 0
 
       - name: Upload APKs
         if: always()
