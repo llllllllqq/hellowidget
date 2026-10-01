@@ -148,6 +148,7 @@ MOVE <file>.uploading → <file>   Overwrite: T（覆盖）/ F（创建）
 | 同步状态持久化、失败不清哈希基线、冲突挂起、触发入口、**未启用同步时不启动任何服务** | `SyncSettingsTest`（Robolectric） | CI `quality` |
 | **真实 Android 网络栈**下的完整流程、服务器端字节一致、冲突不覆盖、两种解法都留副本、节流不发请求、前台服务 + 通知渠道 + 结束后服务停止 | `SyncE2eInstrumentedTest`（API 34 模拟器 × runner 上真实运行的 Python WebDAV 服务器） | CI `instrumented` |
 | 「真的用了 WebDAV 动词」 | 模拟器测试读取**服务器端请求日志**（`HEAD/PROPFIND`、`MKCOL`、`PUT *.uploading`、`MOVE`、`COPY`），日志同时打印在 Actions 里 | CI `instrumented` |
+| 自签名证书 → 报 `TLS_UNTRUSTED` 并回传指纹；确认指纹后放行；指纹不对仍拒绝 | `TlsPinningTest`（测试专用自签名证书 + 真实 `SSLServerSocket` 握手，见 `app/src/test/resources/tls/`） | CI `quality` |
 
 在 CI 上跑的 WebDAV 服务器是仓库自带的零依赖实现 `.github/scripts/webdav_stub_server.py`（仅标准库，绑定 `127.0.0.1`，模拟器经 `10.0.2.2` 访问），支持 `OPTIONS/HEAD/GET/PUT/DELETE/PROPFIND/MKCOL/MOVE/COPY`、Basic 鉴权、`If-Match`/`If-None-Match`/`If-Unmodified-Since` 求值，并提供只读控制面（`reset`/`log`/`count`/`file`/`etag`/`exists`）供测试断言服务器侧状态。已用 28 项本地脚本复查其与客户端的交互序列（含 `PUT temp → HEAD → MOVE`、`Overwrite=F` 并发创建返回 412 等）。
 
@@ -156,12 +157,20 @@ MOVE <file>.uploading → <file>   Overwrite: T（覆盖）/ F（创建）
 | 缺口 | 原因 | 建议的验证方式 |
 |---|---|---|
 | 真实 WebDAV 服务（坚果云 / Nextcloud / 群晖） | CI 无法访问用户的自建服务，也不应把用户凭据放进 CI | 发布后由用户按 README「WebDAV 同步使用说明」做一次冒烟（填地址 → 立即同步 → 网页端看文件 → 网页端改文件 → 回来处理冲突） |
-| 自签名 TLS 与指纹固定的真实握手 | CI 端到端用例走明文 http | 自签名场景由用户在同步页按提示确认指纹；如需自动化，可给桩服务器加 TLS 监听 |
+| **Android 上**的自签名 TLS 握手 | 模拟器端到端用例走明文 http（TLS 策略已由 JVM 层真实握手测试覆盖，但 Conscrypt 与 OpenJDK 的异常包装细节可能不同） | 自签名场景由用户在同步页按提示确认指纹即可 |
 | OEM 定制 ROM 的前台服务/通知差异 | 只跑了 AOSP API 34 | 装机后目视确认通知栏进度条与冲突通知 |
+| `MOVE` 与二次确认之间的极窄竞态窗口 | 协议本身无法表达「目标必须没变」 | 已用「先 stat 再 MOVE」把它压到毫秒级；如需更强保证只能改用直接 `PUT` + `If-Match`（放弃原子上传） |
 
 ---
 
-## 6. 复现方式
+## 6. CI 编排上的两个坑（记录备查）
+
+1. **`ReactiveCircus/android-emulator-runner` 会把 `script:` 的每一行交给独立的 `/usr/bin/sh` 执行**（Actions 日志里是每行一条 `[command]/usr/bin/sh -c <行>`）。因此变量赋值、`for` 循环、反斜杠续行都无法跨行生效 —— 第一版把编排直接写在 `script:` 里，结果是 `--port ""`（`PORT=8080` 随它那一个 shell 一起消失了）。现在编排收在 `.github/scripts/run_webdav_e2e.sh`，workflow 只留一行 `bash .github/scripts/run_webdav_e2e.sh`。
+2. 该 `sh` 是 **dash**：`set -o pipefail` 之类的 bash 特性会直接报 `Illegal option`。脚本里用 `bash` 明确指定解释器。
+
+这两点带来的额外好处：端到端流程本地也能一条命令复现。
+
+## 7. 复现方式
 
 ```bash
 # 质量门禁 + 构建 + 仪器化测试（云端，不需要本地 Android 工具链）

@@ -49,7 +49,7 @@ class TlsPinningTest {
     @Test
     fun selfSignedCertificate_isRejectedAndItsFingerprintIsCaptured() {
         var captured: String? = null
-        StubHttpServer({ headOk() }, TlsFixtures.sslContext).use { server ->
+        StubHttpServer(TlsFixtures.sslContext) { headOk() }.use { server ->
             val error = try {
                 clientFor(server, pin = null) { captured = it }.stat(server.baseUrl() + "note.txt")
                 fail("未信任的自签名证书必须被拒绝")
@@ -65,7 +65,7 @@ class TlsPinningTest {
 
     @Test
     fun confirmedFingerprint_letsTheHandshakeThrough() {
-        StubHttpServer({ headOk() }, TlsFixtures.sslContext).use { server ->
+        StubHttpServer(TlsFixtures.sslContext) { headOk() }.use { server ->
             val remote = clientFor(server, pin = TlsFixtures.fingerprint)
                 .stat(server.baseUrl() + "note.txt")
             assertNotNull("指纹匹配后握手应成功", remote)
@@ -77,7 +77,7 @@ class TlsPinningTest {
     @Test
     fun wrongFingerprint_isStillRejected_andTheRealFingerprintIsReported() {
         var captured: String? = null
-        StubHttpServer({ headOk() }, TlsFixtures.sslContext).use { server ->
+        StubHttpServer(TlsFixtures.sslContext) { headOk() }.use { server ->
             val error = try {
                 clientFor(server, pin = TlsFixtures.wrongFingerprint) { captured = it }
                     .stat(server.baseUrl() + "note.txt")

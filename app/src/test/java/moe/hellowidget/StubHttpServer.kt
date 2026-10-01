@@ -25,8 +25,8 @@ import kotlin.concurrent.thread
  * 传入 [sslContext] 即可变成 HTTPS 桩服务器（用于验证自签名证书与指纹固定）。
  */
 class StubHttpServer(
-    private val responder: (Request) -> Response,
-    sslContext: SSLContext? = null
+    sslContext: SSLContext? = null,
+    private val responder: (Request) -> Response
 ) : Closeable {
 
     data class Request(
