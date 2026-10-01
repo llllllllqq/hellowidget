@@ -155,10 +155,10 @@ class SyncManagerTest {
         assertTrue("目录存在时不应该多发 MKCOL：${client.mkcols}", client.mkcols.isEmpty())
         // 文件名必须是「前缀 + unix 秒时间戳 + 扩展名」：每次上传一个新文件，历史不会被覆盖
         val name = client.puts[0].first.removePrefix("http://127.0.0.1:1/dav/")
-        assertTrue("文件名应形如 note<unix 秒>.txt，实际：$name", Regex("""note\d{10}\.txt""").matches(name))
+        assertTrue("文件名应形如 note<unix 毫秒>.txt，实际：$name", Regex("""note\d{13}\.txt""").matches(name))
         val stamp = name.removePrefix("note").removeSuffix(".txt").toLong()
-        val nowSec = System.currentTimeMillis() / 1000
-        assertTrue("时间戳应是当下（±120s），实际：$stamp", Math.abs(stamp - nowSec) < 120)
+        val nowMs = System.currentTimeMillis()
+        assertTrue("时间戳应是当下（±120s），实际：$stamp", Math.abs(stamp - nowMs) < 120_000)
         assertEquals("时间戳要落盘，供下次保证文件名单调递增", stamp, SyncSettings.lastUploadedTs(context))
 
         // 报障点 1：上传很快也必须真的有通知栏进度

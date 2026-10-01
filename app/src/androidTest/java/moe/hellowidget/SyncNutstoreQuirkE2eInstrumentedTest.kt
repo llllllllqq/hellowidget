@@ -185,7 +185,7 @@ class SyncNutstoreQuirkE2eInstrumentedTest {
     }
 
     private companion object {
-        /** `note1735689600.txt`：前缀 + unix 秒时间戳 + 扩展名 */
-        val NAME_PATTERN = Regex("""note\d{10}\.txt""")
+        /** `note1735689600123.txt`：前缀 + unix 毫秒时间戳 + 扩展名 */
+        val NAME_PATTERN = Regex("""note\d{13}\.txt""")
     }
 }

@@ -183,9 +183,9 @@ object SyncManager {
             return SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
         }
 
-        // 每次上传都写一个新文件：文件名 = 前缀 + unix 秒时间戳 + 扩展名
+        // 每次上传都写一个新文件：文件名 = 前缀 + unix 毫秒时间戳 + 扩展名
         val timestampSec = SyncEngine.nextUploadTimestamp(
-            nowSec = System.currentTimeMillis() / 1000,
+            nowSec = System.currentTimeMillis(),
             lastUploadedSec = SyncSettings.lastUploadedTs(context)
         )
         putNewFile(client, config, bytes, timestampSec)
