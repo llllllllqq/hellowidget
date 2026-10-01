@@ -61,6 +61,12 @@ class StubHttpServer(
     /** 按到达顺序记录的所有请求 */
     val requests: MutableList<Request> = CopyOnWriteArrayList()
 
+    /**
+     * 处理连接时抛出的异常（例如客户端中途放弃 TLS 握手）。
+     * 不静默吞掉：失败时把它打印进断言信息，否则「服务器没回响应」这类问题无从定位。
+     */
+    val errors: MutableList<String> = CopyOnWriteArrayList()
+
     val port: Int get() = serverSocket.localPort
 
     private val worker = thread(isDaemon = true, name = "stub-http-server") { acceptLoop() }
@@ -79,7 +85,9 @@ class StubHttpServer(
             try {
                 handle(socket)
             } catch (e: Exception) {
-                // 连接被客户端提前关掉是正常情况（例如 TOO_LARGE 直接放弃读取）
+                // 连接被客户端提前关掉是正常情况（例如 TOO_LARGE 直接放弃读取、
+                // 或证书不受信任时客户端主动断开），但这正是失败时要看的信息
+                errors.add("${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 runCatching { socket.close() }
             }

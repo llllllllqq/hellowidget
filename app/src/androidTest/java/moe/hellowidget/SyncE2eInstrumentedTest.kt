@@ -24,7 +24,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import java.net.HttpURLConnection
 import java.net.URL
@@ -50,7 +52,18 @@ class SyncE2eInstrumentedTest {
 
     private val davUrl: String? get() = arguments.getString("webdavUrl")
     private val controlUrl: String? get() = arguments.getString("webdavControlUrl")
-    private val fileName = "note.txt"
+
+    @get:Rule
+    val testName = TestName()
+
+    /**
+     * 每个用例用**各自独立的远端文件名**，而不是靠服务器 reset 来隔离。
+     *
+     * 原因：服务器 reset 会连请求日志一起清空，那么 CI 最后打印出来的「WebDAV 动词实证」
+     * 就只剩下最后执行的那个用例；用独立文件名后，日志天然累积，
+     * 一次运行里所有场景（创建 / 覆盖 / 冲突副本 / 节流）的请求序列都留在证据里。
+     */
+    private val fileName: String get() = "note-${testName.methodName}.txt"
 
     @Before
     fun setUp() {
@@ -58,7 +71,6 @@ class SyncE2eInstrumentedTest {
             "未提供 webdavUrl/webdavControlUrl，跳过 WebDAV 端到端测试",
             !davUrl.isNullOrBlank() && !controlUrl.isNullOrBlank()
         )
-        control("reset")
         SyncSettings.setEnabled(context, true)
         SyncSettings.saveConfig(
             context,
@@ -246,8 +258,10 @@ class SyncE2eInstrumentedTest {
     private fun cloud(name: String): String = control("file?path=/dav/$name")
 
     private fun conflictCopyNameFromLog(): String {
-        val match = Regex("note\\.conflict-[0-9]{8}-[0-9]{6}(-[0-9]+)?\\.txt").find(control("log"))
-        assertNotNull("服务器日志里应出现冲突副本文件名：${control("log")}", match)
+        val base = fileName.removeSuffix(".txt")
+        val log = control("log")
+        val match = Regex("$base\\.conflict-[0-9]{8}-[0-9]{6}(-[0-9]+)?\\.txt").find(log)
+        assertNotNull("服务器日志里应出现冲突副本文件名：$log", match)
         return match!!.value
     }
 
