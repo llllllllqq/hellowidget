@@ -63,12 +63,16 @@ class SyncManagerTest {
         val puts = mutableListOf<Pair<String, String>>()
         val mkcols = mutableListOf<String>()
 
+        /** 尝试过的 PUT 次数（含被模拟失败挡下的那次） */
+        var putAttempts = 0
+
         /** 上传进行中，进度通知是否可见（这正是「有没有通知栏进度」的证据） */
         var progressVisibleDuringPut = false
 
         private var failed = false
 
         override fun put(url: String, body: ByteArray) {
+            putAttempts++
             if (firstPutFailure != null && !failed) {
                 failed = true
                 throw firstPutFailure
@@ -157,7 +161,7 @@ class SyncManagerTest {
         )
         // 报障点 3：上传成功要有 Toast（即使通知一闪而过也能知道）
         shadowOf(Looper.getMainLooper()).idle()
-        assertEquals("已上传到云端", ShadowToast.getTextOfLatestToast())
+        assertEquals(context.getString(R.string.sync_upload_succeeded), ShadowToast.getTextOfLatestToast())
 
         // 收尾：进度通知必须被收掉，不留常驻通知
         assertFalse("同步结束后不得留下进度通知", progressNotificationVisible(context))
@@ -208,8 +212,9 @@ class SyncManagerTest {
         assertTrue("先建目录再重试应能成功，实际：$status", status is SyncStatus.Success)
         val client = lastClient!!
         assertEquals("应只补一次 MKCOL", listOf("http://127.0.0.1:1/dav/"), client.mkcols)
-        assertEquals("应重试一次 PUT", 2, client.puts.size)
-        assertEquals("内容 A", client.puts[1].second)
+        assertEquals("应重试一次 PUT（第一次被 409 挡下）", 2, client.putAttempts)
+        assertEquals("成功的 PUT 只有一次", 1, client.puts.size)
+        assertEquals("内容 A", client.puts[0].second)
     }
 
     // ------------------------------------------------------------ 闸门

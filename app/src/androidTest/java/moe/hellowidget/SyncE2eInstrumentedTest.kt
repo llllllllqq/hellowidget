@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -72,7 +73,7 @@ class SyncE2eInstrumentedTest {
             "未提供 webdavUrl/webdavControlUrl，跳过 WebDAV 端到端测试",
             !davUrl.isNullOrBlank() && !controlUrl.isNullOrBlank()
         )
-        grantNotificationPermission()
+        ensureNotificationPermission()
         SyncSettings.setEnabled(context, true)
         SyncSettings.saveConfig(
             context,
@@ -89,16 +90,28 @@ class SyncE2eInstrumentedTest {
     }
 
     /**
-     * API 33+ 需要通知权限才会把通知发到通知栏；这里用 shell 直接授予，
-     * 否则「进度通知是否可见」这条断言会因为权限而变成假失败。
+     * API 33+ 没授予通知权限时，前台服务通知不会进通知栏、`notify()` 也会被丢弃，
+     * 「进度通知是否可见」这条断言就会变成假失败 —— 所以先确保权限真的到手。
+     *
+     * 注意 `executeShellCommand` 得到的是异步管道：必须读到 EOF 才算命令执行完，
+     * 直接 close 可能把 `pm grant` 掐掉（这正是第一版里权限没生效的原因）。
      */
-    private fun grantNotificationPermission() {
+    private fun ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val command = "pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS"
-        runCatching {
-            InstrumentationRegistry.getInstrumentation().uiAutomation
-                .executeShellCommand(command).close()
-        }
+        if (SyncNotifier.hasNotificationPermission(context)) return
+        val permission = "android.permission.POST_NOTIFICATIONS"
+        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+        runCatching { ui.grantRuntimePermission(context.packageName, permission) }
+            .onFailure {
+                runCatching {
+                    val descriptor = ui.executeShellCommand("pm grant ${context.packageName} $permission")
+                    ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+                }
+            }
+        assertTrue(
+            "无法授予通知权限，通知可见性用例无法进行",
+            SyncNotifier.hasNotificationPermission(context)
+        )
     }
 
     // ------------------------------------------------------------ 单向覆盖上传
@@ -274,7 +287,13 @@ class SyncE2eInstrumentedTest {
                 }
                 SystemClock.sleep(20)
             }
-            assertTrue("上传期间通知栏里必须真的存在进度通知（用户报障点）", observed)
+            assertTrue(
+                "上传期间通知栏里必须真的存在进度通知（用户报障点）" +
+                    "（permission=${SyncNotifier.hasNotificationPermission(context)}, " +
+                    "lastResult=${SyncSettings.lastResult(context)}, " +
+                    "lastError=${SyncSettings.lastError(context)}）",
+                observed
+            )
 
             val doneDeadline = SystemClock.uptimeMillis() + 90_000
             while (SystemClock.uptimeMillis() < doneDeadline &&
