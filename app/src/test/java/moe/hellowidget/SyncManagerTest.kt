@@ -232,7 +232,10 @@ class SyncManagerTest {
         assertEquals("第二次的正文应是新内容", "第二版", clients[1].puts[0].second)
         val firstStamp = firstUrl.removePrefix("http://127.0.0.1:1/dav/note").removeSuffix(".txt").toLong()
         val secondStamp = secondUrl.removePrefix("http://127.0.0.1:1/dav/note").removeSuffix(".txt").toLong()
-        assertEquals("同一秒内也必须递增 1 秒", firstStamp + 1, secondStamp)
+        // 唯一必须成立的保证是**单调递增**（否则新上传会盖掉上一份历史）。
+        // 恰好同秒时严格 +1（这条边界由 SyncEngineTest.nextUploadTimestamp_sameSecondStillAdvances 固定）；
+        // 这里不能用 == firstStamp + 1：两次上传本身可能跨过秒边界，那是同样正确的行为。
+        assertTrue("时间戳必须递增：$firstStamp -> $secondStamp", secondStamp > firstStamp)
     }
 
     @Test
