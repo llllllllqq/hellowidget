@@ -68,6 +68,9 @@ class SyncE2eInstrumentedTest {
      */
     private val fileName: String get() = "note-${testName.methodName}.txt"
 
+    /** 通知自检结果：本环境下能否「发出并查询到」本应用的通知 */
+    private var notificationQueryReliable = false
+
     @Before
     fun setUp() {
         assumeTrue(
@@ -75,6 +78,8 @@ class SyncE2eInstrumentedTest {
             !davUrl.isNullOrBlank() && !controlUrl.isNullOrBlank()
         )
         ensureNotificationPermission()
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationQueryReliable = notificationQueryWorks(manager)
         SyncSettings.setEnabled(context, true)
         SyncSettings.saveConfig(
             context,
@@ -277,6 +282,10 @@ class SyncE2eInstrumentedTest {
      */
     @Test
     fun fastUpload_stillShowsProgressNotification() {
+        assumeTrue(
+            "此环境无法发出/查询本应用的通知（自检失败），跳过通知可见性断言",
+            notificationQueryReliable
+        )
         assertTrue(runBlocking { ContentStore.write("通知可见性验证") })
         SyncSettings.setEnabled(context, false)
 
@@ -287,11 +296,6 @@ class SyncE2eInstrumentedTest {
             SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
 
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            assumeTrue(
-                "此环境无法查询本应用的通知（自检失败），跳过通知可见性断言",
-                notificationQueryWorks(manager)
-            )
-
             assertTrue("应启动前台服务", SyncLauncher.request(context, SyncTrigger.MANUAL))
 
             val observedIds = linkedSetOf<Int>()
@@ -357,11 +361,11 @@ class SyncE2eInstrumentedTest {
     fun inProcessFallback_alsoShowsAProgressNotification() {
         assertTrue(runBlocking { ContentStore.write("进程内兜底验证") })
         SyncSettings.setLastAttemptAt(context, 0)
-
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
         assumeTrue(
-            "此环境无法查询本应用的通知（自检失败），跳过通知可见性断言",
-            notificationQueryWorks(manager)
+            "此环境无法发出/查询本应用的通知（自检失败），跳过通知可见性断言",
+            notificationQueryReliable
         )
 
         SyncManager.requestInProcess(context, SyncTrigger.MANUAL)
@@ -395,18 +399,31 @@ class SyncE2eInstrumentedTest {
     // ------------------------------------------------------------ 工具
 
     /**
-     * 自检：本环境下「查询本应用的通知」是否可用。
+     * 自检：本环境下「发出一条通知并能查询回来」是否可用。
      *
-     * 不可用时（个别定制 ROM / 受限环境）跳过通知可见性断言，
-     * 而不是产出一个误导性的失败 —— 通知有没有发出去由 JVM 的 SyncManagerTest 直接断言。
+     * 必须重试：通知权限刚授予、或系统刚完成启动时，第一次 `notify` 可能被丢弃，
+     * 查询也可能跑在系统落库之前 —— 一次性判定会把用例误跳过（第三轮 CI 就发生了）。
+     *
+     * 真正不可用时（受限环境）跳过可见性断言，而不是给出误导性的失败：
+     * 「通知有没有发出去」由 JVM 的 SyncManagerTest 用假客户端直接断言。
      */
     private fun notificationQueryWorks(manager: NotificationManager): Boolean {
         val probeId = 4099
-        NotificationManagerCompat.from(context)
-            .notify(probeId, SyncNotifier.progressNotification(context, "自检"))
-        val works = manager.activeNotifications.any { it.id == probeId }
-        NotificationManagerCompat.from(context).cancel(probeId)
-        return works
+        val composer = NotificationManagerCompat.from(context)
+        repeat(5) { attempt ->
+            composer.notify(probeId, SyncNotifier.progressNotification(context, "自检"))
+            val deadline = SystemClock.uptimeMillis() + 600
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (manager.activeNotifications.any { it.id == probeId }) {
+                    composer.cancel(probeId)
+                    return true
+                }
+                SystemClock.sleep(20)
+            }
+            composer.cancel(probeId)
+            if (attempt < 4) SystemClock.sleep(300)
+        }
+        return false
     }
 
     /** 云端文件内容（经过 control 面读取，不经过被测客户端） */
