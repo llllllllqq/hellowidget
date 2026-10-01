@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import androidx.core.app.NotificationManagerCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -266,6 +267,14 @@ class SyncE2eInstrumentedTest {
      * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）。上传成功还会额外弹一个 Toast
      * （Toast 无法在仪器化测试里断言，其行为由 JVM 的 SyncManagerTest 覆盖）。
      */
+    /**
+     * 用户报障的复现与固化：「上传很快，进度条根本看不到」。
+     *
+     * 本地桩服务器上的上传通常几十毫秒就结束；这条用例能在通知栏里**观测到**进度通知，
+     * 正是因为 v7.5 为「确实发生了上传」的同步保证了最短可见时长
+     * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）。上传成功还会额外弹一个 Toast
+     * （Toast 无法在仪器化测试里断言，其行为由 JVM 的 SyncManagerTest 覆盖）。
+     */
     @Test
     fun fastUpload_stillShowsProgressNotification() {
         assertTrue(runBlocking { ContentStore.write("通知可见性验证") })
@@ -273,23 +282,39 @@ class SyncE2eInstrumentedTest {
 
         ActivityScenario.launch(MainActivity::class.java).use {
             SyncSettings.setEnabled(context, true)
-            SyncSettings.setLastAttemptAt(context, 0)
+            // 节流掉 MainActivity 自己可能触发的 APP_OPEN 同步：否则「另一个同步无事可做」
+            // 会立刻收掉进度通知，干扰观测（用户手点的同步不受节流限制）
+            SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
 
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            assumeTrue(
+                "此环境无法查询本应用的通知（自检失败），跳过通知可见性断言",
+                notificationQueryWorks(manager)
+            )
+
             assertTrue("应启动前台服务", SyncLauncher.request(context, SyncTrigger.MANUAL))
 
+            val observedIds = linkedSetOf<Int>()
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            var serviceSeen = false
             var observed = false
             val observeDeadline = SystemClock.uptimeMillis() + 10_000
             while (SystemClock.uptimeMillis() < observeDeadline) {
+                manager.activeNotifications.forEach { observedIds += it.id }
                 if (manager.activeNotifications.any { it.id == SyncNotifier.ID_PROGRESS }) {
                     observed = true
-                    break
                 }
+                if (activityManager.getRunningServices(Int.MAX_VALUE)
+                        .any { it.service.className == SyncService::class.java.name }
+                ) {
+                    serviceSeen = true
+                }
+                if (observed) break
                 SystemClock.sleep(20)
             }
             assertTrue(
                 "上传期间通知栏里必须真的存在进度通知（用户报障点）" +
-                    "（permission=${SyncNotifier.hasNotificationPermission(context)}, " +
+                    "（observedIds=$observedIds, serviceSeen=$serviceSeen, " +
                     "lastResult=${SyncSettings.lastResult(context)}, " +
                     "lastError=${SyncSettings.lastError(context)}）",
                 observed
@@ -321,7 +346,68 @@ class SyncE2eInstrumentedTest {
         }
     }
 
+    /**
+     * 前台服务**无法启动**时的进程内兜底路径，同样必须有进度通知。
+     *
+     * 这是用户报障的第二种成因：Android 12+ 在个别时序下会拒绝后台启动前台服务，
+     * 旧实现在那条路径上静默同步 —— 完全没有用户可见反馈。这里直接调用
+     * [SyncManager.requestInProcess]，断言通知确实发出来了。
+     */
+    @Test
+    fun inProcessFallback_alsoShowsAProgressNotification() {
+        assertTrue(runBlocking { ContentStore.write("进程内兜底验证") })
+        SyncSettings.setLastAttemptAt(context, 0)
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        assumeTrue(
+            "此环境无法查询本应用的通知（自检失败），跳过通知可见性断言",
+            notificationQueryWorks(manager)
+        )
+
+        SyncManager.requestInProcess(context, SyncTrigger.MANUAL)
+
+        var observed = false
+        val observeDeadline = SystemClock.uptimeMillis() + 15_000
+        while (SystemClock.uptimeMillis() < observeDeadline) {
+            if (manager.activeNotifications.any { it.id == SyncNotifier.ID_PROGRESS }) {
+                observed = true
+                break
+            }
+            SystemClock.sleep(20)
+        }
+        assertTrue(
+            "进程内兜底路径同样必须发进度通知（旧实现这条路径完全没有反馈）" +
+                "（lastResult=${SyncSettings.lastResult(context)}, " +
+                "lastError=${SyncSettings.lastError(context)}）",
+            observed
+        )
+
+        val doneDeadline = SystemClock.uptimeMillis() + 90_000
+        while (SystemClock.uptimeMillis() < doneDeadline &&
+            SyncSettings.lastResult(context) != SyncEngine.RESULT_SUCCESS
+        ) {
+            SystemClock.sleep(100)
+        }
+        assertEquals(SyncEngine.RESULT_SUCCESS, SyncSettings.lastResult(context))
+        assertEquals("进程内兜底验证", cloud(fileName))
+    }
+
     // ------------------------------------------------------------ 工具
+
+    /**
+     * 自检：本环境下「查询本应用的通知」是否可用。
+     *
+     * 不可用时（个别定制 ROM / 受限环境）跳过通知可见性断言，
+     * 而不是产出一个误导性的失败 —— 通知有没有发出去由 JVM 的 SyncManagerTest 直接断言。
+     */
+    private fun notificationQueryWorks(manager: NotificationManager): Boolean {
+        val probeId = 4099
+        NotificationManagerCompat.from(context)
+            .notify(probeId, SyncNotifier.progressNotification(context, "自检"))
+        val works = manager.activeNotifications.any { it.id == probeId }
+        NotificationManagerCompat.from(context).cancel(probeId)
+        return works
+    }
 
     /** 云端文件内容（经过 control 面读取，不经过被测客户端） */
     private fun cloud(name: String): String = control("file?path=/dav/$name")
