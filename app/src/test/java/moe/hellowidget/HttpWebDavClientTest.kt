@@ -225,6 +225,87 @@ class HttpWebDavClientTest {
     }
 
     @Test
+    fun putAtomic_nutstoreReplace_fallsBackToDirectPutWithPreconditions() {
+        // 坚果云：目标**已存在**时 MOVE 一律返回 409，不看 Overwrite 是 T 还是 F
+        // （RFC 4918 要求 Overwrite:T 时成功）。这正是「改了内容再同步」的必经路径，
+        // 也是用户看到「反复 409」的根因。期望：降级为带前置条件的直接 PUT。
+        StubHttpServer { request ->
+            when {
+                request.method == "PUT" && request.target.endsWith(".uploading") ->
+                    StubHttpServer.Response(201, "Created")
+                request.method == "HEAD" -> StubHttpServer.Response(
+                    200, headers = listOf("ETag" to "\"e1\"", "Content-Length" to "3")
+                )
+                request.method == "MOVE" -> StubHttpServer.Response(409, "Conflict")
+                request.method == "PUT" -> StubHttpServer.Response(
+                    204, "No Content", listOf("ETag" to "\"e2\"")
+                )
+                request.method == "DELETE" -> StubHttpServer.Response(204, "No Content")
+                else -> StubHttpServer.Response(405)
+            }
+        }.use { server ->
+            val result = clientFor(server).putAtomic(
+                url = noteUrl(server),
+                body = "abc".toByteArray(Charsets.UTF_8),
+                ifNoneMatchStar = false,
+                ifMatch = "\"e1\"",
+                ifUnmodifiedSinceMs = null
+            )
+            assertEquals(
+                listOf(
+                    "PUT /dav/note.txt.uploading",
+                    "HEAD /dav/note.txt",
+                    "MOVE /dav/note.txt.uploading",
+                    "PUT /dav/note.txt",
+                    "DELETE /dav/note.txt.uploading"
+                ),
+                server.targets()
+            )
+            // 降级 PUT 必须带上同样的前置条件，否则「降级」就变成了「无条件覆盖」
+            assertEquals("\"e1\"", server.requests[3].header("if-match"))
+            assertEquals("abc", server.requests[3].bodyText())
+            assertEquals("结果应取降级 PUT 的响应", "\"e2\"", result!!.etag)
+        }
+    }
+
+    @Test
+    fun putAtomic_nutstoreCreateRace_surfaces412InsteadOf409() {
+        // 创建场景：决策时云端没有这个文件，MOVE 之前别人刚创建了它。
+        // 坚果云对「目标已存在」的 MOVE（哪怕 Overwrite:F）也回 409，而 RFC 要求 412 ——
+        // 必须翻译回「前置条件失败」，交给上层的冲突流程，而不是报一个莫名的致命错误。
+        StubHttpServer { request ->
+            when {
+                request.method == "PUT" && request.target.endsWith(".uploading") ->
+                    StubHttpServer.Response(201, "Created")
+                request.method == "MOVE" -> StubHttpServer.Response(409, "Conflict")
+                request.method == "PUT" -> StubHttpServer.Response(412, "Precondition Failed")
+                request.method == "DELETE" -> StubHttpServer.Response(204, "No Content")
+                else -> StubHttpServer.Response(405)
+            }
+        }.use { server ->
+            assertThrowsDav(WebDavError.PRECONDITION_FAILED) {
+                clientFor(server).putAtomic(
+                    url = noteUrl(server),
+                    body = "abc".toByteArray(Charsets.UTF_8),
+                    ifNoneMatchStar = true,
+                    ifMatch = null,
+                    ifUnmodifiedSinceMs = null
+                )
+            }
+            assertEquals(
+                listOf(
+                    "PUT /dav/note.txt.uploading",
+                    "MOVE /dav/note.txt.uploading",
+                    "PUT /dav/note.txt",
+                    "DELETE /dav/note.txt.uploading"
+                ),
+                server.targets()
+            )
+            assertEquals("*", server.requests[2].header("if-none-match"))
+        }
+    }
+
+    @Test
     fun putAtomic_abortsWhenTargetChangedSinceDecision() {
         StubHttpServer { request ->
             when (request.method) {
@@ -454,9 +535,26 @@ class HttpWebDavClientTest {
     }
 
     @Test
-    fun mkcol_reportsMissingParentDirectory() {
-        StubHttpServer { StubHttpServer.Response(409, "Conflict") }.use { server ->
-            assertThrowsDav(WebDavError.PARENT_NOT_FOUND) { clientFor(server).mkcol(server.baseUrl()) }
+    fun mkcol_treatsNutstore409OnExistingCollectionAsSuccess() {
+        // anx-reader#410：坚果云对「集合已存在」返回 409（RFC 4918 要求 405），
+        // 客户端如果只认 405，就会在目录建好之后的每一次上传都失败
+        val body = ("<?xml version=\"1.0\" encoding=\"utf-8\"?><D:error xmlns:D=\"DAV:\">" +
+            "<D:exception>Conflict</D:exception></D:error>").toByteArray(Charsets.UTF_8)
+        StubHttpServer { StubHttpServer.Response(409, "Conflict", body = body) }.use { server ->
+            clientFor(server).mkcol(server.baseUrl()) // 不应抛异常
+            assertEquals(listOf("MKCOL /dav/"), server.targets())
+        }
+    }
+
+    @Test
+    fun mkcol_reportsMissingParentDirectory_whenServerSaysAncestorsNotFound() {
+        // 409 的两种含义只能靠正文区分：AncestorsNotFound = 目录真的建不出来（配置错了），
+        // 必须给出可操作的错误，而不是被当成「已存在」静默吞掉
+        val body = ("<?xml version=\"1.0\" encoding=\"utf-8\"?><D:error xmlns:D=\"DAV:\">" +
+            "<D:exception>AncestorsNotFound</D:exception></D:error>").toByteArray(Charsets.UTF_8)
+        StubHttpServer { StubHttpServer.Response(409, "Conflict", body = body) }.use { server ->
+            val e = assertThrowsDav(WebDavError.PARENT_NOT_FOUND) { clientFor(server).mkcol(server.baseUrl()) }
+            assertTrue("错误详情应带出服务器给的异常名：${e.detail}", e.detail.contains("AncestorsNotFound"))
         }
     }
 
@@ -474,6 +572,20 @@ class HttpWebDavClientTest {
                 server.requests[0].header("destination")
             )
             assertEquals("F", server.requests[0].header("overwrite"))
+        }
+    }
+
+    @Test
+    fun stat_andGet_treatNutstore409AsMissingFile() {
+        // qixing-jk/all-api-hub#633 / #637：坚果云在「文件（或它的父目录）不存在」时
+        // 对 GET/HEAD 返回 409 + AncestorsNotFound，而不是 404。读路径必须理解这一点，
+        // 否则新账号的首次同步永远失败（用户只能手动去网页端建目录建文件）。
+        val body = ("<?xml version=\"1.0\" encoding=\"utf-8\"?><D:error xmlns:D=\"DAV:\">" +
+            "<D:exception>AncestorsNotFound</D:exception></D:error>").toByteArray(Charsets.UTF_8)
+        StubHttpServer { StubHttpServer.Response(409, "Conflict", body = body) }.use { server ->
+            val client = clientFor(server)
+            assertNull("HEAD 409 应被理解为「云端没有这个文件」", client.stat(noteUrl(server)))
+            assertNull("GET 409 同理", client.get(noteUrl(server), 1024))
         }
     }
 

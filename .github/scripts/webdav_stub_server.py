@@ -24,6 +24,9 @@ COPY、PROPFIND、条件请求等）。模拟器用 http://10.0.2.2:PORT 访问�
 * ``/__control__/*`` 是无鉴权的本地测试控制面（reset / log / count / file /
   etag / exists），仅供回环地址上的测试脚本使用。
 * 不发任何 3xx：Android 客户端不会跟随重定向。
+* ``--nutstore`` 打开后按坚果云的真实脾气回状态码（MKCOL 已存在 → 409、
+  MOVE 目标已存在 → 409、读缺失路径 → 409 + ``AncestorsNotFound``），
+  用于回归「客户端对非标准 409 的兼容」，默认关闭以保证其它用例继续按 RFC 语义跑。
 * 每个请求都包在 try/except 里：畸形请求返回 4xx/500，绝不拖垮进程。
 """
 
@@ -47,6 +50,31 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 DAV_ROOT = "/dav"
 CONTROL_PREFIX = "/__control__"
+
+# --------------------------------------------------------------------------
+# 坚果云（dav.jianguoyun.com）的三个非标准行为，由 --nutstore 打开。
+#
+# 它们都是**真实存在**的兼容性陷阱，且都能让一个「按 RFC 4918 写」的客户端同步失败：
+#   1. 对**已存在**的集合执行 MKCOL 返回 409（RFC 要求 405）——
+#      见 Anxcye/anx-reader#410「因重复创建目录导致 409 Conflict 而同步失败」。
+#   2. 目标文件**已存在**时执行 MOVE（不论 Overwrite 是 T 还是 F）返回 409
+#      （RFC 要求 Overwrite:T 成功、Overwrite:F 412）——
+#      见 PhilippC/keepass2android#3010（PR #3078）与 all-api-hub#637 的修复注释。
+#   3. 目标（或其父集合）不存在时 GET/HEAD 返回 409 且正文含 AncestorsNotFound
+#      （RFC 要求 404）—— 见 qixing-jk/all-api-hub#633 / #637。
+#
+# 默认关闭：其它用例继续按标准语义跑，只有打开这个开关的用例才验证兼容性修复。
+# --------------------------------------------------------------------------
+NUTSTORE_ANCESTORS_MARKER = "AncestorsNotFound"
+_XML = "application/xml; charset=utf-8"
+NUTSTORE_CONFLICT_BODY = (
+    b'<?xml version="1.0" encoding="utf-8"?>'
+    b'<D:error xmlns:D="DAV:"><D:exception>Conflict</D:exception></D:error>\n'
+)
+NUTSTORE_ANCESTORS_BODY = (
+    b'<?xml version="1.0" encoding="utf-8"?>'
+    b'<D:error xmlns:D="DAV:"><D:exception>AncestorsNotFound</D:exception></D:error>\n'
+)
 
 #: OPTIONS 与 405 响应里返回的方法集合（顺序固定，便于测试断言）。
 ALLOW = "OPTIONS, HEAD, GET, PUT, DELETE, PROPFIND, MKCOL, MOVE, COPY"
@@ -168,11 +196,13 @@ def quoted_etag(matches_header, current):
 class StubState:
     """线程安全的内存 WebDAV 存储 + 请求日志。"""
 
-    def __init__(self, log_path, user, password):
+    def __init__(self, log_path, user, password, nutstore=False):
         self.lock = threading.RLock()
         self.user = user
         self.password = password
         self.log_path = log_path
+        #: True = 模拟坚果云的非标准状态码（见文件顶部 NUTSTORE_* 注释）。
+        self.nutstore = nutstore
 
         #: 归一化绝对路径 -> 文件字节（规格要求的主存储结构）。
         self.files = {}
@@ -602,6 +632,12 @@ class WebDavStubHandler(BaseHTTPRequestHandler):
                 listing = state.listing(path)
                 headers = [("Content-Type", "httpd/unix-directory")]
                 return 200, headers, listing, self._detail(["collection"])
+            # 坚果云：目标（或其父集合）不存在时返回 409 + AncestorsNotFound，而不是 404
+            if state.nutstore and not state.parent_exists(path):
+                return (409,
+                        [("Content-Type", _XML)],
+                        NUTSTORE_ANCESTORS_BODY,
+                        self._detail(["nutstore-ancestors-not-found"]))
         return (404,
                 [("Content-Type", _TEXT)],
                 b"404 Not Found\n",
@@ -666,8 +702,19 @@ class WebDavStubHandler(BaseHTTPRequestHandler):
             if path in state.files:
                 return self._method_not_allowed(self._detail(["exists-as-file"]))
             if path in state.collections:
+                # 坚果云在这里返回 409，而不是 RFC 4918 要求的 405
+                if state.nutstore:
+                    return (409,
+                            [("Content-Type", _XML)],
+                            NUTSTORE_CONFLICT_BODY,
+                            self._detail(["nutstore-mkcol-exists"]))
                 return self._method_not_allowed(self._detail(["exists"]))
             if not state.parent_exists(path):
+                if state.nutstore:
+                    return (409,
+                            [("Content-Type", _XML)],
+                            NUTSTORE_ANCESTORS_BODY,
+                            self._detail(["nutstore-ancestors-not-found"]))
                 return (409,
                         [("Content-Type", _TEXT)],
                         b"409 Conflict: parent collection missing\n",
@@ -797,6 +844,13 @@ class WebDavStubHandler(BaseHTTPRequestHandler):
                                          and state.is_collection(destination))
             destination_exists = destination in state.files or destination_is_collection
 
+            # 坚果云：目标已存在时 MOVE 一律 409，完全不看 Overwrite（T 也拒绝、F 也不给 412）
+            if destination_exists and state.nutstore:
+                return (409,
+                        [("Content-Type", _XML)],
+                        NUTSTORE_CONFLICT_BODY,
+                        self._detail(["nutstore-move-conflict"]))
+
             if destination_exists and overwrite == "F":
                 return self._precondition_failed(["overwrite=F"])
 
@@ -813,6 +867,11 @@ class WebDavStubHandler(BaseHTTPRequestHandler):
                             self._detail(["type-conflict"]))
 
             if not state.parent_exists(destination):
+                if state.nutstore:
+                    return (409,
+                            [("Content-Type", _XML)],
+                            NUTSTORE_ANCESTORS_BODY,
+                            self._detail(["nutstore-ancestors-not-found"]))
                 return (409,
                         [("Content-Type", _TEXT)],
                         b"409 Conflict: destination parent missing\n",
@@ -930,17 +989,21 @@ def build_parser():
     parser.add_argument("--password", default="test", help="Basic 鉴权密码，默认 test")
     parser.add_argument("--log", default="/tmp/webdav_stub.log",
                         help="请求日志文件，启动时清空，默认 /tmp/webdav_stub.log")
+    parser.add_argument("--nutstore", action="store_true",
+                        help="模拟坚果云的非标准行为（MKCOL 已存在 / MOVE 目标已存在 / "
+                             "读缺失路径 都返回 409），用于兼容性回归测试")
     return parser
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    state = StubState(args.log, args.user, args.password)
+    state = StubState(args.log, args.user, args.password, nutstore=args.nutstore)
     server = StubServer((args.host, args.port), WebDavStubHandler)
     server.state = state
 
-    print("[{}] LISTEN http://{}:{}{} user={} log={}".format(
-        now_iso(), args.host, args.port, DAV_ROOT, args.user, args.log), flush=True)
+    print("[{}] LISTEN http://{}:{}{} user={} log={} nutstore={}".format(
+        now_iso(), args.host, args.port, DAV_ROOT, args.user, args.log,
+        "on" if args.nutstore else "off"), flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:

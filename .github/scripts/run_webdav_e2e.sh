@@ -17,13 +17,19 @@ set -uo pipefail
 PORT="${WEBDAV_STUB_PORT:-8080}"
 STUB_LOG="${WEBDAV_STUB_LOG:-/tmp/webdav_stub.log}"
 STUB_OUT="/tmp/webdav_stub_stdout.log"
+NUTSTORE_PORT="${WEBDAV_NUTSTORE_STUB_PORT:-8081}"
+NUTSTORE_LOG="${WEBDAV_NUTSTORE_STUB_LOG:-/tmp/webdav_stub_nutstore.log}"
+NUTSTORE_OUT="/tmp/webdav_stub_nutstore_stdout.log"
 SERVER_PID=""
+NUTSTORE_PID=""
 
 cleanup() {
-  if [ -n "$SERVER_PID" ]; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
+  for pid in "$SERVER_PID" "$NUTSTORE_PID"; do
+    if [ -n "$pid" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
 }
 trap cleanup EXIT
 
@@ -32,18 +38,27 @@ python3 .github/scripts/webdav_stub_server.py \
   --port "$PORT" --user test --password test --log "$STUB_LOG" > "$STUB_OUT" 2>&1 &
 SERVER_PID=$!
 
-READY=0
-for _ in $(seq 1 30); do
-  if curl -sf "http://127.0.0.1:${PORT}/__control__/count" > /dev/null 2>&1; then
-    READY=1
-    break
-  fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    break
-  fi
-  sleep 0.5
-done
+# 第二台桩服务器：打开 --nutstore，按坚果云的真实脾气回非标准 409，
+# 专门回归「客户端对坚果云 409 的兼容」（SyncNutstoreQuirkE2eInstrumentedTest）。
+echo "启动坚果云模拟桩服务器：127.0.0.1:${NUTSTORE_PORT}（--nutstore）"
+python3 .github/scripts/webdav_stub_server.py \
+  --port "$NUTSTORE_PORT" --user test --password test \
+  --log "$NUTSTORE_LOG" --nutstore > "$NUTSTORE_OUT" 2>&1 &
+NUTSTORE_PID=$!
 
+wait_ready() {
+  ready=0
+  for _ in $(seq 1 30); do
+    if curl -sf "http://127.0.0.1:$1/__control__/count" > /dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 0.5
+  done
+  echo "$ready"
+}
+
+READY=$(wait_ready "$PORT")
 if [ "$READY" != "1" ]; then
   echo "::error::WebDAV 桩服务器未就绪"
   cat "$STUB_OUT" || true
@@ -51,12 +66,24 @@ if [ "$READY" != "1" ]; then
 fi
 echo "WebDAV 桩服务器已就绪（进程 $SERVER_PID）"
 
+READY=$(wait_ready "$NUTSTORE_PORT")
+if [ "$READY" != "1" ]; then
+  echo "::error::坚果云模拟桩服务器未就绪"
+  cat "$NUTSTORE_OUT" || true
+  exit 1
+fi
+echo "坚果云模拟桩服务器已就绪（进程 $NUTSTORE_PID）"
+
 ./gradlew :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.webdavUrl="http://10.0.2.2:${PORT}/dav/" \
   -Pandroid.testInstrumentationRunnerArguments.webdavControlUrl="http://10.0.2.2:${PORT}/__control__/" \
+  -Pandroid.testInstrumentationRunnerArguments.webdavNutstoreUrl="http://10.0.2.2:${NUTSTORE_PORT}/dav/" \
+  -Pandroid.testInstrumentationRunnerArguments.webdavNutstoreControlUrl="http://10.0.2.2:${NUTSTORE_PORT}/__control__/" \
   --stacktrace
 STATUS=$?
 
 echo "===== WebDAV 桩服务器请求日志（WebDAV 动词实证）====="
 cat "$STUB_LOG" || true
+echo "===== 坚果云模拟桩服务器请求日志（409 兼容性实证）====="
+cat "$NUTSTORE_LOG" || true
 exit "$STATUS"

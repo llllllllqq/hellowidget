@@ -70,6 +70,16 @@ class HttpWebDavClient(
         val head = execute("HEAD", url)
         when {
             head.status == 404 || head.status == 410 -> return null
+            // 409 在 RFC 4918 里表示「父集合不存在」，但**读**一个不存在的文件时，
+            // 坚果云直接返回 409（正文带 AncestorsNotFound），而不是 404。
+            // 读路径上把 409 一律当作「没有这个文件」是安全的：真正要写的时候，
+            // 创建语义由 `MOVE Overwrite: F` / `PUT If-None-Match: *` 兜底 ——
+            // 文件其实存在就会得到 412（走冲突流程），父目录真的缺失则 PUT 会用 409
+            // 报出准确的「上级目录不存在」。任何情况下都不会因此静默覆盖云端。
+            head.status == 409 -> {
+                Log.i(TAG, "云端对 $url 返回 409，按「文件不存在」处理（服务器：${serverMessage(head) ?: "无正文"}）")
+                return null
+            }
             isRedirect(head.status) -> throw httpError(head)
             head.status in 200..299 -> {
                 val etag = head.header("ETag")
@@ -87,6 +97,8 @@ class HttpWebDavClient(
         val response = execute("GET", url, maxBody = maxBytes)
         return when {
             response.status == 404 || response.status == 410 -> null
+            // 与 stat 同理：坚果云对不存在的文件返回 409 而不是 404
+            response.status == 409 -> null
             response.status in 200..299 -> response.body
             else -> throw httpError(response)
         }
@@ -100,7 +112,11 @@ class HttpWebDavClient(
      *
      * MOVE 的 `If-Match` 按 RFC 4918 校验的是请求 URI（也就是我们的临时文件），表达不了
      * 「目标必须还是我看到的那个版本」，所以第 2 步的二次 stat 才是真正的守护。
-     * 服务器不支持 MOVE（405/501）时降级为直接 PUT：放弃原子性，但保留前置条件语义。
+     *
+     * 服务器不接受 MOVE（405/501）、或像坚果云那样对「目标已存在」的 MOVE 返回 409 时，
+     * 降级为**直接 PUT 到目标地址并带上同样的前置条件**（见 [putDirect]）：比「先 DELETE 再
+     * MOVE」更好，正式文件任何时刻都只有一个完整版本，不会出现「云端暂时没有这个文件」的窗口；
+     * 并发创建的场景由 `If-None-Match: *` 报出 412，语义与 MOVE 完全一致。
      */
     override fun putAtomic(
         url: String,
@@ -144,6 +160,13 @@ class HttpWebDavClient(
                 Log.w(TAG, "服务器不支持 MOVE，降级为直接 PUT")
                 return putDirect(url, body, ifNoneMatchStar, ifMatch, ifUnmodifiedSinceMs)
             }
+            if (e.error == WebDavError.PARENT_NOT_FOUND) {
+                // 坚果云：目标**已存在**时 MOVE 一律返回 409，不看 Overwrite 是 T 还是 F
+                // （RFC 4918 要求 Overwrite: T 时成功、Overwrite: F 时 412）。
+                // 直接 PUT 到目标并带上同样的前置条件即可；临时文件在 finally 里清掉。
+                Log.w(TAG, "MOVE 被服务器以 409 拒绝（坚果云等），降级为带前置条件的直接 PUT")
+                return putDirect(url, body, ifNoneMatchStar, ifMatch, ifUnmodifiedSinceMs)
+            }
             throw e
         } finally {
             if (!moved) runCatching { delete(tempUrl) }
@@ -170,6 +193,12 @@ class HttpWebDavClient(
             response.status in 200..299 -> return
             // 已存在（RFC 4918 要求返回 405）或服务器根本不支持 MKCOL —— 都交给后续 PUT 决定
             response.status == 405 || response.status == 301 -> return
+            // 坚果云对「集合已存在」返回 409，而不是 RFC 4918 要求的 405。
+            // 只有服务器**明确**说祖先集合缺失（AncestorsNotFound）时才算真错误 ——
+            // 那说明用户配置的目录建不出来（例如配了 /dav/a/b/ 而 /dav/a 不存在），
+            // 必须给出「先在 WebDAV 上建好目录」这种可操作的提示；
+            // 其余 409 一律当作「目录已经在了」，让后续 PUT 去决定成败。
+            response.status == 409 && !ancestorsMissing(response) -> return
             else -> throw httpError(response)
         }
     }
@@ -260,7 +289,17 @@ class HttpWebDavClient(
                 headers.getOrPut(name) { mutableListOf() }.add(line.substring(idx + 1).trim())
             }
 
-            val responseBody = if (maxBody > 0) readBody(input, headers, maxBody) else ByteArray(0)
+            val responseBody = if (maxBody > 0) {
+                readBody(input, headers, maxBody)
+            } else if (status >= 400 && method != "HEAD") {
+                // 4xx/5xx 的正文是最有用的诊断信息：坚果云在 409 正文里给出
+                // AncestorsNotFound 之类的异常名。这里是**尽力而为**：读不到就只留状态码，
+                // 绝不让诊断把自己变成另一个错误，也绝不允许它读超时拖慢失败反馈。
+                // HEAD 响应按规范没有正文，绝不能在这里读（会一直等到读超时）。
+                runCatching { readBodyCapped(input, headers, ERROR_BODY_LIMIT) }.getOrElse { ByteArray(0) }
+            } else {
+                ByteArray(0)
+            }
             return Response(status, reason, headers, responseBody)
         } catch (e: WebDavException) {
             throw e
@@ -386,6 +425,50 @@ class HttpWebDavClient(
         }
         // 没有长度也没有分块：靠 Connection: close 的 EOF 定界
         return readToEnd(input, maxBytes)
+    }
+
+    /**
+     * 读**错误响应**的正文（只用于诊断）：最多 [limit] 字节，永不因为正文更长而抛错。
+     * 多出来的字节直接放弃 —— 连接本来就是一次性的（客户端固定发送 `Connection: close`）。
+     */
+    private fun readBodyCapped(
+        input: InputStream,
+        headers: Map<String, List<String>>,
+        limit: Int
+    ): ByteArray {
+        if (limit <= 0) return ByteArray(0)
+        val transferEncoding = headers["transfer-encoding"]?.joinToString(",")?.lowercase(Locale.US)
+        if (transferEncoding != null && transferEncoding.contains("chunked")) {
+            val buffer = ByteArrayOutputStream(256)
+            while (buffer.size() < limit) {
+                val sizeLine = readLine(input) ?: break
+                val size = sizeLine.substringBefore(';').trim().toIntOrNull(16) ?: break
+                if (size == 0) break
+                val take = minOf(size, limit - buffer.size())
+                buffer.write(readExactly(input, take))
+                if (take < size) break
+                readLine(input) // 分块数据后的 CRLF
+            }
+            return buffer.toByteArray()
+        }
+        val declaredLength = headers["content-length"]?.firstOrNull()?.trim()?.toLongOrNull()
+        // 既没有 Content-Length 也没有分块：不冒险去读到 EOF —— 对端不关连接就会卡满读超时，
+        // 而错误响应的正文只是锦上添花
+        if (declaredLength == null) return ByteArray(0)
+        val wanted = minOf(declaredLength, limit.toLong()).toInt()
+        if (wanted <= 0) return ByteArray(0)
+        val buffer = ByteArray(wanted)
+        var read = 0
+        while (read < wanted) {
+            val n = try {
+                input.read(buffer, read, wanted - read)
+            } catch (e: IOException) {
+                break
+            }
+            if (n < 0) break
+            read += n
+        }
+        return if (read == wanted) buffer else buffer.copyOf(read)
     }
 
     private fun readExactly(input: InputStream, length: Int): ByteArray {
@@ -533,6 +616,29 @@ class HttpWebDavClient(
     private fun isRedirect(status: Int): Boolean =
         status == 301 || status == 302 || status == 303 || status == 307 || status == 308
 
+    /**
+     * 服务器是否**明确**说了「祖先集合不存在」。
+     *
+     * 坚果云的 409 有两种含义，只能靠正文区分：目标已存在（`Conflict`）和父目录缺失
+     * （`AncestorsNotFound`）。把两者混为一谈会得到两个方向的错误行为，
+     * 所以这里按 marker 判断，判断不出来就当作「不是祖先缺失」（更保守）。
+     */
+    private fun ancestorsMissing(response: Response): Boolean =
+        response.body.isNotEmpty() &&
+            String(response.body, Charsets.UTF_8).contains(ANCESTORS_NOT_FOUND, ignoreCase = true)
+
+    /**
+     * 从错误正文里取出可读的诊断信息：优先异常名（`<D:exception>AncestorsNotFound</D:exception>`），
+     * 否则给一段压成一行的正文摘要。用户把这句话发过来就能定位问题。
+     */
+    private fun serverMessage(response: Response): String? {
+        if (response.body.isEmpty()) return null
+        val text = String(response.body, Charsets.UTF_8)
+        val exception = EXCEPTION_TAG.find(text)?.groupValues?.get(1)?.trim()
+        if (!exception.isNullOrEmpty()) return unescapeXml(exception).take(EXCERPT_LIMIT)
+        return text.replace(Regex("\\s+"), " ").trim().take(EXCERPT_LIMIT).ifEmpty { null }
+    }
+
     private fun httpError(response: Response): WebDavException {
         val error = when {
             isRedirect(response.status) -> WebDavError.REDIRECT
@@ -552,7 +658,9 @@ class HttpWebDavClient(
             WebDavError.REDIRECT -> "（服务器要求跳转，请直接填写最终地址）"
             else -> ""
         }
-        return WebDavException(error, response.status, "HTTP ${response.status} ${response.reason}$extra")
+        // 服务器在正文里给的原因（若有）比裸状态码有用得多
+        val server = serverMessage(response)?.let { "（服务器：$it）" } ?: ""
+        return WebDavException(error, response.status, "HTTP ${response.status} ${response.reason}$extra$server")
     }
 
     /**
@@ -596,6 +704,18 @@ class HttpWebDavClient(
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
         private const val TEMP_SUFFIX = ".uploading"
+
+        /** 错误正文的读取上限（只是拿来写诊断信息，不需要完整正文） */
+        private const val ERROR_BODY_LIMIT = 8 * 1024
+
+        /** 附在错误详情里的正文摘要长度上限 */
+        private const val EXCERPT_LIMIT = 120
+
+        /** 坚果云在 409 正文里用来表示「父集合不存在」的异常名 */
+        private const val ANCESTORS_NOT_FOUND = "AncestorsNotFound"
+
+        private val EXCEPTION_TAG = Regex("<[^>]*exception[^>]*>([^<]*)<", RegexOption.IGNORE_CASE)
+
         private val METHODS_WITH_EMPTY_BODY = setOf("PUT", "MKCOL", "MOVE", "COPY", "PROPFIND")
         private const val PROPFIND_BODY =
             """<?xml version="1.0" encoding="utf-8"?>""" +
