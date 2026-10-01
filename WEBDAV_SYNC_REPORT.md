@@ -150,9 +150,9 @@ MOVE <file>.uploading → <file>   Overwrite: T（覆盖）/ F（创建）
 | 「真的用了 WebDAV 动词」 | 模拟器测试读取**服务器端请求日志**（`HEAD/PROPFIND`、`MKCOL`、`PUT *.uploading`、`MOVE`、`COPY`），日志同时打印在 Actions 里 | CI `instrumented` |
 | 自签名证书 → 报 `TLS_UNTRUSTED` 并回传指纹；确认指纹后放行；指纹不对仍拒绝 | `TlsPinningTest`（测试专用自签名证书 + 真实 `SSLServerSocket` 握手，见 `app/src/test/resources/tls/`） | CI `quality` |
 
-### 5.2 本轮实测结果（`qa/7.2-webdav`）
+### 5.2 本轮实测结果
 
-运行：[Build & Release #36835813525](https://github.com/llllllllqq/hellowidget/actions/runs/36835813525)（head `c281b9a`）
+**qa 分支预验证**：[Build & Release #36835813525](https://github.com/llllllllqq/hellowidget/actions/runs/36835813525)（head `c281b9a`）
 
 | 作业 | 结果 |
 |---|---|
@@ -160,6 +160,18 @@ MOVE <file>.uploading → <file>   Overwrite: T（覆盖）/ F（创建）
 | Build APKs | ✅ Debug + Release 均构建成功 |
 | Instrumented Tests (emulator) | ✅ **7 个用例全通过**（1 个 v7.1 输入法用例 + 6 个 WebDAV 端到端用例），跑在 API 34 模拟器上 |
 | Publish GitHub Release | ⏭️ 仅 `main` 分支才发布（`qa/**` 故意跳过） |
+
+**main 分支发布验证**：[Build & Release #36836264457](https://github.com/llllllllqq/hellowidget/actions/runs/36836264457)（head `ba8a509`）
+
+| 项 | 实测值 |
+|---|---|
+| 四个作业 | Lint & Unit Tests ✅ / Build APKs ✅ / Instrumented Tests (emulator) ✅ / Publish GitHub Release ✅ |
+| Release | [`v7.2`](https://github.com/llllllllqq/hellowidget/releases/tag/v7.2)，非草稿、非预发行，`publishedAt=2026-10-01T08:29:51Z` |
+| 产物 | `app-release.apk` 970,534 B（含 `META-INF/CERT.RSA` + `CERT.SF`，已签名）、`app-debug.apk` 3,619,685 B |
+| APK 元数据（aapt2 badging） | `versionCode='17' versionName='7.2' minSdkVersion:'21' targetSdkVersion:'35' compileSdkVersion='35'` |
+| 权限 | `INTERNET` / `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` / `POST_NOTIFICATIONS`（无多余权限） |
+| 发布包内容 | `resources.arsc` 含 `network_security_config` 与新增字符串资源 → v7.2 的功能确实进了发布包；1 个 dex、无未混淆的 `moe/hellowidget` 条目（R8 压缩/混淆仍然有效） |
+| v7.1 回归 | 「进入即输入（光标行首 + 自动弹输入法）」仪器化用例与全部既有单测仍然通过 |
 
 服务器端请求日志（CI 原样打印，每个用例用独立文件名，因此一次运行里所有场景都在证据里）：
 
