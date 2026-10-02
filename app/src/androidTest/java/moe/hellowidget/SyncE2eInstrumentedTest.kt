@@ -6,6 +6,9 @@ import android.content.Context
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.view.MenuItem
+import android.widget.EditText
+import androidx.appcompat.widget.Toolbar
 import androidx.core.app.NotificationManagerCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -374,7 +377,94 @@ class SyncE2eInstrumentedTest {
         assertEquals("进程内兜底验证", cloud(uploadedName()))
     }
 
+    // ------------------------------------------------------------ 顶部导航栏「立即上传」（v7.7）
+
+    /**
+     * v7.7 需求：编辑页顶部导航栏的「立即上传」按钮 —— 真的点它一下，编辑器里的**当前**内容
+     * 必须立刻出现在云端，而且**不受 30 分钟节流限制**。
+     *
+     * 为什么必须在真机上验证：
+     *  - 菜单项由 AppCompat 装到 Toolbar 上，只有真实 AppCompat 环境才拿得到它；
+     *  - 上传走前台服务，JVM/Robolectric 不记录 `startForegroundService`，那里断言不了；
+     *  - 「绕过节流」的证明方式：把 `lastAttemptAt` 设成「刚刚尝试过」——若按钮走的是
+     *    自动触发（CLOSE_EDITOR），这次同步会被跳过，云端不会出现新文件。
+     */
+    @Test
+    fun topBarUploadButton_uploadsTheCurrentEditorContent_ignoringThrottle() {
+        val countBefore = requestCount()
+        assertTrue(runBlocking { ContentStore.write("打开应用时的旧内容") })
+        // 先关掉同步：保证这次上传只可能由「点按钮」产生（否则打开应用时的补同步会抢先上传）
+        SyncSettings.setEnabled(context, false)
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            awaitEditorReady(scenario)
+
+            val typed = "来自顶部导航栏的内容 ${System.currentTimeMillis()}"
+            scenario.onActivity { activity ->
+                activity.findViewById<EditText>(R.id.editor).setText(typed)
+            }
+
+            // 打开同步，并把 30 分钟闸门置为「刚刚尝试过」：自动触发一定会被跳过
+            SyncSettings.setEnabled(context, true)
+            SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
+
+            // 动作菜单在首次布局时装载，给它一点时间（不能在 onActivity 里 sleep：那是主线程）
+            var found: MenuItem? = null
+            val menuDeadline = SystemClock.uptimeMillis() + 5_000
+            while (SystemClock.uptimeMillis() < menuDeadline && found == null) {
+                scenario.onActivity { activity ->
+                    found = activity.findViewById<Toolbar>(R.id.toolbar)
+                        .menu.findItem(R.id.action_upload)
+                }
+                if (found == null) SystemClock.sleep(50)
+            }
+            val uploadItem = found
+            assertNotNull("顶部导航栏必须有「立即上传」入口", uploadItem)
+
+            scenario.onActivity { activity ->
+                assertTrue("「立即上传」必须被处理", activity.onOptionsItemSelected(uploadItem!!))
+            }
+
+            val deadline = SystemClock.uptimeMillis() + 60_000
+            while (SystemClock.uptimeMillis() < deadline &&
+                SyncSettings.lastResult(context) != SyncEngine.RESULT_SUCCESS
+            ) {
+                SystemClock.sleep(200)
+            }
+            assertEquals(
+                "点「立即上传」后必须同步成功（lastError=${SyncSettings.lastError(context)}）",
+                SyncEngine.RESULT_SUCCESS,
+                SyncSettings.lastResult(context)
+            )
+
+            val name = uploadedName()
+            assertEquals(
+                "云端文件必须就是编辑器里的当前内容（证明先落盘，且这次同步绕过了 30 分钟节流）",
+                typed,
+                cloud(name)
+            )
+            assertTrue("必须真的发出了请求", requestCount() > countBefore)
+            assertTrue(
+                "应当往新文件里写：${control("log")}",
+                control("log").contains("PUT $dirPath/$name -> 201")
+            )
+        }
+    }
+
     // ------------------------------------------------------------ 工具
+
+    /** 等编辑器异步读盘完成（解禁）——只有解禁后才能编辑与保存 */
+    private fun awaitEditorReady(scenario: ActivityScenario<MainActivity>, timeoutMs: Long = 10_000) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var enabled = false
+        while (SystemClock.uptimeMillis() < deadline && !enabled) {
+            scenario.onActivity { activity ->
+                enabled = activity.findViewById<EditText>(R.id.editor).isEnabled
+            }
+            if (!enabled) SystemClock.sleep(50)
+        }
+        assertTrue("等待编辑器加载完成超时", enabled)
+    }
 
     /**
      * 自检：本环境下「发出一条通知并能查询回来」是否可用。

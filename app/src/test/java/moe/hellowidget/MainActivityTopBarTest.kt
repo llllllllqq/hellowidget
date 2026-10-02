@@ -9,7 +9,6 @@ import androidx.appcompat.widget.Toolbar
 import kotlinx.coroutines.runBlocking
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncSettings
-import moe.hellowidget.sync.SyncTrigger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -97,9 +96,17 @@ class MainActivityTopBarTest {
         )
     }
 
-    /** 需求 2：立即上传 = 先把编辑器当前内容落盘，再以 MANUAL 触发同步 */
+    /**
+     * 需求 2：点「立即上传」时，编辑器里的**当前**内容必须先落盘 ——
+     * 同步读的是磁盘内容，不先落盘就会把旧内容推上云端（而且看起来「同步成功」）。
+     *
+     * 说明：「真的启动了前台服务、真的以 MANUAL 绕过节流把文件写进云端」由
+     * `SyncE2eInstrumentedTest.topBarUploadButton_uploadsTheCurrentEditorContent_ignoringThrottle`
+     * 在模拟器上打真实 WebDAV 服务器验证（Robolectric 不记录 `startForegroundService`，
+     * 这里不做无法观测的断言）。
+     */
     @Test
-    fun uploadEntry_savesTheEditorContentFirst_thenSyncsWithTheManualTrigger() {
+    fun uploadEntry_savesTheEditorContentFirst_soTheUploadCanNeverBeStale() {
         assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("旧内容") })
         SyncSettings.saveConfig(
             app,
@@ -112,21 +119,13 @@ class MainActivityTopBarTest {
         awaitEditorEnabled(activity)
         editor.setText("云端要看到的最新内容")
 
-        // 打开应用时可能已经补过一次自动同步（APP_OPEN），先把那次从队列里取走
-        shadowOf(app).nextStartedService
-
         assertTrue(activity.onOptionsItemSelected(RoboMenuItem(R.id.action_upload)))
 
-        // 同步读的是磁盘内容：不先落盘就会把旧内容推上云端
         awaitContent("云端要看到的最新内容")
-
-        val started = shadowOf(app).nextStartedService
-        assertNotNull("「立即上传」必须启动同步服务", started)
-        assertEquals(SyncService::class.java.name, started!!.component?.className)
-        assertEquals(
-            "「立即上传」必须走 MANUAL 触发（不受 30 分钟节流限制）",
-            SyncTrigger.MANUAL.name,
-            started.getStringExtra(SyncService.EXTRA_TRIGGER)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull(
+            "配置齐全时不该走「请先去配置同步」的提示",
+            ShadowToast.getTextOfLatestToast()
         )
     }
 
@@ -143,6 +142,6 @@ class MainActivityTopBarTest {
             activity.getString(R.string.sync_upload_not_ready),
             ShadowToast.getTextOfLatestToast()
         )
-        assertNull("未配置时不得启动同步服务", shadowOf(app).nextStartedService)
+        assertEquals("未配置时不得发起任何同步尝试", 0L, SyncSettings.lastAttemptAt(app))
     }
 }
