@@ -266,7 +266,7 @@ class MainActivityEntryInstrumentedTest {
             Log.w(tag, "截图失败（不影响测试结论）：$error")
             null
         }
-        val dir = instrumentation.targetContext.getExternalFilesDir(null)
+        val dir = instrumentation.targetContext.filesDir
         if (bitmap == null || dir == null) {
             Log.w(tag, "截图不可用（bitmap=$bitmap, dir=$dir）")
             return
@@ -275,14 +275,17 @@ class MainActivityEntryInstrumentedTest {
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         Log.i(tag, "已保存截图 ${file.absolutePath}（${bitmap.width}x${bitmap.height}）")
 
-        // 复制到公共目录：以 shell（adb）身份执行，应用自己被卸载后文件仍然留得住
+        // 再让 shell 用 run-as 把文件读出来重定向到公共目录：写在自己目录里的截图会随
+        // connectedAndroidTest 结束后的卸载被清掉，而 shell 又读不到 /sdcard/Android/data/…
+        // （API 30+ 的分区存储限制，实测 `adb pull` 拿到 0 个文件）。
         val publicDir = "/sdcard/Download/hellowidget-shots"
         try {
             val descriptor = instrumentation.uiAutomation.executeShellCommand(
-                "mkdir -p $publicDir && cp ${file.absolutePath} $publicDir/"
+                "mkdir -p $publicDir && run-as ${instrumentation.targetContext.packageName} " +
+                    "cat ${file.name} > $publicDir/${file.name}"
             )
-            ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
-            Log.i(tag, "已复制截图到 $publicDir/${file.name}")
+            val output = ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+            Log.i(tag, "已复制截图到 $publicDir/${file.name}（shell 输出 ${output.size} 字节）")
         } catch (error: Throwable) {
             Log.w(tag, "复制截图到公共目录失败（不影响测试结论）：$error")
         }
