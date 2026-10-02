@@ -1,10 +1,15 @@
 package moe.hellowidget
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -32,7 +37,9 @@ import java.io.File
  *  4. 输入法弹出后 Activity 仍持有窗口焦点，且**没有触发失焦保存**
  *     （AOSP 中 IME 窗口带 FLAG_NOT_FOCUSABLE，不会夺走 Activity 的窗口焦点）；
  *  5. **顶部导航栏真的装载了 4 个入口**（外观设置 / WebDAV 同步 / 立即上传 / 撤回），
- *     且其内容没有被状态栏遮挡；
+ *     顶部系统栏高度由独立占位条承担、导航栏内容区高度完整，并且**白色的标题与 4 个图标
+ *     真的被画进了像素里**（v7.7.1 回归：旧实现把系统栏 inset 当成导航栏自己的 padding，
+ *     在系统栏很高的手机上标题被裁成底部一条缝、4 个按钮完全看不见）；
  *  6. 编辑区没有被键盘遮住（targetSdk 35 边到边下必须自行消费 ime insets）。
  *
  * 关于「最终」：实测输入法首帧可见时焦点可能短暂不在编辑器上，
@@ -99,19 +106,32 @@ class MainActivityEntryInstrumentedTest {
     /**
      * v7.7 顶部导航栏：真机上 `toolbar.menu` 必须真的装载了 4 个入口
      * （Robolectric 只能验证我们调用了 onCreateOptionsMenu，无法证明框架把菜单装上了工具栏），
-     * 且导航栏内容不被状态栏遮挡。
+     * 且**标题与 4 个按钮必须占据完整高度、并且真的被画出来**。
+     *
+     * v7.7.1 的教训：旧实现在这里断言的是「toolbar.paddingTop >= 状态栏高度」——
+     * 等于把事故的成因写成了预期行为，而模拟器的状态栏只有 24dp，
+     * 于是「导航栏内容被系统栏挤没」这件事在两个 API 上全绿通过，用户的手机上却完全不可用。
+     * 现在断言的是用户真正在意的结果：内容区高度完整、白色标题与图标真的出现在像素里。
      */
     @Test
-    fun topBar_holdsTheFourEntries_andItsContentIsNotCoveredByTheStatusBar() {
+    fun topBar_holdsTheFourEntries_andItsContentIsNeverSqueezed() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            // 动作菜单在首次布局时装载，给它一点时间（不能在 onActivity 里 sleep：那是主线程）
+            // 动作菜单与按钮视图在首次布局时装载，给它一点时间（不能在 onActivity 里 sleep：那是主线程）
             var menuSize = 0
+            var itemViews: List<View> = emptyList()
             val deadline = SystemClock.uptimeMillis() + 5_000
-            while (SystemClock.uptimeMillis() < deadline && menuSize < 4) {
+            while (SystemClock.uptimeMillis() < deadline) {
                 scenario.onActivity { activity ->
-                    menuSize = activity.findViewById<Toolbar>(R.id.toolbar).menu.size()
+                    val toolbar = activity.findViewById<Toolbar>(R.id.toolbar)
+                    menuSize = toolbar.menu.size()
+                    itemViews = actionItemViews(toolbar)
                 }
-                if (menuSize < 4) SystemClock.sleep(50)
+                if (menuSize >= 4 && itemViews.size >= 4 &&
+                    itemViews.all { it.width > 0 && it.height > 0 }
+                ) {
+                    break
+                }
+                SystemClock.sleep(50)
             }
             assertEquals(
                 "顶部导航栏必须装载 4 个入口（外观设置 / WebDAV 同步 / 立即上传 / 撤回）",
@@ -130,18 +150,82 @@ class MainActivityEntryInstrumentedTest {
                     assertNotNull("顶部导航栏缺少入口 id=$id", toolbar.menu.findItem(id))
                 }
 
+                val barHeight = activity.resources.getDimensionPixelSize(R.dimen.top_bar_height)
+                val strip = activity.findViewById<View>(R.id.status_bar_spacer)
                 val insets = ViewCompat.getRootWindowInsets(toolbar)
                 assertNotNull("必须能读到窗口 insets", insets)
-                val statusTop = insets!!.getInsets(WindowInsetsCompat.Type.statusBars()).top
-                assertTrue("状态栏 inset 必须大于 0", statusTop > 0)
-                assertTrue(
-                    "导航栏内容不能被状态栏遮挡：paddingTop=${toolbar.paddingTop}，状态栏高度=$statusTop",
-                    toolbar.paddingTop >= statusTop
+                val windowInsets = requireNotNull(insets) { "必须能读到窗口 insets" }
+                val topInset = maxOf(
+                    windowInsets.getInsets(WindowInsetsCompat.Type.statusBars()).top,
+                    windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout()).top
+                )
+                assertTrue("顶部系统栏 inset 必须大于 0", topInset > 0)
+                Log.i(
+                    tag,
+                    "顶部系统栏=${topInset}px，占位条高=${strip.height}px，" +
+                        "导航栏高=${toolbar.height}px paddingTop=${toolbar.paddingTop}px"
                 )
 
-                // 编辑区必须从导航栏下方开始，不能压在导航栏上
+                // 1) 系统栏那一条必须由占位条承担；导航栏自身高度固定，内容区不被 insets 挤压
+                assertEquals("系统栏高度必须由占位条承担", topInset, strip.height)
+                assertEquals("导航栏自己不得被系统栏 inset 挤压", 0, toolbar.paddingTop)
+                assertEquals("导航栏高度必须是固定值", barHeight, toolbar.height)
+                val contentHeight = toolbar.height - toolbar.paddingTop - toolbar.paddingBottom
+                assertTrue(
+                    "导航栏内容可用高度必须完整：${contentHeight}px（应为 ${barHeight}px）",
+                    contentHeight >= barHeight - 2
+                )
+                assertEquals("导航栏必须紧贴在占位条下方", strip.height, toolbar.top)
+
+                // 2) 标题必须真的以正常字号呈现（而不是被挤成一条缝）
+                val title = (0 until toolbar.childCount)
+                    .map { toolbar.getChildAt(it) }
+                    .filterIsInstance<TextView>()
+                    .firstOrNull()
+                assertNotNull("导航栏标题视图必须存在", title)
+                val titleView = requireNotNull(title) { "导航栏标题视图必须存在" }
+                Log.i(
+                    tag,
+                    "标题='${titleView.text}' 高=${titleView.height}px 字号=${titleView.textSize}px " +
+                        "可见=${titleView.isShown}"
+                )
+                assertTrue("标题必须可见", titleView.isShown)
+                assertTrue(
+                    "标题高度必须容得下它的字号（旧实现只剩几个像素）：" +
+                        "${titleView.height}px vs 字号 ${titleView.textSize}px",
+                    titleView.height >= titleView.textSize * 0.8f
+                )
+
+                // 3) 4 个按钮都必须有正常尺寸且可见
+                val items = actionItemViews(toolbar)
+                assertEquals("顶部导航栏必须渲染出 4 个动作按钮", 4, items.size)
+                val minTap = (24 * activity.resources.displayMetrics.density).toInt()
+                items.forEachIndexed { index, item ->
+                    assertTrue("第 ${index + 1} 个动作按钮必须可见", item.isShown)
+                    assertTrue(
+                        "第 ${index + 1} 个动作按钮尺寸必须正常：${item.width}x${item.height}px" +
+                            "（至少 ${minTap}x${minTap}）",
+                        item.width >= minTap && item.height >= minTap
+                    )
+                }
+
+                // 4) 最终证据：把导航栏画进 Bitmap，标题与 4 个按钮的位置上必须真的出现亮像素
+                //    （白字 / 白图标叠在紫色底上；旧实现里这些区域整片是空的紫色）
+                val bitmap = Bitmap.createBitmap(toolbar.width, toolbar.height, Bitmap.Config.ARGB_8888)
+                toolbar.draw(Canvas(bitmap))
                 val toolbarLocation = IntArray(2)
-                toolbar.getLocationOnScreen(toolbarLocation)
+                toolbar.getLocationInWindow(toolbarLocation)
+                val titlePainted = paintedPixelsIn(bitmap, boundsInToolbar(toolbarLocation, titleView))
+                assertTrue("标题必须真的被画出来（亮像素=$titlePainted）", titlePainted >= 30)
+                items.forEachIndexed { index, item ->
+                    val painted = paintedPixelsIn(bitmap, boundsInToolbar(toolbarLocation, item))
+                    assertTrue(
+                        "第 ${index + 1} 个按钮的图标必须真的被画出来（亮像素=$painted）",
+                        painted >= 30
+                    )
+                }
+
+                // 5) 编辑区必须从导航栏下方开始，不能压在导航栏上
                 val editorLocation = IntArray(2)
                 activity.findViewById<View>(R.id.editor_scroll).getLocationOnScreen(editorLocation)
                 assertTrue(
@@ -156,6 +240,58 @@ class MainActivityEntryInstrumentedTest {
     // ---------- 断言辅助 ----------
 
     private class FocusTimeline(val editorFocused: Boolean, val description: String)
+
+    /**
+     * 工具栏里 AppCompat 为 `showAsAction="always"` 创建的按钮视图。
+     *
+     * 按类名匹配而不是按 id：按钮视图是 AppCompat 在运行时创建的（`ActionMenuItemView`），
+     * 我们自己的布局里没有它，也不该依赖它的具体 id。
+     */
+    private fun actionItemViews(toolbar: ViewGroup): List<View> {
+        val found = mutableListOf<View>()
+        fun walk(group: ViewGroup) {
+            for (index in 0 until group.childCount) {
+                val child = group.getChildAt(index)
+                if (child.javaClass.name.contains("ActionMenuItemView")) found += child
+                if (child is ViewGroup) walk(child)
+            }
+        }
+        walk(toolbar)
+        return found
+    }
+
+    /** 子视图相对于 [origin]（窗口坐标）的边界：left, top, right, bottom */
+    private fun boundsInToolbar(origin: IntArray, view: View): IntArray {
+        val location = IntArray(2)
+        view.getLocationInWindow(location)
+        val left = location[0] - origin[0]
+        val top = location[1] - origin[1]
+        return intArrayOf(left, top, left + view.width, top + view.height)
+    }
+
+    /**
+     * 统计位图指定矩形内「明显比导航栏紫底更亮」的像素数。
+     *
+     * 顶部导航栏是紫色底（亮度约 56）+ 白色标题 / 白色图标，所以「这块区域里到底有没有
+     * 亮像素」就是「文字和按钮到底有没有真的画到屏幕上」的直接证据 —— 只看视图尺寸是不够的
+     * （v7.7 的事故里，视图都在、尺寸也不为零，但内容被裁得看不见）。
+     *
+     * 阈值取 128（而不是「接近纯白」）：禁用状态的动作按钮图标会带上 alpha，
+     * 与紫底混合后亮度约 155，仍然明显亮于底色。
+     */
+    private fun paintedPixelsIn(bitmap: Bitmap, bounds: IntArray): Int {
+        var count = 0
+        for (y in maxOf(0, bounds[1]) until minOf(bitmap.height, bounds[3])) {
+            for (x in maxOf(0, bounds[0]) until minOf(bitmap.width, bounds[2])) {
+                val pixel = bitmap.getPixel(x, y)
+                if (Color.alpha(pixel) < 200) continue
+                val luminance =
+                    (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
+                if (luminance >= 128) count++
+            }
+        }
+        return count
+    }
 
     /** 记录焦点归属时间线，直到编辑器拿到焦点或超时 */
     private fun awaitEditorFocused(

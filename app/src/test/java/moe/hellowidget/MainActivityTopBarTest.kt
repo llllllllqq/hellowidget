@@ -1,11 +1,14 @@
 package moe.hellowidget
 
 import android.app.Application
+import android.graphics.Insets
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import androidx.appcompat.widget.Toolbar
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.runBlocking
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncSettings
@@ -28,10 +31,12 @@ import org.robolectric.shadows.ShadowToast
 /**
  * v7.7 顶部导航栏测试：入口位置（全部在顶部、底部不再留按钮）、四个入口的行为，
  * 以及「立即上传到云端」的语义（先落盘 + MANUAL 触发 + 未配置时明确提示）。
+ * v7.7.1 追加回归：顶部系统栏再高也不得挤压导航栏内容区（线上事故的根因用例）。
  *
  * 说明：菜单项 id 与顺序由 `main_menu.xml` 定义、由 `onCreateOptionsMenu` 装载；
  * JVM 侧用 `RoboMenuItem` 直接驱动 `onOptionsItemSelected`（验证 4 个 id 的路由），
- * 「工具栏在真机上真的装载了 4 个入口」由 `MainActivityEntryInstrumentedTest` 验证。
+ * 「工具栏在真机上真的装载了 4 个入口、且标题与图标真的被画出来」由
+ * `MainActivityEntryInstrumentedTest` 验证。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -65,14 +70,68 @@ class MainActivityTopBarTest {
         val toolbar: Toolbar? = activity.findViewById(R.id.toolbar)
         assertNotNull("顶部导航栏（Toolbar）必须存在", toolbar)
 
-        // 根布局只剩「顶部导航栏 + 编辑区」：原先屏幕底部的两个按钮已经删除
+        // 根布局只剩「系统栏占位条 + 顶部导航栏 + 编辑区」：
+        // 原先屏幕底部的两个按钮已经删除，编辑区下面不再有任何东西
         val root = activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as ViewGroup
-        assertEquals("根布局应当只剩两个子视图（导航栏 + 编辑区）", 2, root.childCount)
-        assertSame("第一个子视图必须是顶部导航栏", toolbar, root.getChildAt(0))
+        assertEquals("根布局应当只剩三个子视图（占位条 + 导航栏 + 编辑区）", 3, root.childCount)
         assertSame(
-            "第二个子视图必须是编辑区",
+            "第一个子视图必须是系统栏占位条",
+            activity.findViewById<View>(R.id.status_bar_spacer),
+            root.getChildAt(0)
+        )
+        assertSame("第二个子视图必须是顶部导航栏", toolbar, root.getChildAt(1))
+        assertSame(
+            "最后一个子视图必须是编辑区（其下不得再有任何按钮）",
             activity.findViewById<View>(R.id.editor_scroll),
-            root.getChildAt(1)
+            root.getChildAt(2)
+        )
+    }
+
+    /**
+     * v7.7.1 回归：**顶部系统栏再高，也不能挤压导航栏的内容区**。
+     *
+     * v7.7 的线上事故：把系统栏 inset 当成 Toolbar 的 paddingTop，而 Toolbar 高度固定 56dp。
+     * 用户手机上 `systemBars() ∪ displayCutout()` 的 top ≈ 53dp，内容只剩约 3dp ——
+     * 标题被 AppCompat 贴底裁成一条缝（截图实测可见高度仅 6~7px）、4 个按钮完全看不见。
+     *
+     * 本用例把那个真实高度灌进窗口 insets，断言：
+     *  1. 这条高度由独立占位视图承担；
+     *  2. 导航栏自己的 padding 不受影响；
+     *  3. 真正测量一遍后，导航栏内容可用高度仍是一整条导航栏。
+     */
+    @Test
+    fun aTallTopInset_neverSqueezesTheTopBarContent() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val root = activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as ViewGroup
+        val toolbar = activity.findViewById<Toolbar>(R.id.toolbar)
+        val strip = activity.findViewById<View>(R.id.status_bar_spacer)
+        val barHeight = activity.resources.getDimensionPixelSize(R.dimen.top_bar_height)
+
+        // 用户手机上实测到的系统栏高度：几乎等于整条导航栏（53 / 56）
+        val hugeInset = barHeight * 53 / 56
+        ViewCompat.dispatchApplyWindowInsets(
+            root,
+            WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(0, hugeInset, 0, 0))
+                .build()
+        )
+
+        assertEquals("顶部系统栏高度必须由占位视图承担", hugeInset, strip.layoutParams.height)
+        assertEquals("导航栏自己不得再被系统栏 inset 挤压", 0, toolbar.paddingTop)
+        assertEquals("导航栏高度必须是固定值", barHeight, toolbar.layoutParams.height)
+
+        toolbar.measure(
+            View.MeasureSpec.makeMeasureSpec(
+                activity.resources.displayMetrics.widthPixels,
+                View.MeasureSpec.EXACTLY
+            ),
+            View.MeasureSpec.makeMeasureSpec(barHeight, View.MeasureSpec.EXACTLY)
+        )
+        assertEquals("导航栏必须量到完整高度", barHeight, toolbar.measuredHeight)
+        val contentHeight = toolbar.measuredHeight - toolbar.paddingTop - toolbar.paddingBottom
+        assertTrue(
+            "导航栏内容可用高度必须仍是完整一条（旧实现这里只剩约 3dp）：${contentHeight}px",
+            contentHeight >= barHeight - 2
         )
     }
 

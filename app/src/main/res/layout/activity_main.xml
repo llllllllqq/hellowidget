@@ -6,19 +6,35 @@
     android:orientation="vertical">
 
     <!--
+        系统栏那一条（状态栏 / 刘海 / 挖孔区域）。
+
+        v7.7.1 的关键修复：顶部 inset 的**高度由这个占位视图承担**，
+        而不是加在导航栏自己的 padding 上。颜色与导航栏相同（colorPrimary），
+        所以视觉上两者连成一条从屏幕顶端铺下来的紫色条。
+        旧实现把 inset 当导航栏的 paddingTop，导航栏高度又固定 56dp，
+        于是标题和按钮被挤到只剩几个像素高（线上事故，见
+        V7.7.1_TOP_BAR_SQUEEZE_FIX.md）。
+    -->
+    <View
+        android:id="@+id/status_bar_spacer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="?attr/colorPrimary" />
+
+    <!--
         顶部导航栏（v7.7）：外观设置 / WebDAV 同步 / 立即上传 / 撤回 四个常驻入口，
         菜单定义在 res/menu/main_menu.xml，由 MainActivity.onCreateOptionsMenu 装载。
         原先占据屏幕底部的两个按钮已删除（用户要求全部上移）。
 
+        高度固定为 @dimen/top_bar_height（56dp）：它的内容区高度因此**与系统栏 inset 无关**，
+        标题与 4 个按钮在任何设备上都有完整高度可用。
         android:theme 用 Dark.ActionBar 覆盖层：工具栏背景是 colorPrimary（紫色），
         覆盖层保证标题与图标取白色，在紫色底上清晰可见。
-        状态栏高度由 MainActivity 按窗口 inset 设为本视图的 top padding，
-        因此工具栏背景会一直铺到屏幕顶端，不会在状态栏下留出一条异色窄条。
     -->
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
+        android:layout_height="@dimen/top_bar_height"
         android:background="?attr/colorPrimary"
         android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
         app:popupTheme="@style/ThemeOverlay.AppCompat.Light" />

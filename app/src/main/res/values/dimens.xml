@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        顶部导航栏的高度（v7.7.1 起为固定值，不再使用 ?attr/actionBarSize）。
+
+        为什么写死：导航栏必须**恰好**这么高，它上方那条系统栏（状态栏 / 刘海 / 挖孔）
+        由独立占位视图承担高度。旧实现用 ?attr/actionBarSize 当高度、又把系统栏 inset
+        当作导航栏自己的 paddingTop，于是「内容可用高度 = 56dp − 系统栏高度」——
+        在顶部系统栏很高的设备上（实测 systemBars ∪ displayCutout 的 top ≈ 53dp）
+        内容只剩 ~3dp，标题被 AppCompat 贴底裁成一条缝、4 个按钮完全看不见。
+        高度写成固定值之后，「内容区 == 56dp」与 insets 完全无关。
+    -->
+    <dimen name="top_bar_height">56dp</dimen>
+</resources>

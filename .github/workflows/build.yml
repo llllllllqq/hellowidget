@@ -256,6 +256,16 @@ jobs:
             app/build/reports/androidTests/
           if-no-files-found: warn
 
+      # 顶部导航栏真实渲染图（含一张「高刘海」模拟图，复现 v7.7 事故条件）。
+      # 容器里的像素断言已经证明「白色标题与图标真的被画出来」，截图用于人工复核。
+      - name: Upload top bar screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: topbar-screenshots-api${{ matrix.api-level }}
+          path: topbar-screenshots/
+          if-no-files-found: warn
+
   # ---------- 4. 发布 Release（仅 main 分支 push） ----------
   release:
     name: Publish GitHub Release

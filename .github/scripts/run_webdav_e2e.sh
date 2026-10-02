@@ -86,4 +86,33 @@ echo "===== WebDAV 桩服务器请求日志（WebDAV 动词实证）====="
 cat "$STUB_LOG" || true
 echo "===== 坚果云模拟桩服务器请求日志（409 兼容性实证）====="
 cat "$NUTSTORE_LOG" || true
+
+# ---------- 顶部导航栏截图：肉眼可核验的产物 ----------
+# 断言能证明「图标真的被画出来了」（MainActivityEntryInstrumentedTest 里直接数白色像素），
+# 但截图最直观：流水线每次都在两个 API 上留下真实渲染图，随产物归档。
+# 第二张开启「高刘海」RRO 模拟，把顶部系统栏 inset 抬到接近整条导航栏的高度 ——
+# 这正是 v7.7 线上事故的条件（旧实现在该条件下标题只剩一条 7px 的缝、4 个按钮全不可见）。
+SHOT_DIR="${SHOT_DIR:-topbar-screenshots}"
+API_LEVEL="$(adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
+mkdir -p "$SHOT_DIR"
+
+capture_topbar() {
+  shot_name="$1"
+  adb shell am force-stop moe.hellowidget >/dev/null 2>&1 || true
+  adb shell am start -n moe.hellowidget/.MainActivity >/dev/null 2>&1 || true
+  sleep 4
+  adb exec-out screencap -p > "$SHOT_DIR/${shot_name}_api${API_LEVEL}.png" 2>/dev/null || true
+  ls -l "$SHOT_DIR/${shot_name}_api${API_LEVEL}.png" 2>/dev/null || true
+}
+
+capture_topbar topbar
+
+if adb shell cmd overlay enable com.android.internal.display.cutout.emulation.tall >/dev/null 2>&1; then
+  echo "===== 已启用「高刘海」模拟：顶部系统栏 inset 被抬高，用于复现 v7.7 事故条件 ====="
+  capture_topbar topbar_tall_cutout
+  adb shell cmd overlay disable com.android.internal.display.cutout.emulation.tall >/dev/null 2>&1 || true
+else
+  echo "::warning::高刘海模拟覆盖层不可用，跳过该截图（不影响测试结论）"
+fi
+
 exit "$STATUS"

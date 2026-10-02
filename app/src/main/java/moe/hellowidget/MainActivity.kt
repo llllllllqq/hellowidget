@@ -350,8 +350,17 @@ class MainActivity : AppCompatActivity() {
     /**
      * 消费系统栏、刘海与输入法 insets，把内容避开状态栏/导航栏/键盘（targetSdk 35 边到边必需）。
      *
-     * 顶部 inset 加在**导航栏自己**身上（而不是根布局）：这样工具栏背景会一直铺到屏幕顶端，
-     * 状态栏下面不会留出一条异色窄条，而工具栏内容（标题 + 4 个按钮）依然避开了状态栏。
+     * v7.7.1 修复：顶部系统栏那一条的高度**由独立的占位视图承担**
+     * （`status_bar_spacer`，见 activity_main.xml），**绝不再加到导航栏自己的 padding 上**。
+     *
+     * v7.7 的实现把 `bars.top` 当作 Toolbar 的 paddingTop，而 Toolbar 的高度是固定的
+     * `?attr/actionBarSize`（56dp）。在顶部系统栏很高的设备上（用户手机上
+     * `systemBars() ∪ displayCutout()` 的 top ≈ 53dp），导航栏内容只剩约 3dp 可用高度：
+     * AppCompat 的 `Toolbar.onLayout` 在空间不足时会把标题**贴底**放置（`space = height
+     * - paddingTop - paddingBottom`），于是标题被裁成底部一条几个像素高的缝
+     * （用户截图里那排「字母上半部分」的小白点），4 个按钮则完全不可见。
+     * 现在导航栏自身高度恒定，insets 只能加高它上方那条占位视图，
+     * 内容区永远是完整的一条导航栏 —— 与系统栏高度无关。
      *
      * 输入法部分（v7.1）：targetSdk 35 + enableEdgeToEdge() 之后，窗口不再为键盘让位
      * （adjustResize 不再自动生效），必须自己把内容顶到键盘之上，否则聚焦的编辑区会被键盘永久挡住。
@@ -363,7 +372,7 @@ class MainActivity : AppCompatActivity() {
             )
             // API 30 以下 ime() 由 systemWindowInsets 推导（含导航栏高度），取 max 避免重复叠加
             val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            binding.toolbar.updatePadding(top = bars.top)
+            applyStatusBarStrip(bars.top)
             view.updatePadding(
                 left = bars.left,
                 right = bars.right,
@@ -372,6 +381,20 @@ class MainActivity : AppCompatActivity() {
             keepEditorFocusedWhileImeVisible(insets)
             WindowInsetsCompat.CONSUMED
         }
+    }
+
+    /**
+     * 把「顶部系统栏那一条」的高度交给占位视图（颜色与导航栏相同，视觉上连成一条）。
+     *
+     * 幂等：insets 会在键盘弹出/收起、旋转、分屏等时机反复分发，高度没变就不动
+     * LayoutParams —— 否则每次回调都会触发一次布局，白白浪费一帧。
+     */
+    private fun applyStatusBarStrip(heightPx: Int) {
+        val strip = binding.statusBarSpacer
+        val params = strip.layoutParams
+        if (params.height == heightPx) return
+        params.height = heightPx
+        strip.layoutParams = params
     }
 
     /**
