@@ -98,8 +98,18 @@ SHOT_DIR="${SHOT_DIR:-topbar-screenshots}"
 API_LEVEL="$(adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
 mkdir -p "$SHOT_DIR"
 
-echo "===== 取回测试自己拍的截图（应用外部私有目录）====="
-adb pull /sdcard/Android/data/moe.hellowidget/files/ "$SHOT_DIR/" 2>&1 | tail -3 || true
+echo "===== 取回测试自己拍的截图（测试已复制到 /sdcard/Download/hellowidget-shots）====="
+adb pull /sdcard/Download/hellowidget-shots/ "$SHOT_DIR/" 2>&1 | tail -3 || true
+
+# connectedAndroidTest 结束后 AGP 会把应用卸载掉（实测 `monkey` 报 No activities found），
+# 因此想要「脚本自己拉起应用截图」就必须先重新安装 debug 包。
+DEBUG_APK=app/build/outputs/apk/debug/app-debug.apk
+if [ -f "$DEBUG_APK" ]; then
+  echo "===== 重新安装 debug 包以便截图 ====="
+  adb install -r "$DEBUG_APK" 2>&1 | tail -2 || true
+else
+  echo "::warning::未找到 $DEBUG_APK，脚本兜底截图可能失败"
+fi
 
 # 兜底：唤醒并解锁屏幕后再拉起应用截一张
 adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true

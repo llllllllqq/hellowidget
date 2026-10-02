@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -248,11 +249,14 @@ class MainActivityEntryInstrumentedTest {
     private class FocusTimeline(val editorFocused: Boolean, val description: String)
 
     /**
-     * 把当前屏幕存成 PNG 到应用的外部私有目录，供 CI `adb pull` 归档。
+     * 把当前屏幕存成 PNG，并复制到 `/sdcard/Download/hellowidget-shots/` 供 CI `adb pull` 归档。
+     *
+     * 为什么要复制到公共目录：`connectedAndroidTest` 跑完后 AGP 会**卸载应用并删掉应用数据目录**，
+     * 只写在应用自己目录里的截图会被一并清掉（实测 `adb pull` 报 No such file or directory）。
      *
      * 为什么由测试自己截图：模拟器上「`adb shell am start` 拉起应用再 screencap」并不可靠
-     * （keyguard、启动时序都可能让截图拍到桌面）。测试执行到这里时 MainActivity 必然在前台、
-     * 且已经完成布局，`UiAutomation#takeScreenshot` 拍到的就是用户真正看到的界面。
+     * （keyguard、启动时序、以及上面那条卸载行为都可能让截图拍到桌面）。测试执行到这里时
+     * MainActivity 必然在前台且已完成布局，`UiAutomation#takeScreenshot` 拍到的就是用户看到的界面。
      */
     private fun saveScreenshot(name: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -270,6 +274,18 @@ class MainActivityEntryInstrumentedTest {
         val file = File(dir, "${name}_api${Build.VERSION.SDK_INT}.png")
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         Log.i(tag, "已保存截图 ${file.absolutePath}（${bitmap.width}x${bitmap.height}）")
+
+        // 复制到公共目录：以 shell（adb）身份执行，应用自己被卸载后文件仍然留得住
+        val publicDir = "/sdcard/Download/hellowidget-shots"
+        try {
+            val descriptor = instrumentation.uiAutomation.executeShellCommand(
+                "mkdir -p $publicDir && cp ${file.absolutePath} $publicDir/"
+            )
+            ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+            Log.i(tag, "已复制截图到 $publicDir/${file.name}")
+        } catch (error: Throwable) {
+            Log.w(tag, "复制截图到公共目录失败（不影响测试结论）：$error")
+        }
     }
 
     /**
