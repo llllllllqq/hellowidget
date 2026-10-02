@@ -242,7 +242,8 @@ jobs:
           set +e
           d=app/build/outputs/androidTest-results/connected
           if [ -d "$d" ]; then
-            find "$d" -name '*.xml' -exec grep -H -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' {} \;
+            # AGP 把结果放在子目录里（$d/debug/TEST-*.xml），必须递归查找
+            find "$d" -name 'TEST-*.xml' -exec grep -H -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' {} \;
           fi
           exit 0
 

@@ -354,8 +354,8 @@ class MainActivity : AppCompatActivity() {
      * （`status_bar_spacer`，见 activity_main.xml），**绝不再加到导航栏自己的 padding 上**。
      *
      * v7.7 的实现把 `bars.top` 当作 Toolbar 的 paddingTop，而 Toolbar 的高度是固定的
-     * `?attr/actionBarSize`（56dp）。在顶部系统栏很高的设备上（用户手机上
-     * `systemBars() ∪ displayCutout()` 的 top ≈ 53dp），导航栏内容只剩约 3dp 可用高度：
+     * `?attr/actionBarSize`（56dp）。在顶部系统栏很高的设备上（由用户截图反推，
+     * 该机 `systemBars() ∪ displayCutout()` 的 top ≈ 53dp），导航栏内容只剩约 3dp 可用高度：
      * AppCompat 的 `Toolbar.onLayout` 在空间不足时会把标题**贴底**放置（`space = height
      * - paddingTop - paddingBottom`），于是标题被裁成底部一条几个像素高的缝
      * （用户截图里那排「字母上半部分」的小白点），4 个按钮则完全不可见。

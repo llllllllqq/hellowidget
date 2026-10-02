@@ -88,31 +88,45 @@ echo "===== 坚果云模拟桩服务器请求日志（409 兼容性实证）====
 cat "$NUTSTORE_LOG" || true
 
 # ---------- 顶部导航栏截图：肉眼可核验的产物 ----------
-# 断言能证明「图标真的被画出来了」（MainActivityEntryInstrumentedTest 里直接数白色像素），
+# 断言能证明「图标真的被画出来了」（MainActivityEntryInstrumentedTest 里直接数像素），
 # 但截图最直观：流水线每次都在两个 API 上留下真实渲染图，随产物归档。
-# 第二张开启「高刘海」RRO 模拟，把顶部系统栏 inset 抬到接近整条导航栏的高度 ——
-# 这正是 v7.7 线上事故的条件（旧实现在该条件下标题只剩一条 7px 的缝、4 个按钮全不可见）。
+#
+# 主截图来自**测试自己**（saveScreenshot：此刻 Activity 必然在前台且已布局完成）。
+# 上一版用 `adb shell am start` + screencap 拍到了桌面而不是应用（keyguard / 时序不可靠），
+# 所以这里改为从应用外部私有目录 pull，并保留一条「唤醒 + monkey 拉起」的兜底截图。
 SHOT_DIR="${SHOT_DIR:-topbar-screenshots}"
 API_LEVEL="$(adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
 mkdir -p "$SHOT_DIR"
 
-capture_topbar() {
+echo "===== 取回测试自己拍的截图（应用外部私有目录）====="
+adb pull /sdcard/Android/data/moe.hellowidget/files/ "$SHOT_DIR/" 2>&1 | tail -3 || true
+
+# 兜底：唤醒并解锁屏幕后再拉起应用截一张
+adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
+
+launch_and_capture() {
   shot_name="$1"
   adb shell am force-stop moe.hellowidget >/dev/null 2>&1 || true
-  adb shell am start -n moe.hellowidget/.MainActivity >/dev/null 2>&1 || true
-  sleep 4
+  adb shell monkey -p moe.hellowidget -c android.intent.category.LAUNCHER 1 2>&1 | tail -2 || true
+  sleep 5
+  echo "当前前台窗口："
+  adb shell dumpsys window 2>/dev/null | grep -m2 -E 'mCurrentFocus|mFocusedApp' || true
   adb exec-out screencap -p > "$SHOT_DIR/${shot_name}_api${API_LEVEL}.png" 2>/dev/null || true
   ls -l "$SHOT_DIR/${shot_name}_api${API_LEVEL}.png" 2>/dev/null || true
 }
 
-capture_topbar topbar
+launch_and_capture topbar
 
+# 「高刘海」RRO 模拟：把顶部系统栏 inset 抬到接近整条导航栏的高度 ——
+# 这正是 v7.7 线上事故的条件（旧实现在该条件下标题只剩一条 7px 的缝、4 个按钮全不可见）。
 if adb shell cmd overlay enable com.android.internal.display.cutout.emulation.tall >/dev/null 2>&1; then
   echo "===== 已启用「高刘海」模拟：顶部系统栏 inset 被抬高，用于复现 v7.7 事故条件 ====="
-  capture_topbar topbar_tall_cutout
+  launch_and_capture topbar_tall_cutout
   adb shell cmd overlay disable com.android.internal.display.cutout.emulation.tall >/dev/null 2>&1 || true
 else
   echo "::warning::高刘海模拟覆盖层不可用，跳过该截图（不影响测试结论）"
 fi
 
+ls -l "$SHOT_DIR" || true
 exit "$STATUS"

@@ -3,6 +3,7 @@ package moe.hellowidget
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -234,12 +235,42 @@ class MainActivityEntryInstrumentedTest {
                     editorLocation[1] >= toolbarLocation[1] + toolbar.height - 16
                 )
             }
+
+            // 6) 留一张真机截图给 CI 归档（最直观的证据）。此刻 MainActivity 就在前台，
+            //    由 `adb shell am start` 拉起再截图的做法在模拟器上并不可靠（keyguard / 时序），
+            //    所以截图直接由测试自己拍。
+            saveScreenshot("topbar_normal")
         }
     }
 
     // ---------- 断言辅助 ----------
 
     private class FocusTimeline(val editorFocused: Boolean, val description: String)
+
+    /**
+     * 把当前屏幕存成 PNG 到应用的外部私有目录，供 CI `adb pull` 归档。
+     *
+     * 为什么由测试自己截图：模拟器上「`adb shell am start` 拉起应用再 screencap」并不可靠
+     * （keyguard、启动时序都可能让截图拍到桌面）。测试执行到这里时 MainActivity 必然在前台、
+     * 且已经完成布局，`UiAutomation#takeScreenshot` 拍到的就是用户真正看到的界面。
+     */
+    private fun saveScreenshot(name: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val bitmap = try {
+            instrumentation.uiAutomation.takeScreenshot()
+        } catch (error: Throwable) {
+            Log.w(tag, "截图失败（不影响测试结论）：$error")
+            null
+        }
+        val dir = instrumentation.targetContext.getExternalFilesDir(null)
+        if (bitmap == null || dir == null) {
+            Log.w(tag, "截图不可用（bitmap=$bitmap, dir=$dir）")
+            return
+        }
+        val file = File(dir, "${name}_api${Build.VERSION.SDK_INT}.png")
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        Log.i(tag, "已保存截图 ${file.absolutePath}（${bitmap.width}x${bitmap.height}）")
+    }
 
     /**
      * 工具栏里 AppCompat 为 `showAsAction="always"` 创建的按钮视图。

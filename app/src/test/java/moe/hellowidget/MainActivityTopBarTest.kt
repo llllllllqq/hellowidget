@@ -1,12 +1,12 @@
 package moe.hellowidget
 
 import android.app.Application
-import android.graphics.Insets
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import androidx.appcompat.widget.Toolbar
+import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.runBlocking
@@ -107,7 +107,7 @@ class MainActivityTopBarTest {
         val strip = activity.findViewById<View>(R.id.status_bar_spacer)
         val barHeight = activity.resources.getDimensionPixelSize(R.dimen.top_bar_height)
 
-        // 用户手机上实测到的系统栏高度：几乎等于整条导航栏（53 / 56）
+        // 由用户截图反推出的系统栏高度：几乎等于整条导航栏（53 / 56）
         val hugeInset = barHeight * 53 / 56
         ViewCompat.dispatchApplyWindowInsets(
             root,
