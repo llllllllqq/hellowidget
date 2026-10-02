@@ -1,9 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <!--
+        顶部导航栏（v7.7）：外观设置 / WebDAV 同步 / 立即上传 / 撤回 四个常驻入口，
+        菜单定义在 res/menu/main_menu.xml，由 MainActivity.onCreateOptionsMenu 装载。
+        原先占据屏幕底部的两个按钮已删除（用户要求全部上移）。
+
+        android:theme 用 Dark.ActionBar 覆盖层：工具栏背景是 colorPrimary（紫色），
+        覆盖层保证标题与图标取白色，在紫色底上清晰可见。
+        状态栏高度由 MainActivity 按窗口 inset 设为本视图的 top padding，
+        因此工具栏背景会一直铺到屏幕顶端，不会在状态栏下留出一条异色窄条。
+    -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light" />
+
+    <!--
+        编辑区。这里的 android:textSize 只是布局预览与首帧的兜底值：
+        运行时由 MainActivity 按设置页里的「字体大小」重设为同一个 sp 值
+        （见 MainActivity.applyEditorAppearance）。
+    -->
     <ScrollView
         android:id="@+id/editor_scroll"
         android:layout_width="match_parent"
@@ -26,33 +50,5 @@
             android:textSize="16sp" />
 
     </ScrollView>
-
-    <!--
-        底部动作栏（两个入口）。按官方建议使用 buttonBarStyle / buttonBarButtonStyle：
-        lint 的 ButtonStyle 检查要求按钮栏内的按钮为 borderless 样式。
-    -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        style="?android:attr/buttonBarStyle">
-
-        <Button
-            android:id="@+id/btn_settings"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/settings_button"
-            style="?android:attr/buttonBarButtonStyle" />
-
-        <Button
-            android:id="@+id/btn_sync"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/sync_button"
-            style="?android:attr/buttonBarButtonStyle" />
-
-    </LinearLayout>
 
 </LinearLayout>

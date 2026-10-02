@@ -18,10 +18,19 @@ object SyncLauncher {
 
     private const val TAG = "SyncLauncher"
 
+    /**
+     * 是否具备同步条件（已启用 + 配置合法）。调用方（例如编辑页顶部导航栏的「立即上传」）
+     * 用它来区分「真的开始上传」与「什么都没发生」，从而给出明确提示。
+     * [request] 内部走的是同一个判断，避免两处逻辑漂移。
+     */
+    fun isReady(context: Context): Boolean {
+        val appContext = context.applicationContext
+        return SyncSettings.enabled(appContext) && SyncSettings.config(appContext) != null
+    }
+
     fun request(context: Context, trigger: SyncTrigger): Boolean {
         val appContext = context.applicationContext
-        if (!SyncSettings.enabled(appContext)) return false
-        if (SyncSettings.config(appContext) == null) return false
+        if (!isReady(appContext)) return false
         return try {
             ContextCompat.startForegroundService(
                 appContext,

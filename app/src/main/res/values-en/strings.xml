@@ -12,15 +12,20 @@
     <string name="widget_empty_hint">Tap to edit</string>
     <string name="widget_description">Show your text on the home screen, scrollable</string>
     <string name="widget_preview_sample">Type your text here.\nThe widget shows all of it\nas a scrollable list,\nwith no background process.</string>
-    <string name="save_success">Saved ✓</string>
+    <!-- Saving no longer shows a success toast (v7.7); failures still do -->
     <string name="save_failed">Save failed, please try again</string>
 
+    <!-- Top navigation bar (editor screen) -->
+    <string name="menu_appearance">Appearance</string>
+    <string name="menu_webdav">WebDAV sync</string>
+    <string name="menu_upload_now">Upload to cloud now</string>
+    <string name="menu_undo">Undo last edit</string>
+
     <!-- Settings -->
-    <string name="settings_button">⚙ Appearance</string>
     <string name="settings_title">Widget appearance</string>
     <string name="settings_preview">Live preview</string>
     <string name="settings_preview_sample">Sample text: font, color and background follow your settings live.\nThe second line shows the line spacing.</string>
-    <string name="settings_font_size">Font size</string>
+    <string name="settings_font_size">Font size (widget &amp; editor)</string>
     <string name="settings_font_size_value">%1$dsp</string>
     <string name="settings_text_color">Text color</string>
     <string name="settings_bg_color">Background color</string>
@@ -58,7 +63,6 @@
     <string name="color_picker_title_editor_dark_text">Custom dark-mode editor text color</string>
 
     <!-- ===== WebDAV sync (v7.2) ===== -->
-    <string name="sync_button">☁ WebDAV sync</string>
     <string name="sync_title">WebDAV sync</string>
     <string name="sync_subtitle">Uploads your latest content to your own WebDAV. Automatic sync only uploads — the cloud copy never overwrites this device.</string>
     <string name="sync_enable">Enable WebDAV sync</string>
@@ -75,7 +79,7 @@
     <string name="sync_trust_button">Trust and remember this certificate fingerprint</string>
     <string name="sync_status_section">Sync status</string>
     <string name="sync_behavior_hint">Sync runs when you close the editor and when the app starts (only if the previous attempt failed). Automatic syncs are at least 30 minutes apart so the server is not hammered; "Sync now" is not limited. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
-    <string name="sync_saved">Settings saved</string>
+    <string name="sync_upload_not_ready">WebDAV sync is off or not fully configured — open “WebDAV sync” and set it up first</string>
     <string name="sync_state_enabled">Status: enabled</string>
     <string name="sync_state_disabled">Status: disabled</string>
     <string name="sync_effective_url">Writes to: %1$s</string>

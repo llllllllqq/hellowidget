@@ -60,9 +60,9 @@ class SyncActivity : AppCompatActivity() {
 
         loadIntoFields()
 
-        binding.syncSave.setOnClickListener {
-            if (saveFromFields()) toast(getString(R.string.sync_saved))
-        }
+        // v7.7：保存设置成功不再弹「设置已保存」toast（用户要求删除全部「已保存」提示）。
+        // 保存结果依然可见：下方状态区会立刻重绘（状态 / 实际写入地址 / 上次结果）。
+        binding.syncSave.setOnClickListener { saveFromFields() }
         binding.syncNow.setOnClickListener {
             if (saveFromFields()) {
                 SyncLauncher.request(this, SyncTrigger.MANUAL)

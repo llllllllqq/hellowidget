@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    编辑页顶部导航栏的 4 个常驻入口（v7.7）。
+
+    showAsAction="always"：不放进溢出菜单，用户一眼可见、一点即达。
+    标题（android:title）同时是 TalkBack 朗读的可访问名称 —— 图标按钮必须带名字。
+    工具栏上是紫色底，因此图标统一为白色矢量图（见 res/drawable/ic_action_*.xml）。
+-->
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_appearance"
+        android:icon="@drawable/ic_action_appearance"
+        android:title="@string/menu_appearance"
+        app:showAsAction="always" />
+
+    <item
+        android:id="@+id/action_webdav"
+        android:icon="@drawable/ic_action_webdav"
+        android:title="@string/menu_webdav"
+        app:showAsAction="always" />
+
+    <item
+        android:id="@+id/action_upload"
+        android:icon="@drawable/ic_action_upload"
+        android:title="@string/menu_upload_now"
+        app:showAsAction="always" />
+
+    <item
+        android:id="@+id/action_undo"
+        android:icon="@drawable/ic_action_undo"
+        android:title="@string/menu_undo"
+        app:showAsAction="always" />
+
+</menu>

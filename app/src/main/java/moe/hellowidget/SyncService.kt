@@ -108,7 +108,9 @@ class SyncService : Service() {
 
     companion object {
         private const val TAG = "SyncService"
-        private const val EXTRA_TRIGGER = "moe.hellowidget.extra.SYNC_TRIGGER"
+
+        /** 触发来源随 Intent 传入；internal 便于仪器化/JVM 测试断言「用的是哪一种触发」 */
+        internal const val EXTRA_TRIGGER = "moe.hellowidget.extra.SYNC_TRIGGER"
 
         fun intent(context: Context, trigger: SyncTrigger): Intent =
             Intent(context, SyncService::class.java).apply {

@@ -8,10 +8,14 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.InputFilter
 import android.text.TextWatcher
+import android.util.TypedValue
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -23,6 +27,7 @@ import androidx.lifecycle.lifecycleScope
 import moe.hellowidget.databinding.ActivityMainBinding
 import moe.hellowidget.sync.SyncLauncher
 import moe.hellowidget.sync.SyncManager
+import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncTrigger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -31,6 +36,21 @@ import kotlinx.coroutines.withContext
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+
+    /**
+     * 撤回历史（v7.7）。放在 ViewModel 里 → 旋转 / 深色模式重建后依然可用，
+     * 见 [UndoHistoryViewModel] 的说明。
+     */
+    private val undoViewModel: UndoHistoryViewModel by viewModels()
+
+    private val undoHistory: UndoHistory get() = undoViewModel.history
+
+    /** 顶部导航栏里的「撤回」动作项；创建菜单后持有，用于实时切换可用状态 */
+    private var undoMenuItem: MenuItem? = null
+
+    /** 已记录的可撤回步数（0 = 内容已回到刚打开时的样子）；供单测观察撤回历史 */
+    @VisibleForTesting
+    internal val undoDepth: Int get() = undoHistory.size
 
     /** 异步加载内容是否已完成（用于判断编辑器可否编辑） */
     private var loadCompleted = false
@@ -109,6 +129,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         applySystemBarInsets(binding.root)
+        // 顶部导航栏（v7.7）：外观设置 / WebDAV 同步 / 立即上传 / 撤回 四个入口都在这里
+        setSupportActionBar(binding.toolbar)
 
         // 加载完成前禁止编辑：避免「用户已输入但磁盘旧内容尚未读入」时，
         // 把磁盘上的旧内容覆盖成用户刚敲的几个字（另一种形式的数据丢失）。
@@ -116,13 +138,18 @@ class MainActivity : AppCompatActivity() {
         binding.editor.isEnabled = false
         binding.editor.filters = arrayOf(maxLengthFilter)
 
-        // 标记用户输入（主线程串行执行，天然无竞态）
+        // 标记用户输入（主线程串行执行，天然无竞态）。
+        // afterTextChanged 在所有 watcher 的 onTextChanged 之后执行，
+        // 因此此刻撤回历史已经记下这一步，可以安全刷新「撤回」的可用状态。
         binding.editor.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 editorTouched = true
             }
-            override fun afterTextChanged(s: Editable?) {}
+
+            override fun afterTextChanged(s: Editable?) {
+                refreshUndoAction()
+            }
         })
 
         // 异步恢复上次保存的内容
@@ -132,6 +159,10 @@ class MainActivity : AppCompatActivity() {
             if (!editorTouched) {
                 binding.editor.setText(savedText)
             }
+            // 撤回历史的记录器必须在「初始内容就位」之后才挂上：
+            // 否则「读盘写入」或「系统重建恢复文本」会被当成一次用户编辑，
+            // 撤回就会一路退成空文本，而不是回到刚打开时的内容。
+            binding.editor.addTextChangedListener(undoHistory)
             // 顺序很重要：先解禁编辑（disabled 的 View 拿不到焦点），再聚焦，最后才定位光标
             binding.editor.isEnabled = true
             binding.editor.requestFocus()
@@ -148,28 +179,19 @@ class MainActivity : AppCompatActivity() {
             maybeSyncOnOpen(savedText)
         }
 
-        // 打开小组件外观设置页
-        binding.btnSettings.setOnClickListener {
-            openingSettings = true
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
-
-        // 打开 WebDAV 同步设置页
-        binding.btnSync.setOnClickListener {
-            openingSettings = true
-            startActivity(SyncActivity.intent(this))
-        }
-
         /**
-         * 返回键退出：异步原子写盘 → 写盘结果确认后发 Toast → 最后才 finish()。
-         * Activity 在写盘期间保持可见，Toast 不会因界面销毁而丢失。
+         * 返回键退出：异步原子写盘 → 写盘结果确认后收尾 → 最后才 finish()。
+         * Activity 在写盘期间保持可见，写盘不会再被界面销毁打断。
          */
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (exitingByBack) return // 防重入：保存/退出流程进行中忽略再次返回
                 exitingByBack = true
                 if (shouldPersist()) {
-                    saveContent(showToast = true, syncAfter = true) { finish() }
+                    saveContent(
+                        notifyFailure = true,
+                        syncTrigger = SyncTrigger.CLOSE_EDITOR
+                    ) { finish() }
                 } else {
                     // 尚未加载出任何内容且用户没输入过：磁盘上已有完整数据，无需保存
                     syncAfterLeave()
@@ -177,6 +199,74 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    // ------------------------------------------------------------ 顶部导航栏
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        undoMenuItem = menu.findItem(R.id.action_undo)
+        refreshUndoAction()
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+        // 打开小组件外观设置页
+        R.id.action_appearance -> {
+            openingSettings = true
+            startActivity(Intent(this, SettingsActivity::class.java))
+            true
+        }
+        // 打开 WebDAV 同步设置页
+        R.id.action_webdav -> {
+            openingSettings = true
+            startActivity(SyncActivity.intent(this))
+            true
+        }
+        // 立即上传：先落盘再以 MANUAL 触发（不受 30 分钟节流限制）
+        R.id.action_upload -> {
+            uploadToCloudNow()
+            true
+        }
+        R.id.action_undo -> {
+            undoLastEdit()
+            true
+        }
+
+        else -> super.onOptionsItemSelected(item)
+    }
+
+    /** 「撤回」的可用状态 = 还有可撤回的编辑（false 时动作项置灰；撤回次数不设上限） */
+    private fun refreshUndoAction() {
+        undoMenuItem?.isEnabled = undoHistory.canUndo
+    }
+
+    /**
+     * 撤回一步。
+     *
+     * 撤回的终点是「刚打开应用（或系统重建恢复）时的内容」：历史里的每一步都记着
+     * 那次编辑之前的文本，反向套用一遍就精确回到最初状态（见 [UndoHistory]）。
+     */
+    private fun undoLastEdit() {
+        if (!binding.editor.isEnabled) return // 内容尚未加载完，此时没有可撤回的编辑
+        val caret = undoHistory.undo(binding.editor.text) ?: return
+        binding.editor.setSelection(caret)
+        refreshUndoAction()
+    }
+
+    /**
+     * 「立即上传到云端」。
+     *
+     * 先把编辑器里的当前内容原子落盘，再用 [SyncTrigger.MANUAL] 触发同步：
+     * 同步读的是磁盘上的内容，不先落盘就会把**旧内容**推上云端（而且看起来「同步成功」）。
+     * MANUAL 不受 30 分钟节流限制 —— 这是用户明确的当下意图。
+     */
+    private fun uploadToCloudNow() {
+        if (!SyncLauncher.isReady(this)) {
+            Toast.makeText(this, R.string.sync_upload_not_ready, Toast.LENGTH_SHORT).show()
+            return
+        }
+        saveContent(notifyFailure = true, syncTrigger = SyncTrigger.MANUAL)
     }
 
     /**
@@ -191,9 +281,10 @@ class MainActivity : AppCompatActivity() {
     private fun shouldPersist(): Boolean = loadCompleted || editorTouched
 
     /**
-     * 窗口失去焦点（Home / 多任务键 / 切到其他应用 / 下拉通知栏等）即保存并弹 Toast。
-     * 比 onUserLeaveHint 更早触发，Toast 发出时应用窗口尚未退场，不会被后台 Toast 抑制。
-     * 应用内跳转（设置页）与旋转已用标志排除。
+     * 窗口失去焦点（Home / 多任务键 / 切到其他应用 / 下拉通知栏等）即保存。
+     * 比 onUserLeaveHint 更早触发，写盘与（失败时的）提示都发生在应用窗口退场之前，
+     * 不会被后台限制吞掉。应用内跳转（设置页）与旋转已用标志排除。
+     * v7.7 起保存成功不再弹 toast。
      */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -224,21 +315,25 @@ class MainActivity : AppCompatActivity() {
      */
     private fun saveOnLeave() {
         savedOnLeave = true
-        saveContent(showToast = true, syncAfter = true)
+        saveContent(notifyFailure = true, syncTrigger = SyncTrigger.CLOSE_EDITOR)
     }
 
     /**
      * 保存时机：仅在退出 / 返回 / 切后台（onStop）时执行，不做编辑自动保存。
-     * - 返回键退出：由 [OnBackPressedCallback] 处理（保存 → Toast → finish）
+     * - 返回键退出：由 [OnBackPressedCallback] 处理（保存 → 收尾 → finish）
      * - 失焦（Home/多任务键等）：已在 [onWindowFocusChanged] / [onUserLeaveHint] 处理
      * - 最近任务滑动移除：此处兜底静默保存
-     * - 应用内跳转（设置页）/ 旋转：静默保存，不弹 Toast
+     * - 应用内跳转（设置页）/ 旋转：静默保存
+     * v7.7 起保存成功不再弹 toast，只有写盘失败才提示（避免内容丢失无感知）。
      */
     override fun onStop() {
         super.onStop()
         if (!exitingByBack && !savedOnLeave && shouldPersist()) {
             val leavingApp = !openingSettings && !isChangingConfigurations
-            saveContent(showToast = leavingApp, syncAfter = leavingApp)
+            saveContent(
+                notifyFailure = leavingApp,
+                syncTrigger = if (leavingApp) SyncTrigger.CLOSE_EDITOR else null
+            )
         } else if (!exitingByBack && !savedOnLeave && !openingSettings && !isChangingConfigurations) {
             // 没有内容需要保存（例如空内容且未输入）也要走一次同步检查
             syncAfterLeave()
@@ -249,15 +344,17 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         openingSettings = false
         savedOnLeave = false
-        applyEditorColors()
+        applyEditorAppearance()
     }
 
     /**
      * 消费系统栏、刘海与输入法 insets，把内容避开状态栏/导航栏/键盘（targetSdk 35 边到边必需）。
      *
-     * 输入法部分是本版新增：targetSdk 35 + enableEdgeToEdge() 之后，窗口不再为键盘让位
-     * （adjustResize 不再自动生效），必须自己把内容顶到键盘之上，
-     * 否则「进入应用自动弹出输入法」时底部按钮会被键盘永久挡住。
+     * 顶部 inset 加在**导航栏自己**身上（而不是根布局）：这样工具栏背景会一直铺到屏幕顶端，
+     * 状态栏下面不会留出一条异色窄条，而工具栏内容（标题 + 4 个按钮）依然避开了状态栏。
+     *
+     * 输入法部分（v7.1）：targetSdk 35 + enableEdgeToEdge() 之后，窗口不再为键盘让位
+     * （adjustResize 不再自动生效），必须自己把内容顶到键盘之上，否则聚焦的编辑区会被键盘永久挡住。
      */
     private fun applySystemBarInsets(root: View) {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
@@ -266,9 +363,9 @@ class MainActivity : AppCompatActivity() {
             )
             // API 30 以下 ime() 由 systemWindowInsets 推导（含导航栏高度），取 max 避免重复叠加
             val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            binding.toolbar.updatePadding(top = bars.top)
             view.updatePadding(
                 left = bars.left,
-                top = bars.top,
                 right = bars.right,
                 bottom = maxOf(bars.bottom, imeBottom)
             )
@@ -283,7 +380,7 @@ class MainActivity : AppCompatActivity() {
      * 实测（CI 的 API 34 模拟器，见 V7.1_RELEASE_REPORT.md）：输入法首帧可见时，焦点偶尔会从
      * 编辑器上脱落 —— Activity 仍有窗口焦点，但没有任何 View 持有焦点，此时光标不闪烁、
      * 按键无处可去，而这恰好发生在「自动弹出输入法」这条新路径上。
-     * 本应用只有一个可输入控件（另一个控件是触摸模式下不可聚焦的按钮），
+     * 编辑区是唯一的可输入控件（顶部导航栏的按钮在触摸模式下不可聚焦），
      * 因此这里幂等地把焦点拉回编辑器，让「打开即输入」在任何时序下都成立。
      */
     private fun keepEditorFocusedWhileImeVisible(insets: WindowInsetsCompat) {
@@ -318,14 +415,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 按当前系统浅色/深色模式应用用户自定义的编辑器背景色与文字色。
+     * 按当前系统浅色/深色模式应用用户自定义的编辑器背景色与文字色，
+     * 并把编辑区字号同步成设置页里的「字体大小」（v7.7：与桌面小组件共用一个值）。
      * 每次回到前台（含从设置页返回、深色模式重建后）都会重新应用。
      */
-    private fun applyEditorColors() {
+    private fun applyEditorAppearance() {
         val night = isNightMode()
         val bg = EditorSettings.bg(this, night)
         val text = EditorSettings.textColor(this, night)
         binding.editor.setTextColor(text)
+        // 字号跟随「小组件字体大小」：设置页改一次，小组件与编辑区同时生效。
+        // 用 sp，跟随系统字体缩放设置（与布局里的 textSize 单位一致）。
+        binding.editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, WidgetSettings.fontSp(this))
         // 「无背景」（透明）= 跟随系统主题背景（浅色=白，深色=黑）
         binding.editorScroll.setBackgroundColor(if (bg == Color.TRANSPARENT) Color.TRANSPARENT else bg)
         // 提示文字用文字色半透明，保证任意配色下都清晰可见
@@ -353,15 +454,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 深色模式切换时的自动保存流程（静默保存，不弹 Toast）：
-     * 保存完成后重建 Activity 应用新主题。
+     * 深色模式切换时的自动保存流程（静默保存：
+     * 只有写盘失败才提示，成功不弹 toast）：保存完成后重建 Activity 应用新主题。
      */
     private fun handleNightModeSwitch() {
         if (nightSwitchSaving) return
         if (shouldPersist()) {
             nightSwitchSaving = true
             savedOnLeave = true // 重建过程中的 onStop 不再重复保存
-            saveContent(showToast = false) {
+            saveContent(notifyFailure = false) {
                 nightSwitchSaving = false
                 if (!isFinishing && !isDestroyed) {
                     recreate()
@@ -376,13 +477,20 @@ class MainActivity : AppCompatActivity() {
      * 原子写入保存：
      * 1. 运行在独立于 Activity 生命周期的应用级作用域，Activity 销毁也不影响写盘
      * 2. updateData 挂起直到内容真正写盘（fsync + 原子重命名）成功后返回
-     * 3. 写盘结果确认后，才刷新桌面小组件、发送 Toast
+     * 3. 写盘结果确认后，才刷新桌面小组件、按需提示失败、按需触发同步
      * 4. 失败时清除 savedOnLeave，让后续 onStop 有机会重试（旧实现失败后不再重试）
      *
-     * @param syncAfter v7.2：写盘成功后触发一次 WebDAV 同步（只在「离开编辑」的场景为 true；
-     *   应用内跳设置页、旋转、深色模式重建都不会触发）
+     * @param notifyFailure 写盘**失败**时是否提示。v7.7 起保存成功不再弹「已保存」toast
+     *   （用户要求删除全部保存成功提示），失败仍然提示 —— 那是可能丢内容的信号。
+     * @param syncTrigger 写盘成功后要触发的一次 WebDAV 同步，null = 不触发。
+     *   CLOSE_EDITOR 表示「离开编辑」这类自动触发；MANUAL 表示用户在顶部导航栏
+     *   点了「立即上传」（不受 30 分钟节流限制）。应用内跳设置页、旋转、深色模式重建都不触发。
      */
-    private fun saveContent(showToast: Boolean, syncAfter: Boolean = false, onDone: () -> Unit = {}) {
+    private fun saveContent(
+        notifyFailure: Boolean,
+        syncTrigger: SyncTrigger? = null,
+        onDone: () -> Unit = {}
+    ) {
         val text = binding.editor.text.toString()
         val appContext = applicationContext
         ContentStore.saveScope.launch {
@@ -396,16 +504,12 @@ class MainActivity : AppCompatActivity() {
                 TextWidgetProvider.updateWidgets(appContext)
 
                 // 只在写盘成功后才上传：否则会把磁盘上的旧内容推到云端
-                if (ok && syncAfter) {
-                    SyncLauncher.request(appContext, SyncTrigger.CLOSE_EDITOR)
+                if (ok && syncTrigger != null) {
+                    SyncLauncher.request(appContext, syncTrigger)
                 }
 
-                if (showToast) {
-                    Toast.makeText(
-                        appContext,
-                        if (ok) R.string.save_success else R.string.save_failed,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                if (notifyFailure && !ok) {
+                    Toast.makeText(appContext, R.string.save_failed, Toast.LENGTH_SHORT).show()
                 }
                 onDone()
             }

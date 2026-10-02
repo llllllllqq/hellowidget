@@ -8,15 +8,20 @@
     <string name="widget_empty_hint">点此编辑</string>
     <string name="widget_description">在桌面显示你的文本，可上下滚动阅读</string>
     <string name="widget_preview_sample">在这里输入内容，\n桌面小组件将以列表形式\n展示全部文字，\n支持上下滑动阅读，\n无需后台进程常驻。</string>
-    <string name="save_success">已保存 ✓</string>
+    <!-- 保存成功不再弹 toast（v7.7 按用户要求删除全部「已保存」提示）；失败仍然提示 -->
     <string name="save_failed">保存失败，请重试</string>
 
+    <!-- 顶部导航栏（编辑页） -->
+    <string name="menu_appearance">外观设置</string>
+    <string name="menu_webdav">WebDAV 同步</string>
+    <string name="menu_upload_now">立即上传到云端</string>
+    <string name="menu_undo">撤回上一步</string>
+
     <!-- 设置页 -->
-    <string name="settings_button">⚙ 外观设置</string>
     <string name="settings_title">小组件外观设置</string>
     <string name="settings_preview">实时预览</string>
     <string name="settings_preview_sample">示例文字：字体、颜色、背景会实时跟随设置变化。\n第二行用于观察行距效果。</string>
-    <string name="settings_font_size">字体大小</string>
+    <string name="settings_font_size">字体大小（小组件与编辑器同步）</string>
     <string name="settings_font_size_value">%1$dsp</string>
     <string name="settings_text_color">字体颜色</string>
     <string name="settings_bg_color">背景颜色</string>
@@ -54,7 +59,6 @@
     <string name="color_picker_title_editor_dark_text">自定义深色模式编辑器文字颜色</string>
 
     <!-- ===== WebDAV 同步（v7.2） ===== -->
-    <string name="sync_button">☁ WebDAV 同步</string>
     <string name="sync_title">WebDAV 同步</string>
     <string name="sync_subtitle">把最新内容上传到你自己的 WebDAV。自动同步只上传，绝不用云端内容覆盖本机。</string>
     <string name="sync_enable">启用 WebDAV 同步</string>
@@ -71,7 +75,7 @@
     <string name="sync_trust_button">信任并记住此证书指纹</string>
     <string name="sync_status_section">同步状态</string>
     <string name="sync_behavior_hint">同步时机：关闭编辑器后、打开应用时（上次未成功才补）。自动同步两次之间至少间隔 30 分钟，避免被服务器限流；「立即同步」不受限制。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
-    <string name="sync_saved">设置已保存</string>
+    <string name="sync_upload_not_ready">未启用或未完整配置 WebDAV 同步，请先打开「WebDAV 同步」设置</string>
     <string name="sync_state_enabled">状态：已启用</string>
     <string name="sync_state_disabled">状态：未启用</string>
     <string name="sync_effective_url">云端写入：%1$s</string>

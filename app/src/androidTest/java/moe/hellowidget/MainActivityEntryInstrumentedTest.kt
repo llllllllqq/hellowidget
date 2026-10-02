@@ -5,6 +5,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.widget.EditText
+import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
@@ -20,7 +21,7 @@ import org.junit.runner.RunWith
 import java.io.File
 
 /**
- * v7.1 新功能的**真机级**验证（CI 里跑在 Android 模拟器上）。
+ * v7.1 新功能的**真机级**验证（CI 里跑在 Android 模拟器上），v7.7 起同时覆盖顶部导航栏。
  *
  * 为什么需要这一层：JVM/Robolectric 里没有真实输入法，「输入法到底有没有弹出来」
  * 只能在真实 Android 运行环境里观察到。这里验证：
@@ -30,7 +31,9 @@ import java.io.File
  *     —— 这才是「打开即输入」真正可用的证据；
  *  4. 输入法弹出后 Activity 仍持有窗口焦点，且**没有触发失焦保存**
  *     （AOSP 中 IME 窗口带 FLAG_NOT_FOCUSABLE，不会夺走 Activity 的窗口焦点）；
- *  5. 底部按钮没有被键盘挡住（targetSdk 35 边到边下必须自行消费 ime insets）。
+ *  5. **顶部导航栏真的装载了 4 个入口**（外观设置 / WebDAV 同步 / 立即上传 / 撤回），
+ *     且其内容没有被状态栏遮挡；
+ *  6. 编辑区没有被键盘遮住（targetSdk 35 边到边下必须自行消费 ime insets）。
  *
  * 关于「最终」：实测输入法首帧可见时焦点可能短暂不在编辑器上，
  * 因此第 3 条允许过渡重试（并把焦点时间线写进失败信息与 logcat，便于定位）。
@@ -89,7 +92,64 @@ class MainActivityEntryInstrumentedTest {
                 contentFileLastModified()
             )
 
-            assertBottomButtonNotCoveredByIme(scenario)
+            assertEditorNotCoveredByIme(scenario)
+        }
+    }
+
+    /**
+     * v7.7 顶部导航栏：真机上 `toolbar.menu` 必须真的装载了 4 个入口
+     * （Robolectric 只能验证我们调用了 onCreateOptionsMenu，无法证明框架把菜单装上了工具栏），
+     * 且导航栏内容不被状态栏遮挡。
+     */
+    @Test
+    fun topBar_holdsTheFourEntries_andItsContentIsNotCoveredByTheStatusBar() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            // 动作菜单在首次布局时装载，给它一点时间（不能在 onActivity 里 sleep：那是主线程）
+            var menuSize = 0
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (SystemClock.uptimeMillis() < deadline && menuSize < 4) {
+                scenario.onActivity { activity ->
+                    menuSize = activity.findViewById<Toolbar>(R.id.toolbar).menu.size()
+                }
+                if (menuSize < 4) SystemClock.sleep(50)
+            }
+            assertEquals(
+                "顶部导航栏必须装载 4 个入口（外观设置 / WebDAV 同步 / 立即上传 / 撤回）",
+                4,
+                menuSize
+            )
+
+            scenario.onActivity { activity ->
+                val toolbar = activity.findViewById<Toolbar>(R.id.toolbar)
+                for (id in intArrayOf(
+                    R.id.action_appearance,
+                    R.id.action_webdav,
+                    R.id.action_upload,
+                    R.id.action_undo
+                )) {
+                    assertNotNull("顶部导航栏缺少入口 id=$id", toolbar.menu.findItem(id))
+                }
+
+                val insets = ViewCompat.getRootWindowInsets(toolbar)
+                assertNotNull("必须能读到窗口 insets", insets)
+                val statusTop = insets!!.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                assertTrue("状态栏 inset 必须大于 0", statusTop > 0)
+                assertTrue(
+                    "导航栏内容不能被状态栏遮挡：paddingTop=${toolbar.paddingTop}，状态栏高度=$statusTop",
+                    toolbar.paddingTop >= statusTop
+                )
+
+                // 编辑区必须从导航栏下方开始，不能压在导航栏上
+                val toolbarLocation = IntArray(2)
+                toolbar.getLocationOnScreen(toolbarLocation)
+                val editorLocation = IntArray(2)
+                activity.findViewById<View>(R.id.editor_scroll).getLocationOnScreen(editorLocation)
+                assertTrue(
+                    "编辑区必须从顶部导航栏下方开始：编辑区顶部=${editorLocation[1]}，" +
+                        "导航栏底部=${toolbarLocation[1] + toolbar.height}",
+                    editorLocation[1] >= toolbarLocation[1] + toolbar.height - 16
+                )
+            }
         }
     }
 
@@ -191,23 +251,28 @@ class MainActivityEntryInstrumentedTest {
         contentFileName
     ).lastModified()
 
-    private fun assertBottomButtonNotCoveredByIme(scenario: ActivityScenario<MainActivity>) {
+    /**
+     * 输入法弹出时**编辑区**不能被键盘遮住：targetSdk 35 边到边之后窗口不再为键盘让位，
+     * 只有自行消费 ime insets 才能保证聚焦/可见的内容留在键盘之上（v7.1 起就存在的约束，
+     * v7.7 把底部按钮移走后改为对编辑区本身断言）。
+     */
+    private fun assertEditorNotCoveredByIme(scenario: ActivityScenario<MainActivity>) {
         scenario.onActivity { activity ->
             val root = activity.findViewById<View>(android.R.id.content)
-            val button = activity.findViewById<View>(R.id.btn_settings)
+            val editor = activity.findViewById<View>(R.id.editor_scroll)
             val insets = ViewCompat.getRootWindowInsets(root)
             assertNotNull("必须能读到窗口 insets", insets)
 
             val imeBottom = insets!!.getInsets(WindowInsetsCompat.Type.ime()).bottom
             assertTrue("输入法可见时其 inset 高度必须大于 0", imeBottom > 0)
 
-            val buttonLocation = IntArray(2)
-            button.getLocationOnScreen(buttonLocation)
-            val buttonBottom = buttonLocation[1] + button.height
+            val editorLocation = IntArray(2)
+            editor.getLocationOnScreen(editorLocation)
+            val editorBottom = editorLocation[1] + editor.height
             val imeTop = activity.resources.displayMetrics.heightPixels - imeBottom
             assertTrue(
-                "底部按钮不能被输入法遮挡：按钮底部=$buttonBottom，键盘顶部=$imeTop",
-                buttonBottom <= imeTop + 16 // 16px 容差，避免亚像素/取整差异
+                "编辑区不能被输入法遮挡：编辑区底部=$editorBottom，键盘顶部=$imeTop",
+                editorBottom <= imeTop + 16 // 16px 容差，避免亚像素/取整差异
             )
         }
     }
