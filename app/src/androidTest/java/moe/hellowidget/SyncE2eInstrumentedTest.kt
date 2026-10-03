@@ -212,7 +212,7 @@ class SyncE2eInstrumentedTest {
         val first = uploadedName()
         val countAfterFirst = requestCount()
 
-        // 内容又变了，但距上次同步不足 30 分钟：自动触发必须被跳过，且**不发任何请求**
+        // 内容又变了，但距上次同步不足 1 分钟：自动触发必须被跳过，且**不发任何请求**
         assertTrue(runBlocking { ContentStore.write("v2") })
         val throttled = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
         assertEquals(SyncStatus.Skipped(SkipReason.THROTTLED), throttled)
@@ -381,7 +381,7 @@ class SyncE2eInstrumentedTest {
 
     /**
      * v7.7 需求：编辑页顶部导航栏的「立即上传」按钮 —— 真的点它一下，编辑器里的**当前**内容
-     * 必须立刻出现在云端，而且**不受 30 分钟节流限制**。
+     * 必须立刻出现在云端，而且**不受 1 分钟节流限制**。
      *
      * 为什么必须在真机上验证：
      *  - 菜单项由 AppCompat 装到 Toolbar 上，只有真实 AppCompat 环境才拿得到它；
@@ -404,7 +404,7 @@ class SyncE2eInstrumentedTest {
                 activity.findViewById<EditText>(R.id.editor).setText(typed)
             }
 
-            // 打开同步，并把 30 分钟闸门置为「刚刚尝试过」：自动触发一定会被跳过
+            // 打开同步，并把 1 分钟闸门置为「刚刚尝试过」：自动触发一定会被跳过
             SyncSettings.setEnabled(context, true)
             SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
 
@@ -439,7 +439,7 @@ class SyncE2eInstrumentedTest {
 
             val name = uploadedName()
             assertEquals(
-                "云端文件必须就是编辑器里的当前内容（证明先落盘，且这次同步绕过了 30 分钟节流）",
+                "云端文件必须就是编辑器里的当前内容（证明先落盘，且这次同步绕过了 1 分钟节流）",
                 typed,
                 cloud(name)
             )

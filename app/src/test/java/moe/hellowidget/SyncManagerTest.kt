@@ -270,7 +270,7 @@ class SyncManagerTest {
 
         val status = sync(SyncTrigger.MANUAL)
 
-        assertTrue("手动同步不受 30 分钟限制，实际：$status", status is SyncStatus.Success)
+        assertTrue("手动同步不受 1 分钟限制，实际：$status", status is SyncStatus.Success)
         assertEquals(1, lastClient!!.puts.size)
     }
 

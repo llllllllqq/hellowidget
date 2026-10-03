@@ -28,7 +28,7 @@ sealed interface SyncStatus {
 enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED, THROTTLED }
 
 /**
- * 同步编排：闸门（30 分钟节流）→ 「本地变了没有」→ 强制覆盖上传 → 记录状态。
+ * 同步编排：闸门（1 分钟节流）→ 「本地变了没有」→ 强制覆盖上传 → 记录状态。
  *
  * ## v7.5 的单向语义
  * 这里**从不读取云端**：不 HEAD、不 PROPFIND、不 GET，因此也没有冲突、没有合并、

@@ -71,10 +71,10 @@
     <string name="sync_password_label">口令</string>
     <string name="sync_password_hint">建议在 WebDAV 侧生成「应用专用密码」，便于随时单独吊销。口令只存在应用私有目录，且已被排除在系统备份与换机迁移之外。</string>
     <string name="sync_save">保存设置</string>
-    <string name="sync_now">立即同步（不受 30 分钟限制）</string>
+    <string name="sync_now">立即同步（不受 1 分钟限制）</string>
     <string name="sync_trust_button">信任并记住此证书指纹</string>
     <string name="sync_status_section">同步状态</string>
-    <string name="sync_behavior_hint">同步时机：关闭编辑器后、打开应用时（上次未成功才补）。自动同步两次之间至少间隔 30 分钟，避免被服务器限流；「立即同步」不受限制。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
+    <string name="sync_behavior_hint">同步时机：关闭编辑器后、打开应用时（上次未成功才补）。自动同步两次之间至少间隔 1 分钟，避免被服务器限流；「立即同步」不受限制。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
     <string name="sync_upload_not_ready">未启用或未完整配置 WebDAV 同步，请先打开「WebDAV 同步」设置</string>
     <string name="sync_state_enabled">状态：已启用</string>
     <string name="sync_state_disabled">状态：未启用</string>
@@ -87,7 +87,7 @@
     <string name="sync_status_running">正在同步…</string>
     <string name="sync_skip_disabled">未启用同步，本次跳过</string>
     <string name="sync_skip_not_configured">设置不完整，本次跳过</string>
-    <string name="sync_skip_throttled">距上次同步不足 30 分钟，本次跳过（改动会在下次允许时机或点击「立即同步」时上传）</string>
+    <string name="sync_skip_throttled">距上次同步不足 1 分钟，本次跳过（改动会在下次允许时机或点击「立即同步」时上传）</string>
     <string name="sync_time_never">从未</string>
     <string name="sync_cleartext_warning">⚠ 当前使用明文 http：口令与笔记内容会以未加密方式经过网络，同一网络中的他人可能读取。条件允许时请改用 https（自建证书可在下方信任指纹）。</string>
     <string name="sync_tls_pending">服务器证书指纹（尚未信任）：%1$s</string>

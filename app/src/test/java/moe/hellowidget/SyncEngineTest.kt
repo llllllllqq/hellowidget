@@ -106,7 +106,7 @@ class SyncEngineTest {
     fun gate_autoTriggerWithinIntervalIsThrottled() {
         assertEquals(
             GateResult.SKIP_THROTTLED,
-            SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now - 60_000)
+            SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now - SyncEngine.MIN_SYNC_INTERVAL_MS + 1)
         )
         assertEquals(
             GateResult.SKIP_THROTTLED,
@@ -128,6 +128,12 @@ class SyncEngineTest {
             GateResult.RUN,
             SyncEngine.gate(SyncTrigger.APP_OPEN, now, lastAttemptAt = now - 5_000, intervalMs = 5_000)
         )
+    }
+
+    /** v7.7.2 需求：自动同步的节流间隔是 **1 分钟**（v7.7.1 及以前是 30 分钟） */
+    @Test
+    fun throttleInterval_isOneMinute() {
+        assertEquals("自动同步节流间隔必须正好是 1 分钟", 60_000L, SyncEngine.MIN_SYNC_INTERVAL_MS)
     }
 
     @Test

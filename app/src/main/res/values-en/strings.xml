@@ -75,10 +75,10 @@
     <string name="sync_password_label">Password</string>
     <string name="sync_password_hint">An app-specific password is recommended so it can be revoked on its own. It is stored in the app-private directory and is excluded from cloud backup and device transfer.</string>
     <string name="sync_save">Save settings</string>
-    <string name="sync_now">Sync now (ignores the 30-minute limit)</string>
+    <string name="sync_now">Sync now (ignores the 1-minute limit)</string>
     <string name="sync_trust_button">Trust and remember this certificate fingerprint</string>
     <string name="sync_status_section">Sync status</string>
-    <string name="sync_behavior_hint">Sync runs when you close the editor and when the app starts (only if the previous attempt failed). Automatic syncs are at least 30 minutes apart so the server is not hammered; "Sync now" is not limited. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
+    <string name="sync_behavior_hint">Sync runs when you close the editor and when the app starts (only if the previous attempt failed). Automatic syncs are at least 1 minute apart so the server is not hammered; "Sync now" is not limited. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
     <string name="sync_upload_not_ready">WebDAV sync is off or not fully configured — open “WebDAV sync” and set it up first</string>
     <string name="sync_state_enabled">Status: enabled</string>
     <string name="sync_state_disabled">Status: disabled</string>
@@ -91,7 +91,7 @@
     <string name="sync_status_running">Syncing…</string>
     <string name="sync_skip_disabled">Sync is disabled — skipped</string>
     <string name="sync_skip_not_configured">Settings are incomplete — skipped</string>
-    <string name="sync_skip_throttled">Less than 30 minutes since the last sync — skipped (changes go up at the next allowed moment or via "Sync now")</string>
+    <string name="sync_skip_throttled">Less than 1 minute since the last sync — skipped (changes go up at the next allowed moment or via "Sync now")</string>
     <string name="sync_time_never">never</string>
     <string name="sync_cleartext_warning">⚠ Plain http is in use: your password and notes travel unencrypted and can be read by others on the same network. Use https when possible (self-signed certificates can be pinned below).</string>
     <string name="sync_tls_pending">Server certificate fingerprint (not trusted yet): %1$s</string>

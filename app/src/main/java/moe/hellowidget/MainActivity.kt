@@ -223,7 +223,7 @@ class MainActivity : AppCompatActivity() {
             startActivity(SyncActivity.intent(this))
             true
         }
-        // 立即上传：先落盘再以 MANUAL 触发（不受 30 分钟节流限制）
+        // 立即上传：先落盘再以 MANUAL 触发（不受 1 分钟节流限制）
         R.id.action_upload -> {
             uploadToCloudNow()
             true
@@ -259,7 +259,7 @@ class MainActivity : AppCompatActivity() {
      *
      * 先把编辑器里的当前内容原子落盘，再用 [SyncTrigger.MANUAL] 触发同步：
      * 同步读的是磁盘上的内容，不先落盘就会把**旧内容**推上云端（而且看起来「同步成功」）。
-     * MANUAL 不受 30 分钟节流限制 —— 这是用户明确的当下意图。
+     * MANUAL 不受 1 分钟节流限制 —— 这是用户明确的当下意图。
      */
     private fun uploadToCloudNow() {
         if (!SyncLauncher.isReady(this)) {
@@ -507,7 +507,7 @@ class MainActivity : AppCompatActivity() {
      *   （用户要求删除全部保存成功提示），失败仍然提示 —— 那是可能丢内容的信号。
      * @param syncTrigger 写盘成功后要触发的一次 WebDAV 同步，null = 不触发。
      *   CLOSE_EDITOR 表示「离开编辑」这类自动触发；MANUAL 表示用户在顶部导航栏
-     *   点了「立即上传」（不受 30 分钟节流限制）。应用内跳设置页、旋转、深色模式重建都不触发。
+     *   点了「立即上传」（不受 1 分钟节流限制）。应用内跳设置页、旋转、深色模式重建都不触发。
      */
     private fun saveContent(
         notifyFailure: Boolean,
@@ -546,7 +546,7 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 打开应用时补一次同步：上次没成功、或本机还有没上传的改动。
-     * 幂等、异步、不阻塞输入（30 分钟节流在 SyncManager 里），失败只是记状态 + 发通知。
+     * 幂等、异步、不阻塞输入（1 分钟节流在 SyncManager 里），失败只是记状态 + 发通知。
      */
     private fun maybeSyncOnOpen(localText: String) {
         if (!SyncManager.needsSyncOnOpen(this, localText)) return

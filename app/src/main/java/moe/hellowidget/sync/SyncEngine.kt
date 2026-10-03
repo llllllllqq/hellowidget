@@ -2,7 +2,7 @@ package moe.hellowidget.sync
 
 import java.security.MessageDigest
 
-/** 同步触发来源（只有手动按钮不受 30 分钟节流限制） */
+/** 同步触发来源（只有手动按钮不受 1 分钟节流限制） */
 enum class SyncTrigger { CLOSE_EDITOR, APP_OPEN, MANUAL }
 
 /** 触发闸门的结果 */
@@ -23,8 +23,8 @@ enum class GateResult { RUN, SKIP_THROTTLED }
  */
 object SyncEngine {
 
-    /** 自动触发之间的最低间隔：30 分钟（防止高频访问被 WebDAV 服务器限流） */
-    const val MIN_SYNC_INTERVAL_MS = 30 * 60 * 1000L
+    /** 自动触发之间的最低间隔：1 分钟（防止高频访问被 WebDAV 服务器限流） */
+    const val MIN_SYNC_INTERVAL_MS = 60 * 1000L
 
     const val RESULT_NEVER = "never"
     const val RESULT_SUCCESS = "success"
@@ -53,7 +53,7 @@ object SyncEngine {
     /**
      * 节流闸门。
      *
-     * **所有自动触发**（关闭编辑器 / 打开应用）都受 30 分钟最低间隔限制，
+     * **所有自动触发**（关闭编辑器 / 打开应用）都受 1 分钟最低间隔限制，
      * 手动按钮不受限（那是用户明确的当下意图）。
      * `lastAttemptAt` 用的是「尝试」时间而不是「成功」时间，避免失败后立刻重试形成风暴。
      * 若系统时钟被回拨（delta < 0），放行而不是长时间卡死。
