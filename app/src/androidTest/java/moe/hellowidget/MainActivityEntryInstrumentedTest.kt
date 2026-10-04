@@ -332,6 +332,8 @@ class MainActivityEntryInstrumentedTest {
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             awaitEditorEnabled(scenario)
+            // 先给检测留足时间（检测是异步的）：否则「橙点还没画出来」会被误判成「橙点不亮」
+            SystemClock.sleep(1500)
             val pixels = awaitUploadBadge(scenario, expectedOrange = false)
 
             assertEquals("没有待上传改动时不得出现任何橙色像素", 0, pixels.orange)
