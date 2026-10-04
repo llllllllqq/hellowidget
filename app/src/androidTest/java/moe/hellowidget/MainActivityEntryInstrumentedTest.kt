@@ -304,6 +304,12 @@ class MainActivityEntryInstrumentedTest {
                 0L,
                 SyncSettings.lastAttemptAt(context)
             )
+            // 实测数字写进 stdout：会被 AGP 收进 TEST-*.xml，随 CI 的 instrumented-reports 归档
+            println(
+                "[v7.8 橙点实证] 上传按钮区域：橙色像素=${pixels.orange}，" +
+                    "右上1/4=${pixels.orangeTopRight}，下半=${pixels.orangeBottomHalf}，" +
+                    "白色图标亮像素=${pixels.white}"
+            )
             saveScreenshot("upload_badge_on")
         }
     }
@@ -330,6 +336,10 @@ class MainActivityEntryInstrumentedTest {
 
             assertEquals("没有待上传改动时不得出现任何橙色像素", 0, pixels.orange)
             assertTrue("上传图标本身必须照常画出来（亮像素=${pixels.white}）", pixels.white >= 30)
+            println(
+                "[v7.8 无橙点实证] 上传按钮区域：橙色像素=${pixels.orange}，" +
+                    "白色图标亮像素=${pixels.white}"
+            )
         }
     }
 
