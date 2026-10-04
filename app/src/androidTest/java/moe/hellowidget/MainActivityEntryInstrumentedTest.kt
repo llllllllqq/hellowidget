@@ -283,10 +283,22 @@ class MainActivityEntryInstrumentedTest {
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             awaitEditorEnabled(scenario)
-            val (orange, white) = awaitUploadBadge(scenario, expectedOrange = true)
+            val pixels = awaitUploadBadge(scenario, expectedOrange = true)
 
-            assertTrue("橙点必须真的被画出来（橙色像素=$orange）", orange >= 10)
-            assertTrue("橙点是叠加而非替换：原白色上传图标必须仍在（亮像素=$white）", white >= 30)
+            assertTrue("橙点必须真的被画出来（橙色像素=${pixels.orange}）", pixels.orange >= 10)
+            assertTrue(
+                "橙点必须落在图标**右上角**（右上 1/4 区域橙色像素=${pixels.orangeTopRight}）",
+                pixels.orangeTopRight >= 10
+            )
+            assertEquals(
+                "橙点不得跑到按钮下半部分（下半橙色像素=${pixels.orangeBottomHalf}）",
+                0,
+                pixels.orangeBottomHalf
+            )
+            assertTrue(
+                "橙点是叠加而非替换：原白色上传图标必须仍在（亮像素=${pixels.white}）",
+                pixels.white >= 30
+            )
             assertEquals(
                 "打开应用只检测不上传：不得记录任何同步尝试",
                 0L,
@@ -314,10 +326,10 @@ class MainActivityEntryInstrumentedTest {
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             awaitEditorEnabled(scenario)
-            val (orange, white) = awaitUploadBadge(scenario, expectedOrange = false)
+            val pixels = awaitUploadBadge(scenario, expectedOrange = false)
 
-            assertEquals("没有待上传改动时不得出现任何橙色像素", 0, orange)
-            assertTrue("上传图标本身必须照常画出来（亮像素=$white）", white >= 30)
+            assertEquals("没有待上传改动时不得出现任何橙色像素", 0, pixels.orange)
+            assertTrue("上传图标本身必须照常画出来（亮像素=${pixels.white}）", pixels.white >= 30)
         }
     }
 
@@ -420,9 +432,18 @@ class MainActivityEntryInstrumentedTest {
         return count
     }
 
+    /** 上传按钮区域里的像素统计：橙点位置是否正确，需要分区域看 */
+    private class BadgePixels(
+        val orange: Int,
+        val white: Int,
+        /** 右上角 1/4 区域里的橙色像素（橙点应该在这里） */
+        val orangeTopRight: Int,
+        /** 下半部分的橙色像素（这里必须一个都没有） */
+        val orangeBottomHalf: Int
+    )
+
     /**
-     * 轮询「立即上传」按钮上的橙点是否已按预期出现/消失，并返回该按钮区域内的
-     * （橙色像素数, 亮像素数）。
+     * 轮询「立即上传」按钮上的橙点是否已按预期出现/消失，并返回该按钮区域的像素统计。
      *
      * 检测是异步的（IO 线程算哈希 → 回主线程换图标），因此必须轮询而不是立即断言。
      */
@@ -430,21 +451,20 @@ class MainActivityEntryInstrumentedTest {
         scenario: ActivityScenario<MainActivity>,
         expectedOrange: Boolean,
         timeoutMs: Long = 8_000
-    ): Pair<Int, Int> {
-        var result = 0 to 0
+    ): BadgePixels {
+        var result = BadgePixels(0, 0, 0, 0)
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             result = uploadItemPixels(scenario)
-            if ((result.first > 0) == expectedOrange) return result
+            if ((result.orange > 0) == expectedOrange) return result
             SystemClock.sleep(100)
         }
         return result
     }
 
-    /** 把工具栏画进 Bitmap，统计「立即上传」按钮区域里的橙色像素与亮像素 */
-    private fun uploadItemPixels(scenario: ActivityScenario<MainActivity>): Pair<Int, Int> {
-        var orange = 0
-        var painted = 0
+    /** 把工具栏画进 Bitmap，统计「立即上传」按钮区域里的橙色像素（分区）、亮像素 */
+    private fun uploadItemPixels(scenario: ActivityScenario<MainActivity>): BadgePixels {
+        var result = BadgePixels(0, 0, 0, 0)
         scenario.onActivity { activity ->
             val toolbar = activity.findViewById<Toolbar>(R.id.toolbar) ?: return@onActivity
             val items = actionItemViews(toolbar)
@@ -456,10 +476,22 @@ class MainActivityEntryInstrumentedTest {
             val toolbarLocation = IntArray(2)
             toolbar.getLocationInWindow(toolbarLocation)
             val bounds = boundsInToolbar(toolbarLocation, uploadItem)
-            orange = orangePixelsIn(bitmap, bounds)
-            painted = paintedPixelsIn(bitmap, bounds)
+            val middleX = (bounds[0] + bounds[2]) / 2
+            val middleY = (bounds[1] + bounds[3]) / 2
+            result = BadgePixels(
+                orange = orangePixelsIn(bitmap, bounds),
+                white = paintedPixelsIn(bitmap, bounds),
+                orangeTopRight = orangePixelsIn(
+                    bitmap,
+                    intArrayOf(middleX, bounds[1], bounds[2], middleY)
+                ),
+                orangeBottomHalf = orangePixelsIn(
+                    bitmap,
+                    intArrayOf(bounds[0], middleY, bounds[2], bounds[3])
+                )
+            )
         }
-        return orange to painted
+        return result
     }
 
     /**

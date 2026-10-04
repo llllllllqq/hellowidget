@@ -12,7 +12,6 @@ import android.text.Editable
 import android.text.InputFilter
 import android.text.TextWatcher
 import android.util.TypedValue
-import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -259,6 +258,13 @@ class MainActivity : AppCompatActivity() {
         item.setTitle(if (uploadPending) R.string.menu_upload_now_pending else R.string.menu_upload_now)
     }
 
+    /**
+     * 上传图标 + 可选的橙点角标。
+     *
+     * 橙点用 `LayerDrawable` 叠在原图标上（**不替换图标、不新增图标资源**），
+     * 位置用 **inset** 手工算到右上角：`setLayerGravity` 需要 API 23，而本项目 minSdk 21
+     * （CI 的 lint 会直接报 `NewApi` 错误），inset 从 API 1 就在，一条代码路径通吃 21~35。
+     */
     private fun uploadIcon(withDot: Boolean): Drawable? {
         val icon = ContextCompat.getDrawable(this, R.drawable.ic_action_upload) ?: return null
         if (!withDot) return icon
@@ -268,11 +274,14 @@ class MainActivity : AppCompatActivity() {
             shape = GradientDrawable.OVAL
             setColor(ContextCompat.getColor(this@MainActivity, R.color.upload_pending_dot))
             // 1dp 白描边：把橙点与白色的云朵图标笔画分开，紫底上轮廓也更清楚
-            setStroke((density).roundToInt().coerceAtLeast(1), Color.WHITE)
+            setStroke(density.roundToInt().coerceAtLeast(1), Color.WHITE)
             setSize(dotSize, dotSize)
         }
+        val iconWidth = icon.intrinsicWidth.takeIf { it > 0 } ?: (ICON_SIZE_DP * density).roundToInt()
+        val iconHeight = icon.intrinsicHeight.takeIf { it > 0 } ?: (ICON_SIZE_DP * density).roundToInt()
         return LayerDrawable(arrayOf(icon, dot)).apply {
-            setLayerGravity(1, Gravity.TOP or Gravity.END)
+            // 让第 2 层只占右上角 dotSize×dotSize 那一小块
+            setLayerInset(1, iconWidth - dotSize, 0, 0, iconHeight - dotSize)
         }
     }
 
@@ -679,6 +688,9 @@ class MainActivity : AppCompatActivity() {
 
         /** 「立即上传」按钮上橙点的直径（dp）——只在原图标右上角叠一个圆点，不新增图标资源 */
         private const val UPLOAD_DOT_SIZE_DP = 9f
+
+        /** 图标基准边长（dp）：拿不到图标 intrinsic 尺寸时用它兜底 */
+        private const val ICON_SIZE_DP = 24f
 
         val Context.prefs
             get() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
