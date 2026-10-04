@@ -25,3 +25,19 @@ internal fun awaitEditorEnabled(activity: MainActivity, timeoutMs: Long = 10_000
     }
     fail("等待异步加载完成超时（编辑器始终处于禁用状态）")
 }
+
+/**
+ * 等待「待上传」橙点的状态稳定到 [expected]。
+ *
+ * v7.8 的检测是异步的（IO 线程算 SHA-256 → 回主线程改图标），PAUSED 模式下必须
+ * idle 主线程消息队列才会推进，因此和 [awaitEditorEnabled] 同一套「idle + sleep」写法。
+ */
+internal fun awaitUploadPending(activity: MainActivity, expected: Boolean, timeoutMs: Long = 5_000) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        shadowOf(Looper.getMainLooper()).idle()
+        if (activity.uploadPending == expected) return
+        Thread.sleep(10)
+    }
+    fail("等待「待上传」状态变为 $expected 超时（当前 ${activity.uploadPending}）")
+}

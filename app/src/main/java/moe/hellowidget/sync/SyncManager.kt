@@ -35,6 +35,12 @@ enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED, THROTTLED }
  * 没有「云端被改过」的判断。云端对本应用而言只是一个写入目的地：
  * 本机内容一变，下一次同步就整份覆盖它；本机没变，就一个请求都不发。
  *
+ * ## v7.8：自动上传只由「保存」驱动
+ * 打开应用（含旋转 / 深色模式重建）**不再**发起任何同步，只调用 [hasPendingUpload]
+ * 做一次纯检测，结果交给界面在「立即上传」按钮上显示橙点。
+ * 自动上传只发生在「保存内容」之后（返回键 / 失焦 / 切后台 / 旋转 / 深色模式等所有保存路径），
+ * 且统一受 1 分钟闸门约束；手动按钮走 [SyncTrigger.MANUAL]，不受闸门限制。
+ *
  * 线程模型：全部网络与磁盘操作跑在调用方的 IO 协程里；[mutex] 保证同一时刻只有一次同步，
  * 重复请求会排队，且自动触发会被刚更新过的 `lastAttemptAt` 直接节流掉。
  */
@@ -81,18 +87,23 @@ object SyncManager {
     }
 
     /**
-     * 打开应用时是否需要补一次同步。
-     * 判断放在这里而不是 MainActivity：编辑器只需把当前文本交进来，逻辑留在可单测的地方。
+     * v7.8：**只检测、不上传**——「上次成功上传之后，本地内容又有改动了吗？」
+     *
+     * 这是顶部导航栏「立即上传」按钮上那个橙点唯一的判定依据（见 MainActivity）：
+     *  - **零网络、零落盘、零通知**：只是读一次已持久化的 `lastUploadedHash` + 算一次 SHA-256；
+     *  - 打开应用（以及每次同步结束）时调用，**绝不因此发起任何同步**；
+     *  - 判断放在这里而不是 MainActivity：编辑器只需把当前文本交进来，逻辑留在可单测的地方。
+     *
+     * 空内容的特例：本机**从未上传过**且内容为空（刚装好应用、还没写东西）时返回 false ——
+     * 否则新用户一装好就会看到一个没有意义的橙点。删空一份已上传过的内容仍算「有改动」（true）。
      */
-    fun needsSyncOnOpen(context: Context, localText: String): Boolean {
+    fun hasPendingUpload(context: Context, localText: String): Boolean {
         if (!SyncSettings.enabled(context)) return false
         if (SyncSettings.config(context) == null) return false
+        val lastUploadedHash = SyncSettings.lastUploadedHash(context)
+        if (lastUploadedHash == null && localText.isEmpty()) return false
         val hash = SyncEngine.sha256Hex(localText.toByteArray(Charsets.UTF_8))
-        return SyncEngine.shouldSyncOnOpen(
-            lastResult = SyncSettings.lastResult(context),
-            localHash = hash,
-            lastUploadedHash = SyncSettings.lastUploadedHash(context)
-        )
+        return SyncEngine.hasLocalChanges(hash, lastUploadedHash)
     }
 
     /** 前台服务路径（进度通知由服务的 `startForeground` 负责） */
@@ -145,7 +156,6 @@ object SyncManager {
             uploaded = outcome is SyncStatus.Success && outcome.uploaded
             _status.value = outcome
             if (outcome is SyncStatus.Success) {
-                SyncNotifier.cancelFailure(context)
                 if (outcome.uploaded) SyncNotifier.showUploadSucceededToast(context)
             }
             outcome
@@ -157,7 +167,7 @@ object SyncManager {
             Log.w(TAG, "同步失败：$error ${safeDetail.take(200)}")
             if (error == WebDavError.TLS_UNTRUSTED) SyncSettings.setPendingTlsPin(context, detail)
             SyncSettings.recordFailure(context, error)
-            SyncNotifier.postFailure(context, error, safeDetail)
+            SyncNotifier.showUploadFailedToast(context, error, safeDetail)
             SyncStatus.Failed(System.currentTimeMillis(), error, safeDetail).also { _status.value = it }
         } finally {
             if (progress) {

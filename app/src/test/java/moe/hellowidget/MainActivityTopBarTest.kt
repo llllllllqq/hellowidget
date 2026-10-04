@@ -11,8 +11,10 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.runBlocking
 import moe.hellowidget.sync.SyncConfig
+import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncSettings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -202,5 +204,124 @@ class MainActivityTopBarTest {
             ShadowToast.getTextOfLatestToast()
         )
         assertEquals("未配置时不得发起任何同步尝试", 0L, SyncSettings.lastAttemptAt(app))
+    }
+
+    // ------------------------------------------------------------ v7.8：打开应用只检测不上传
+
+    private val uploadedAt = 1_735_689_600L
+
+    private fun configureSync() {
+        SyncSettings.saveConfig(
+            app,
+            SyncConfig("https://dav.example.com/dav/", "note.txt", "user", "pass")
+        )
+        SyncSettings.setEnabled(app, true)
+    }
+
+    private fun hashOf(text: String): String = SyncEngine.sha256Hex(text.toByteArray(Charsets.UTF_8))
+
+    /**
+     * v7.8 需求 1：**打开应用只检测、不上传**。
+     *
+     * 构造「磁盘内容 != 上次成功上传的内容」，然后进应用：
+     *  - 不得发起任何同步尝试（`lastAttemptAt` 必须仍是 0）——旧实现在这里走 `APP_OPEN` 上传；
+     *  - 不得启动任何同步服务；
+     *  - 但必须点亮「立即上传」按钮上的橙点。
+     */
+    @Test
+    fun openingTheApp_detectsPendingChanges_butNeverUploads() {
+        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("磁盘上的最新内容") })
+        configureSync()
+        SyncSettings.recordSuccess(app, hashOf("上一次传上去的内容"), uploadedAt)
+
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        awaitEditorEnabled(activity)
+        awaitUploadPending(activity, expected = true)
+
+        assertEquals("打开应用不得发起任何同步尝试", 0L, SyncSettings.lastAttemptAt(app))
+        assertNull("打开应用不得启动任何同步服务", shadowOf(app).nextStartedService)
+    }
+
+    /** v7.8 需求 1 续：内容与上次成功上传的一致 → 打开应用后橙点不亮 */
+    @Test
+    fun openingTheApp_showsNoBadge_whenEverythingIsAlreadyUploaded() {
+        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("已上传的内容") })
+        configureSync()
+        SyncSettings.recordSuccess(app, hashOf("已上传的内容"), uploadedAt)
+
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        awaitEditorEnabled(activity)
+        // 给异步检测足够时间跑完，确保「橙点不亮」不是因为还没算出来
+        repeat(30) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
+
+        assertFalse("没有待上传改动时橙点不得亮起", activity.uploadPending)
+    }
+
+    /** v7.8 需求 1 续：空内容 + 从未上传过（新用户）→ 不亮橙点 */
+    @Test
+    fun openingTheApp_showsNoBadge_forABrandNewEmptyNote() {
+        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("") })
+        configureSync()
+
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        awaitEditorEnabled(activity)
+        repeat(30) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
+
+        assertFalse("刚装好、还没写东西时不宜亮橙点", activity.uploadPending)
+    }
+
+    /** v7.8：一次成功上传之后橙点必须熄灭（回到前台时重算） */
+    @Test
+    fun theBadgeGoesOff_afterTheContentIsUploaded() {
+        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("待上传的内容") })
+        configureSync()
+        SyncSettings.recordSuccess(app, hashOf("上一次传上去的内容"), uploadedAt)
+
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        awaitEditorEnabled(activity)
+        awaitUploadPending(activity, expected = true)
+
+        // 模拟一次成功上传：lastUploadedHash 变成当前内容
+        SyncSettings.recordSuccess(app, hashOf("待上传的内容"), uploadedAt + 1)
+        controller.pause().resume()
+
+        awaitUploadPending(activity, expected = false)
+    }
+
+    /**
+     * v7.8 需求 2：**任何保存操作都触发自动上传** —— 包括「应用内跳设置页」这种
+     * 以前明确不上传的静默保存（旧实现传 `syncTrigger = null`）。
+     * 密集触发由 1 分钟闸门在 SyncManager 里合并（见 SyncManagerTest 的闸门用例）。
+     */
+    @Test
+    fun everySave_startsTheAutomaticUpload_includingSilentSaves() {
+        configureSync()
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        awaitEditorEnabled(activity)
+        editorOf(activity).setText("跳设置页前的内容")
+
+        // 打开设置页（openingSettings = true）→ 随后的 onStop 属于「静默保存」
+        assertTrue(activity.onOptionsItemSelected(RoboMenuItem(R.id.action_webdav)))
+        controller.pause().stop()
+        awaitContent("跳设置页前的内容")
+
+        // 写盘在 IO 线程完成，触发同步的续体在主线程 —— 交替 idle 直到服务真的被拉起
+        var started: android.content.Intent? = null
+        val deadline = System.currentTimeMillis() + 5_000
+        while (started == null && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            started = shadowOf(app).nextStartedService
+            if (started == null) Thread.sleep(20)
+        }
+        assertNotNull("保存（含应用内跳转的静默保存）必须触发自动上传", started)
+        assertEquals(SyncService::class.java.name, started!!.component?.className)
     }
 }

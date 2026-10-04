@@ -10,4 +10,11 @@
     <color name="settings_divider">#DDDDDD</color>
     <!-- 风险提示（WebDAV 同步页的明文 http 警告），浅色模式 -->
     <color name="settings_warning">#D32F2F</color>
+
+    <!--
+        v7.8「立即上传」按钮右上角橙点：小米橙 #FF6900。
+        为什么不用红色：导航栏底色是紫色（colorPrimary = purple_500），红点在紫底上偏暗、
+        不够醒目；橙色在紫底上是互补色，最跳。深浅色模式共用同一个值。
+    -->
+    <color name="upload_pending_dot">#FFFF6900</color>
 </resources>

@@ -295,7 +295,7 @@ class SyncE2eInstrumentedTest {
 
         ActivityScenario.launch(MainActivity::class.java).use {
             SyncSettings.setEnabled(context, true)
-            // 节流掉 MainActivity 自己可能触发的 APP_OPEN 同步，保证只观测这一次上传
+            // 闸门置为「刚刚尝试过」：任何自动触发都会被跳过，这样下面那次上传只可能来自显式请求
             SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
 
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -447,6 +447,41 @@ class SyncE2eInstrumentedTest {
             assertTrue(
                 "应当往新文件里写：${control("log")}",
                 control("log").contains("PUT $dirPath/$name -> 201")
+            )
+        }
+    }
+
+    // ------------------------------------------------------------ v7.8：打开应用只检测不上传
+
+    /**
+     * v7.8 需求 1：**打开应用只检测、不上传**。
+     *
+     * 构造「磁盘内容 != 上次成功上传的内容」（= 有待上传改动），然后进编辑页：
+     *  - 服务器在整段时间里**一个请求都不许收到**（连 MKCOL 都不许）—— 旧实现在这里走 `APP_OPEN`；
+     *  - 也不许写 `lastAttemptAt`（那会把接下来真正的保存上传平白节流掉）；
+     *  - 橙点必须亮起 —— 真机像素级断言在 `MainActivityEntryInstrumentedTest`。
+     */
+    @Test
+    fun openingTheAppWithPendingChanges_onlyDetects_andNeverTouchesTheServer() {
+        assertTrue(runBlocking { ContentStore.write("本地比较新的内容") })
+        SyncSettings.setEnabled(context, true)
+        SyncSettings.recordSuccess(
+            context,
+            SyncEngine.sha256Hex("上次成功上传的内容".toByteArray()),
+            1_735_689_600L
+        )
+        val countBefore = requestCount()
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            awaitEditorReady(scenario)
+            // 给任何潜在的自动同步足够的时间露头（旧实现在启动瞬间就会上传）
+            SystemClock.sleep(2000)
+
+            assertEquals("打开应用不得访问服务器", countBefore, requestCount())
+            assertEquals(
+                "打开应用不得记录同步尝试（否则会节流掉下一次保存上传）",
+                0L,
+                SyncSettings.lastAttemptAt(context)
             )
         }
     }

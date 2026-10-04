@@ -19,9 +19,13 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
+import moe.hellowidget.sync.SyncConfig
+import moe.hellowidget.sync.SyncEngine
+import moe.hellowidget.sync.SyncSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -59,6 +63,17 @@ class MainActivityEntryInstrumentedTest {
     @Before
     fun seedContent() {
         assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write(seed) })
+    }
+
+    /**
+     * v7.8：本类新增的橙点用例会打开同步；跑完必须关掉并清掉同步运行态，
+     * 免得影响同进程里其它用例（例如「弹出输入法不得触发保存」那条）。
+     */
+    @After
+    fun disableSyncAfterBadgeTests() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        SyncSettings.setEnabled(context, false)
+        SyncSettings.resetRuntimeState(context)
     }
 
     @Test
@@ -244,6 +259,68 @@ class MainActivityEntryInstrumentedTest {
         }
     }
 
+    // ---------- v7.8：「待上传」橙点 ----------
+
+    /**
+     * v7.8 需求 1（真机像素级验证）：打开应用时若「上次成功上传之后本地又有改动」，
+     * 「立即上传」按钮的图标右上角必须真的画出一个**橙色**圆点（#FF6900，小米橙），
+     * 而**不能**因此上传任何东西。
+     *
+     * 为什么必须看像素：橙点是运行时把一个 9dp 的圆点叠在原图标上合成的（不新增图标资源），
+     * 「叠加有没有生效、颜色对不对、位置在不在右上角」只有把工具栏画进 Bitmap 才能证明。
+     * 断言同时要求这个按钮的白色图标本身仍然被画出来（橙点是叠加，不是替换图标）。
+     */
+    @Test
+    fun uploadBadge_showsAnOrangeDot_whenThereAreUnuploadedChanges() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        SyncSettings.saveConfig(
+            context,
+            SyncConfig("https://dav.example.com/dav/", "note.txt", "user", "pass")
+        )
+        SyncSettings.setEnabled(context, true)
+        // 「上次成功上传的是别的内容」→ 磁盘上的 seed 就是待上传的改动
+        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("别的内容".toByteArray()), 1_735_689_600L)
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            awaitEditorEnabled(scenario)
+            val (orange, white) = awaitUploadBadge(scenario, expectedOrange = true)
+
+            assertTrue("橙点必须真的被画出来（橙色像素=$orange）", orange >= 10)
+            assertTrue("橙点是叠加而非替换：原白色上传图标必须仍在（亮像素=$white）", white >= 30)
+            assertEquals(
+                "打开应用只检测不上传：不得记录任何同步尝试",
+                0L,
+                SyncSettings.lastAttemptAt(context)
+            )
+            saveScreenshot("upload_badge_on")
+        }
+    }
+
+    /** v7.8 需求 1 续：没有待上传改动时，橙点必须完全不出现（图标照旧画出来） */
+    @Test
+    fun uploadBadge_showsNoOrangeDot_whenEverythingIsAlreadyUploaded() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        SyncSettings.saveConfig(
+            context,
+            SyncConfig("https://dav.example.com/dav/", "note.txt", "user", "pass")
+        )
+        SyncSettings.setEnabled(context, true)
+        // 「上次成功上传的就是磁盘上的这份内容」→ 没有待上传改动
+        SyncSettings.recordSuccess(
+            context,
+            SyncEngine.sha256Hex(seed.toByteArray()),
+            1_735_689_600L
+        )
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            awaitEditorEnabled(scenario)
+            val (orange, white) = awaitUploadBadge(scenario, expectedOrange = false)
+
+            assertEquals("没有待上传改动时不得出现任何橙色像素", 0, orange)
+            assertTrue("上传图标本身必须照常画出来（亮像素=$white）", white >= 30)
+        }
+    }
+
     // ---------- 断言辅助 ----------
 
     private class FocusTimeline(val editorFocused: Boolean, val description: String)
@@ -338,6 +415,69 @@ class MainActivityEntryInstrumentedTest {
                 val luminance =
                     (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
                 if (luminance >= 128) count++
+            }
+        }
+        return count
+    }
+
+    /**
+     * 轮询「立即上传」按钮上的橙点是否已按预期出现/消失，并返回该按钮区域内的
+     * （橙色像素数, 亮像素数）。
+     *
+     * 检测是异步的（IO 线程算哈希 → 回主线程换图标），因此必须轮询而不是立即断言。
+     */
+    private fun awaitUploadBadge(
+        scenario: ActivityScenario<MainActivity>,
+        expectedOrange: Boolean,
+        timeoutMs: Long = 8_000
+    ): Pair<Int, Int> {
+        var result = 0 to 0
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            result = uploadItemPixels(scenario)
+            if ((result.first > 0) == expectedOrange) return result
+            SystemClock.sleep(100)
+        }
+        return result
+    }
+
+    /** 把工具栏画进 Bitmap，统计「立即上传」按钮区域里的橙色像素与亮像素 */
+    private fun uploadItemPixels(scenario: ActivityScenario<MainActivity>): Pair<Int, Int> {
+        var orange = 0
+        var painted = 0
+        scenario.onActivity { activity ->
+            val toolbar = activity.findViewById<Toolbar>(R.id.toolbar) ?: return@onActivity
+            val items = actionItemViews(toolbar)
+            // 动作按钮按 main_menu.xml 的顺序渲染：外观设置 / WebDAV 同步 / 立即上传 / 撤回
+            if (items.size != 4) return@onActivity
+            val uploadItem = items[2]
+            val bitmap = Bitmap.createBitmap(toolbar.width, toolbar.height, Bitmap.Config.ARGB_8888)
+            toolbar.draw(Canvas(bitmap))
+            val toolbarLocation = IntArray(2)
+            toolbar.getLocationInWindow(toolbarLocation)
+            val bounds = boundsInToolbar(toolbarLocation, uploadItem)
+            orange = orangePixelsIn(bitmap, bounds)
+            painted = paintedPixelsIn(bitmap, bounds)
+        }
+        return orange to painted
+    }
+
+    /**
+     * 统计矩形内的**橙色**像素数（#FF6900 = 小米橙：红高、绿中、蓝极低）。
+     *
+     * 判定窗口同时排除另外两种颜色：白色图标/白描边（蓝分量 255）、紫底（红约 98、蓝 238）。
+     * 抗锯齿边缘像素会与白/紫混合，因此只统计足够「纯」的橙色，保证「有没有橙点」这个判断可靠。
+     */
+    private fun orangePixelsIn(bitmap: Bitmap, bounds: IntArray): Int {
+        var count = 0
+        for (y in maxOf(0, bounds[1]) until minOf(bitmap.height, bounds[3])) {
+            for (x in maxOf(0, bounds[0]) until minOf(bitmap.width, bounds[2])) {
+                val pixel = bitmap.getPixel(x, y)
+                if (Color.alpha(pixel) < 200) continue
+                val red = Color.red(pixel)
+                val green = Color.green(pixel)
+                val blue = Color.blue(pixel)
+                if (red >= 180 && green in 50..170 && blue <= 100 && red - blue >= 120) count++
             }
         }
         return count

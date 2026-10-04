@@ -4,11 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputFilter
 import android.text.TextWatcher
 import android.util.TypedValue
+import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -18,20 +22,25 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import moe.hellowidget.databinding.ActivityMainBinding
 import moe.hellowidget.sync.SyncLauncher
 import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncSettings
+import moe.hellowidget.sync.SyncStatus
 import moe.hellowidget.sync.SyncTrigger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
@@ -47,6 +56,22 @@ class MainActivity : AppCompatActivity() {
 
     /** 顶部导航栏里的「撤回」动作项；创建菜单后持有，用于实时切换可用状态 */
     private var undoMenuItem: MenuItem? = null
+
+    /** 顶部导航栏里的「立即上传」动作项；创建菜单后持有，用于切换橙点角标 */
+    private var uploadMenuItem: MenuItem? = null
+
+    /**
+     * 「立即上传」按钮上是否显示橙点（= 上次成功上传之后本地又有改动）。
+     *
+     * v7.8 语义：**只在检测点**重算（打开应用、回到前台、每次同步结束之后、保存后没能启动同步时），
+     * 不跟随每次按键。检测本身零网络、零落盘（见 [SyncManager.hasPendingUpload]）。
+     */
+    @VisibleForTesting
+    internal var uploadPending = false
+        private set
+
+    /** 检测的序号：异步算 hash 时只让最新一次的结果生效，避免旧结果覆盖新结果 */
+    private var pendingCheckSeq = 0
 
     /** 已记录的可撤回步数（0 = 内容已回到刚打开时的样子）；供单测观察撤回历史 */
     @VisibleForTesting
@@ -175,14 +200,87 @@ class MainActivity : AppCompatActivity() {
                 binding.editor.setSelection(0)
             }
             requestImeShow()
-            // 打开应用时检查上次同步是否成功（失败或还有未上传的改动就补一次）
-            maybeSyncOnOpen(savedText)
+            // v7.8：打开应用**只检测、不上传** —— 「上次成功上传后本地又有改动」就点亮橙点
+            detectPendingUpload(savedText)
         }
 
-        /**
-         * 返回键退出：异步原子写盘 → 写盘结果确认后收尾 → 最后才 finish()。
-         * Activity 在写盘期间保持可见，写盘不会再被界面销毁打断。
-         */
+        // v7.8：每次同步结束（成功 / 失败 / 被节流跳过）后重算橙点：
+        // 成功 → 熄灭；失败或被节流 → 亮起（磁盘上确实还有没传上去的内容）。
+        // SyncManager 与 SyncService 同进程，因此从服务发起的上传这里也收得到。
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                SyncManager.status.collect { status ->
+                    if (status is SyncStatus.Success ||
+                        status is SyncStatus.Failed ||
+                        status is SyncStatus.Skipped
+                    ) {
+                        detectPendingUpload(binding.editor.text.toString())
+                    }
+                }
+            }
+        }
+
+        installBackHandler()
+    }
+
+    // ------------------------------------------------------------ 「待上传」橙点
+
+    /**
+     * 重算「待上传」状态并刷新「立即上传」按钮上的橙点。
+     *
+     * 只做一次 SHA-256（≤300KB，毫秒级）且跑在 IO 线程；结果永远来自
+     * 「当前文本 vs 上次成功上传的哈希」这个纯函数，因此进程重启后自动重现，不需要额外持久化。
+     */
+    private fun detectPendingUpload(text: String) {
+        val seq = ++pendingCheckSeq
+        lifecycleScope.launch {
+            val pending = withContext(Dispatchers.IO) {
+                SyncManager.hasPendingUpload(applicationContext, text)
+            }
+            if (seq != pendingCheckSeq) return@launch // 已有更新的一次检测，丢弃本次结果
+            setUploadPending(pending)
+        }
+    }
+
+    private fun setUploadPending(pending: Boolean) {
+        if (pending == uploadPending) return
+        uploadPending = pending
+        refreshUploadBadge()
+    }
+
+    /**
+     * 刷新按钮外观：**替换的只是同一个上传图标的叠加状态**，不会换成别的图标 ——
+     * 有待上传内容时在图标右上角叠一个橙色圆点（小米橙 #FF6900，紫底上最醒目），
+     * 没有时就是原来的白云上传图标。橙点用代码合成（[Drawable] 叠加），不新增任何图标资源。
+     */
+    private fun refreshUploadBadge() {
+        val item = uploadMenuItem ?: return
+        item.setIcon(uploadIcon(uploadPending))
+        item.setTitle(if (uploadPending) R.string.menu_upload_now_pending else R.string.menu_upload_now)
+    }
+
+    private fun uploadIcon(withDot: Boolean): Drawable? {
+        val icon = ContextCompat.getDrawable(this, R.drawable.ic_action_upload) ?: return null
+        if (!withDot) return icon
+        val density = resources.displayMetrics.density
+        val dotSize = (UPLOAD_DOT_SIZE_DP * density).roundToInt()
+        val dot = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(ContextCompat.getColor(this@MainActivity, R.color.upload_pending_dot))
+            // 1dp 白描边：把橙点与白色的云朵图标笔画分开，紫底上轮廓也更清楚
+            setStroke((density).roundToInt().coerceAtLeast(1), Color.WHITE)
+            setSize(dotSize, dotSize)
+        }
+        return LayerDrawable(arrayOf(icon, dot)).apply {
+            setLayerGravity(1, Gravity.TOP or Gravity.END)
+        }
+    }
+
+    /**
+     * 返回键退出：异步原子写盘 → 写盘结果确认后收尾 → 最后才 finish()。
+     * Activity 在写盘期间保持可见，写盘不会再被界面销毁打断。
+     */
+    private fun installBackHandler() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (exitingByBack) return // 防重入：保存/退出流程进行中忽略再次返回
@@ -193,8 +291,8 @@ class MainActivity : AppCompatActivity() {
                         syncTrigger = SyncTrigger.CLOSE_EDITOR
                     ) { finish() }
                 } else {
-                    // 尚未加载出任何内容且用户没输入过：磁盘上已有完整数据，无需保存
-                    syncAfterLeave()
+                    // 尚未加载出任何内容且用户没输入过：磁盘上已有完整数据，无需保存，
+                    // 因此也**不触发上传**（v7.8：上传只跟在「保存」后面）
                     finish()
                 }
             }
@@ -206,7 +304,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         undoMenuItem = menu.findItem(R.id.action_undo)
+        uploadMenuItem = menu.findItem(R.id.action_upload)
         refreshUndoAction()
+        // 菜单可能在「待上传」状态已知之后才创建（启动检测是异步的），这里补齐橙点外观
+        refreshUploadBadge()
         return true
     }
 
@@ -320,11 +421,14 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 保存时机：仅在退出 / 返回 / 切后台（onStop）时执行，不做编辑自动保存。
-     * - 返回键退出：由 [OnBackPressedCallback] 处理（保存 → 收尾 → finish）
+     * - 返回键退出：由 [installBackHandler] 处理（保存 → 收尾 → finish）
      * - 失焦（Home/多任务键等）：已在 [onWindowFocusChanged] / [onUserLeaveHint] 处理
      * - 最近任务滑动移除：此处兜底静默保存
      * - 应用内跳转（设置页）/ 旋转：静默保存
      * v7.7 起保存成功不再弹 toast，只有写盘失败才提示（避免内容丢失无感知）。
+     *
+     * v7.8：**只要是保存，就一定触发一次自动上传**（[SyncTrigger.CLOSE_EDITOR]，受 1 分钟闸门约束）——
+     * 包括应用内跳设置页与旋转这两种「静默保存」。反复保存（例如旋转 + onStop）由闸门合并成一次上传。
      */
     override fun onStop() {
         super.onStop()
@@ -332,11 +436,8 @@ class MainActivity : AppCompatActivity() {
             val leavingApp = !openingSettings && !isChangingConfigurations
             saveContent(
                 notifyFailure = leavingApp,
-                syncTrigger = if (leavingApp) SyncTrigger.CLOSE_EDITOR else null
+                syncTrigger = SyncTrigger.CLOSE_EDITOR
             )
-        } else if (!exitingByBack && !savedOnLeave && !openingSettings && !isChangingConfigurations) {
-            // 没有内容需要保存（例如空内容且未输入）也要走一次同步检查
-            syncAfterLeave()
         }
     }
 
@@ -345,6 +446,10 @@ class MainActivity : AppCompatActivity() {
         openingSettings = false
         savedOnLeave = false
         applyEditorAppearance()
+        // v7.8：从同步设置页回来（可能刚启用/改了配置）后重算一次橙点；内容尚未加载完时不猜
+        if (loadCompleted) {
+            detectPendingUpload(binding.editor.text.toString())
+        }
     }
 
     /**
@@ -479,13 +584,19 @@ class MainActivity : AppCompatActivity() {
     /**
      * 深色模式切换时的自动保存流程（静默保存：
      * 只有写盘失败才提示，成功不弹 toast）：保存完成后重建 Activity 应用新主题。
+     *
+     * v7.8：这也是一次「保存」，因此同样触发自动上传（受 1 分钟闸门约束，
+     * 紧接着的旋转 / onStop 保存会被闸门合并掉）。
      */
     private fun handleNightModeSwitch() {
         if (nightSwitchSaving) return
         if (shouldPersist()) {
             nightSwitchSaving = true
             savedOnLeave = true // 重建过程中的 onStop 不再重复保存
-            saveContent(notifyFailure = false) {
+            saveContent(
+                notifyFailure = false,
+                syncTrigger = SyncTrigger.CLOSE_EDITOR
+            ) {
                 nightSwitchSaving = false
                 if (!isFinishing && !isDestroyed) {
                     recreate()
@@ -506,8 +617,9 @@ class MainActivity : AppCompatActivity() {
      * @param notifyFailure 写盘**失败**时是否提示。v7.7 起保存成功不再弹「已保存」toast
      *   （用户要求删除全部保存成功提示），失败仍然提示 —— 那是可能丢内容的信号。
      * @param syncTrigger 写盘成功后要触发的一次 WebDAV 同步，null = 不触发。
-     *   CLOSE_EDITOR 表示「离开编辑」这类自动触发；MANUAL 表示用户在顶部导航栏
-     *   点了「立即上传」（不受 1 分钟节流限制）。应用内跳设置页、旋转、深色模式重建都不触发。
+     *   v7.8：**每一条保存路径都传 [SyncTrigger.CLOSE_EDITOR]**（旋转 / 深色模式 / 跳设置页
+     *   这些静默保存也一样）——「任何保存操作都触发自动上传」，密集保存由 1 分钟闸门合并。
+     *   MANUAL 只用于顶部「立即上传」按钮（不受闸门限制）。
      */
     private fun saveContent(
         notifyFailure: Boolean,
@@ -528,7 +640,10 @@ class MainActivity : AppCompatActivity() {
 
                 // 只在写盘成功后才上传：否则会把磁盘上的旧内容推到云端
                 if (ok && syncTrigger != null) {
-                    SyncLauncher.request(appContext, syncTrigger)
+                    val started = SyncLauncher.request(appContext, syncTrigger)
+                    // 没能启动同步（未启用/未配置，或前台服务被系统拒绝且降级也失败）：
+                    // 不会再有同步终态回调，直接重算橙点，让用户看到「还有东西没传上去」
+                    if (!started) detectPendingUpload(text)
                 }
 
                 if (notifyFailure && !ok) {
@@ -537,20 +652,6 @@ class MainActivity : AppCompatActivity() {
                 onDone()
             }
         }
-    }
-
-    /** 没有内容需要保存（空内容且用户没输入过）时的离开同步：同样只在离开应用的场景触发 */
-    private fun syncAfterLeave() {
-        SyncLauncher.request(applicationContext, SyncTrigger.CLOSE_EDITOR)
-    }
-
-    /**
-     * 打开应用时补一次同步：上次没成功、或本机还有没上传的改动。
-     * 幂等、异步、不阻塞输入（1 分钟节流在 SyncManager 里），失败只是记状态 + 发通知。
-     */
-    private fun maybeSyncOnOpen(localText: String) {
-        if (!SyncManager.needsSyncOnOpen(this, localText)) return
-        SyncLauncher.request(this, SyncTrigger.APP_OPEN)
     }
 
     /** 达到长度上限时提示一次（限流，避免每次按键都弹） */
@@ -575,6 +676,9 @@ class MainActivity : AppCompatActivity() {
 
         /** 编辑器内容上限（字符），见 [maxLengthFilter] 的说明 */
         const val MAX_CONTENT_CHARS = 100_000
+
+        /** 「立即上传」按钮上橙点的直径（dp）——只在原图标右上角叠一个圆点，不新增图标资源 */
+        private const val UPLOAD_DOT_SIZE_DP = 9f
 
         val Context.prefs
             get() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

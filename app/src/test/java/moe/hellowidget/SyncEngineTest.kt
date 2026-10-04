@@ -99,7 +99,6 @@ class SyncEngineTest {
     @Test
     fun gate_firstEverAttemptRuns() {
         assertEquals(GateResult.RUN, SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, 0L))
-        assertEquals(GateResult.RUN, SyncEngine.gate(SyncTrigger.APP_OPEN, now, 0L))
     }
 
     @Test
@@ -110,7 +109,7 @@ class SyncEngineTest {
         )
         assertEquals(
             GateResult.SKIP_THROTTLED,
-            SyncEngine.gate(SyncTrigger.APP_OPEN, now, lastAttemptAt = now - 1)
+            SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now - 1)
         )
     }
 
@@ -119,14 +118,14 @@ class SyncEngineTest {
         assertEquals(
             GateResult.RUN,
             SyncEngine.gate(
-                SyncTrigger.APP_OPEN, now,
+                SyncTrigger.CLOSE_EDITOR, now,
                 lastAttemptAt = now - SyncEngine.MIN_SYNC_INTERVAL_MS
             )
         )
         // 自定义间隔也遵守同一条边界
         assertEquals(
             GateResult.RUN,
-            SyncEngine.gate(SyncTrigger.APP_OPEN, now, lastAttemptAt = now - 5_000, intervalMs = 5_000)
+            SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now - 5_000, intervalMs = 5_000)
         )
     }
 
@@ -139,24 +138,7 @@ class SyncEngineTest {
     @Test
     fun gate_clockRolledBack_doesNotBlockForever() {
         // 系统时钟被回拨：delta < 0，应放行而不是长时间卡死
-        assertEquals(GateResult.RUN, SyncEngine.gate(SyncTrigger.APP_OPEN, now, lastAttemptAt = now + 999_999))
+        assertEquals(GateResult.RUN, SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now + 999_999))
     }
 
-    // ------------------------------------------------------------ 打开应用时是否补一次
-
-    @Test
-    fun shouldSyncOnOpen_coversTheThreeReasons() {
-        // 1) 上次没成功
-        assertTrue(SyncEngine.shouldSyncOnOpen(SyncEngine.RESULT_FAILED, "h1", "h1"))
-        assertTrue(SyncEngine.shouldSyncOnOpen(SyncEngine.RESULT_NEVER, "h1", "h1"))
-        // 2) 本机从未上传过
-        assertTrue(SyncEngine.shouldSyncOnOpen(SyncEngine.RESULT_SUCCESS, "h1", null))
-        // 3) 本地内容与上次上传的不一致（例如进程被杀在同步之前）
-        assertTrue(SyncEngine.shouldSyncOnOpen(SyncEngine.RESULT_SUCCESS, "h2", "h1"))
-    }
-
-    @Test
-    fun shouldSyncOnOpen_isFalseWhenEverythingIsInSync() {
-        assertFalse(SyncEngine.shouldSyncOnOpen(SyncEngine.RESULT_SUCCESS, "h1", "h1"))
-    }
 }

@@ -19,6 +19,8 @@
     <string name="menu_appearance">Appearance</string>
     <string name="menu_webdav">WebDAV sync</string>
     <string name="menu_upload_now">Upload to cloud now</string>
+    <!-- Screen-reader name of the same button while its orange badge is lit -->
+    <string name="menu_upload_now_pending">Upload to cloud now (there are unuploaded changes)</string>
     <string name="menu_undo">Undo last edit</string>
 
     <!-- Settings -->
@@ -78,7 +80,7 @@
     <string name="sync_now">Sync now (ignores the 1-minute limit)</string>
     <string name="sync_trust_button">Trust and remember this certificate fingerprint</string>
     <string name="sync_status_section">Sync status</string>
-    <string name="sync_behavior_hint">Sync runs when you close the editor and when the app starts (only if the previous attempt failed). Automatic syncs are at least 1 minute apart so the server is not hammered; "Sync now" is not limited. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
+    <string name="sync_behavior_hint">Sync timing: uploads happen only when content is saved (exit/back, going to the background, plus the automatic saves triggered by rotation or a dark-mode switch), and automatic uploads are at least 1 minute apart. Opening the app only checks whether anything changed locally since the last successful upload — if so, an orange dot lights up on the "Upload to cloud now" button, and nothing is uploaded. "Sync now" is not limited. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
     <string name="sync_upload_not_ready">WebDAV sync is off or not fully configured — open “WebDAV sync” and set it up first</string>
     <string name="sync_state_enabled">Status: enabled</string>
     <string name="sync_state_disabled">Status: disabled</string>
@@ -87,6 +89,7 @@
     <string name="sync_status_never">Never synced yet</string>
     <string name="sync_status_success">Last sync succeeded: %1$s</string>
     <string name="sync_upload_succeeded">Uploaded to WebDAV</string>
+    <string name="sync_failed_toast">Upload failed: %1$s</string>
     <string name="sync_status_failed">Last sync failed: %1$s %2$s</string>
     <string name="sync_status_running">Syncing…</string>
     <string name="sync_skip_disabled">Sync is disabled — skipped</string>
@@ -106,7 +109,6 @@
     <string name="sync_notif_channel_description">Sync progress</string>
     <string name="sync_notif_progress_title">Syncing to WebDAV</string>
     <string name="sync_notif_progress_text">Uploading your latest content…</string>
-    <string name="sync_notif_failed_title">Sync failed</string>
 
     <!-- WebDAV sync: errors and validation -->
     <string name="sync_error_not_configured">Sync settings are incomplete — check the server URL and file name</string>

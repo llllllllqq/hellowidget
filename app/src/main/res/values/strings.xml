@@ -15,6 +15,8 @@
     <string name="menu_appearance">外观设置</string>
     <string name="menu_webdav">WebDAV 同步</string>
     <string name="menu_upload_now">立即上传到云端</string>
+    <!-- 有未上传改动时，同一个按钮的读屏名称（图标右上角会亮一个橙点） -->
+    <string name="menu_upload_now_pending">立即上传到云端（有未上传的改动）</string>
     <string name="menu_undo">撤回上一步</string>
 
     <!-- 设置页 -->
@@ -74,7 +76,7 @@
     <string name="sync_now">立即同步（不受 1 分钟限制）</string>
     <string name="sync_trust_button">信任并记住此证书指纹</string>
     <string name="sync_status_section">同步状态</string>
-    <string name="sync_behavior_hint">同步时机：关闭编辑器后、打开应用时（上次未成功才补）。自动同步两次之间至少间隔 1 分钟，避免被服务器限流；「立即同步」不受限制。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
+    <string name="sync_behavior_hint">同步时机：只在保存内容时自动上传（退出/返回、切后台，以及旋转、切换深色模式等触发的自动保存），两次自动上传之间至少间隔 1 分钟；打开应用只检查上次上传后本地有没有新改动——有的话在顶部「立即上传」按钮上亮一个橙点，不会自动上传。「立即同步」不受限制。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
     <string name="sync_upload_not_ready">未启用或未完整配置 WebDAV 同步，请先打开「WebDAV 同步」设置</string>
     <string name="sync_state_enabled">状态：已启用</string>
     <string name="sync_state_disabled">状态：未启用</string>
@@ -83,6 +85,7 @@
     <string name="sync_status_never">尚未同步过</string>
     <string name="sync_status_success">上次同步成功：%1$s</string>
     <string name="sync_upload_succeeded">已上传到云端</string>
+    <string name="sync_failed_toast">上传失败：%1$s</string>
     <string name="sync_status_failed">上次同步失败：%1$s %2$s</string>
     <string name="sync_status_running">正在同步…</string>
     <string name="sync_skip_disabled">未启用同步，本次跳过</string>
@@ -102,7 +105,6 @@
     <string name="sync_notif_channel_description">同步进度与上传结果</string>
     <string name="sync_notif_progress_title">正在同步到 WebDAV</string>
     <string name="sync_notif_progress_text">正在上传最新内容…</string>
-    <string name="sync_notif_failed_title">同步失败</string>
 
     <!-- WebDAV 同步：错误与校验 -->
     <string name="sync_error_not_configured">同步设置不完整，请检查服务器地址与文件名</string>

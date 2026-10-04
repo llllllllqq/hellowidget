@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import moe.hellowidget.sync.SkipReason
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncEngine
+import moe.hellowidget.sync.SyncErrorText
 import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncNotifier
 import moe.hellowidget.sync.SyncSettings
@@ -276,8 +277,12 @@ class SyncManagerTest {
 
     // ------------------------------------------------------------ 失败路径
 
+    /**
+     * v7.8：失败反馈改成一条 Toast（与成功提示对称），**不再往通知栏留东西**。
+     * 完整原因仍然写进 [SyncSettings.lastResult] / `lastError`，同步设置页的状态行照常显示。
+     */
     @Test
-    fun failure_recordsTheErrorAndLeavesANotificationButNoSuccessToast() {
+    fun failure_recordsTheErrorAndShowsAFailureToastButLeavesNoNotification() {
         SyncManager.clientFactory = { _, _ ->
             clientBuilds++
             object : WebDavClient {
@@ -297,9 +302,16 @@ class SyncManagerTest {
         assertEquals(SyncEngine.RESULT_FAILED, SyncSettings.lastResult(context))
         assertEquals(WebDavError.UNAUTHORIZED.name, SyncSettings.lastError(context))
         assertNull("失败的改动必须仍被视作「待上传」", SyncSettings.lastUploadedHash(context))
-        assertNotNull("失败要留下通知", failureNotificationVisible(context))
+
         shadowOf(Looper.getMainLooper()).idle()
-        assertNull("失败不该弹「已上传」提示", ShadowToast.getTextOfLatestToast())
+        val toast = ShadowToast.getTextOfLatestToast().orEmpty()
+        assertTrue("失败必须弹 Toast 让用户知道这次没传上去（实际=$toast）", toast.isNotEmpty())
+        assertTrue("Toast 要说清是上传失败：$toast", toast.contains("上传失败"))
+        assertTrue(
+            "Toast 要带上失败原因：$toast",
+            toast.contains(SyncErrorText.of(context, WebDavError.UNAUTHORIZED))
+        )
+        assertEquals("失败之后不得留下任何通知", 0, notificationCount(context))
     }
 
     @Test
@@ -335,7 +347,7 @@ class SyncManagerTest {
          *
          * 用标题做匹配而不是 `getNotification(tag, id)`：进度通知由前台服务的
          * `startForeground` 发出（没有 tag），用无 tag 查询在 Robolectric 上不可靠；
-         * 而两条通知的标题在应用内唯一，足够精确。
+         * 而通知的标题在应用内唯一，足够精确。
          */
         fun notificationWithTitle(context: Context, title: String): Any? =
             shadowOf(notificationManager(context)).allNotifications.firstOrNull {
@@ -345,7 +357,8 @@ class SyncManagerTest {
         fun progressNotificationVisible(context: Context): Boolean =
             notificationWithTitle(context, context.getString(R.string.sync_notif_progress_title)) != null
 
-        fun failureNotificationVisible(context: Context): Any? =
-            notificationWithTitle(context, context.getString(R.string.sync_notif_failed_title))
+        /** 当前还挂在通知栏上的通知数量（v7.8：失败之后必须是 0） */
+        fun notificationCount(context: Context): Int =
+            shadowOf(notificationManager(context)).allNotifications.size
     }
 }

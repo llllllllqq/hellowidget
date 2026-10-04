@@ -2,8 +2,14 @@ package moe.hellowidget.sync
 
 import java.security.MessageDigest
 
-/** 同步触发来源（只有手动按钮不受 1 分钟节流限制） */
-enum class SyncTrigger { CLOSE_EDITOR, APP_OPEN, MANUAL }
+/**
+ * 同步触发来源（只有手动按钮不受 1 分钟节流限制）。
+ *
+ * v7.8 起删除 `APP_OPEN`：打开应用**不再**自动上传，只做一次「有没有待上传的改动」的
+ * 纯检测（见 `SyncManager.hasPendingUpload`），结果显示为「立即上传」按钮上的橙点。
+ * 于是自动上传只剩 `CLOSE_EDITOR` 一类 —— 也就是「保存」这一个语义。
+ */
+enum class SyncTrigger { CLOSE_EDITOR, MANUAL }
 
 /** 触发闸门的结果 */
 enum class GateResult { RUN, SKIP_THROTTLED }
@@ -79,13 +85,6 @@ object SyncEngine {
      */
     fun nextUploadTimestamp(nowSec: Long, lastUploadedSec: Long): Long =
         if (nowSec > lastUploadedSec) nowSec else lastUploadedSec + 1
-
-    /**
-     * 打开应用时是否需要补一次同步：
-     * 上次没成功、或本机从未上传过、或本地内容与上次上传的不一致（例如进程被杀在同步之前）。
-     */
-    fun shouldSyncOnOpen(lastResult: String, localHash: String, lastUploadedHash: String?): Boolean =
-        lastResult != RESULT_SUCCESS || hasLocalChanges(localHash, lastUploadedHash)
 
     private val HEX = "0123456789abcdef".toCharArray()
 }

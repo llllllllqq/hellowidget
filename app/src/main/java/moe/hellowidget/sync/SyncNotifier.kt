@@ -25,8 +25,12 @@ import moe.hellowidget.SyncActivity
  *
  * 产品要求是「同步期间通知栏留一条进度条，结束后立刻收掉」：
  *  - 进度通知既是用户可见的反馈，也是前台服务能长期存活（不被系统回收）的依据；
- *  - 同步一结束就收掉，不留常驻通知、不留后台线程；
- *  - 只有「失败」会留下通知，因为它需要用户做点什么。
+ *  - 同步一结束就收掉，不留常驻通知、不留后台线程。
+ *
+ * ## v7.8：失败只用 Toast 报错
+ * 旧实现把失败**留在通知栏**里（需要用户手动点掉）；v7.8 起改为与成功对称的一条 Toast，
+ * 通知栏只在同步进行中出现进度条，结束后干干净净。失败的完整原因仍会写进
+ * `SyncSettings.lastResult`，WebDAV 设置页的「同步状态」照样能看到。
  *
  * ## v7.5 起新增的两条保证
  *  1. **每次上传都有可见的进度条**：上传往往几百毫秒就结束，`startForeground` 之后
@@ -42,7 +46,6 @@ object SyncNotifier {
 
     const val CHANNEL_ID = "webdav_sync"
     const val ID_PROGRESS = 1001
-    const val ID_FAILURE = 1003
 
     /**
      * 进度通知的最短可见时长。上传通常只要几百毫秒：通知刚发出去就被收掉，
@@ -98,27 +101,27 @@ object SyncNotifier {
         notifyCompat(context, ID_PROGRESS, progressNotification(context))
     }
 
-    /** 同步失败：留下通知，点开进入同步页看原因并重试 */
-    fun postFailure(context: Context, error: WebDavError, detail: String) {
-        ensureChannel(context)
-        val localized = SyncErrorText.of(context, error)
-        val message = if (detail.isNotBlank() && detail != error.name) "$localized（$detail）" else localized
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_sync_notification)
-            .setContentTitle(context.getString(R.string.sync_notif_failed_title))
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setAutoCancel(true)
-            .setShowWhen(true)
-            .setCategory(NotificationCompat.CATEGORY_ERROR)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setContentIntent(openSyncActivity(context))
-            .build()
-        notifyCompat(context, ID_FAILURE, notification)
-    }
-
-    fun cancelFailure(context: Context) {
-        runCatching { NotificationManagerCompat.from(context).cancel(ID_FAILURE) }
+    /**
+     * 同步失败的 Toast（v7.8：与成功提示对称，不再往通知栏留东西）。
+     *
+     * 只给「一句话原因 + 截断后的服务器细节」：完整细节在 WebDAV 设置页的「同步状态」里，
+     * Toast 只是让用户立刻知道「这次没传上去」——否则失败是静默的，用户会以为已经同步了。
+     * 和成功 Toast 一样切到主线程 Looper，并吞掉异常（提示不该影响同步流程本身）。
+     */
+    fun showUploadFailedToast(context: Context, error: WebDavError, detail: String) {
+        val appContext = context.applicationContext
+        val localized = SyncErrorText.of(appContext, error)
+        val trimmed = detail.trim().take(TOAST_DETAIL_MAX)
+        val reason = if (trimmed.isNotEmpty() && trimmed != error.name) "$localized（$trimmed）" else localized
+        Handler(Looper.getMainLooper()).post {
+            runCatching {
+                Toast.makeText(
+                    appContext,
+                    appContext.getString(R.string.sync_failed_toast, reason),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     fun cancelProgress(context: Context) {
@@ -176,4 +179,7 @@ object SyncNotifier {
     private fun pendingIntentFlags(): Int =
         PendingIntent.FLAG_UPDATE_CURRENT or
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+
+    /** Toast 里最多带出的服务器细节长度：一句话能读完，完整细节看同步设置页的状态行 */
+    private const val TOAST_DETAIL_MAX = 80
 }
