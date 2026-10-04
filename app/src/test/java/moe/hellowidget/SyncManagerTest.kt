@@ -304,12 +304,17 @@ class SyncManagerTest {
         assertNull("失败的改动必须仍被视作「待上传」", SyncSettings.lastUploadedHash(context))
 
         shadowOf(Looper.getMainLooper()).idle()
-        val toast = ShadowToast.getTextOfLatestToast().orEmpty()
-        assertTrue("失败必须弹 Toast 让用户知道这次没传上去（实际=$toast）", toast.isNotEmpty())
-        assertTrue("Toast 要说清是上传失败：$toast", toast.contains("上传失败"))
-        assertTrue(
-            "Toast 要带上失败原因：$toast",
-            toast.contains(SyncErrorText.of(context, WebDavError.UNAUTHORIZED))
+        // 断言完整文案（含原因）而不是硬编码中文：Robolectric 默认用 en 资源，
+        // 与真机语言无关的写法才是稳定的 —— 文案本身由 values/ 与 values-en/ 同时提供。
+        val localized = SyncErrorText.of(context, WebDavError.UNAUTHORIZED)
+        val expectedToast = context.getString(
+            R.string.sync_failed_toast,
+            "$localized（HTTP 401 Unauthorized）"
+        )
+        assertEquals(
+            "失败必须弹一条带原因的 Toast，让用户知道这次没传上去",
+            expectedToast,
+            ShadowToast.getTextOfLatestToast()
         )
         assertEquals("失败之后不得留下任何通知", 0, notificationCount(context))
     }
