@@ -223,8 +223,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # enable-hw-keyboard=false：接了「硬件键盘」的设备系统不显示软键盘，
-      # 本用例验证的正是软键盘，必须关掉（对应官方文档的 Note）。
+      # enable-hw-keyboard=false：**注意这个输入其实不会禁用镜像自带的硬件键盘**
+      # （action 只在它为 true 时才写 `hw.keyboard=yes`，从不会主动写 no），
+      # 所以真正保证「软键盘会显示」的是 run_webdav_e2e.sh 里的
+      # `settings put secure show_ime_with_hard_keyboard 1` —— 没有它，API 36 镜像上
+      # 软键盘不会被画出来，ime inset 恒为 0，两条 IME 用例会假失败（v8.0 实测）。
       # target=default 用 AOSP 镜像：自带 AOSP 输入法，且没有 Gboard 首次启动弹窗干扰。
       #
       # v7.2：同一个 script 内先拉起仓库自带的零依赖 Python WebDAV 服务器

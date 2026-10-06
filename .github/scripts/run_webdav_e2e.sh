@@ -74,6 +74,34 @@ if [ "$READY" != "1" ]; then
 fi
 echo "坚果云模拟桩服务器已就绪（进程 $NUTSTORE_PID）"
 
+# ---------- 必须显式打开「有硬件键盘时也显示软键盘」 ----------
+# ReactiveCircus/android-emulator-runner 的 `enable-hw-keyboard: false` 其实是**空操作**：
+# 它只在为 true 时才往 AVD 的 config.ini 追加 `hw.keyboard=yes`，从不会主动写成 no
+# （action 源码 emulator-manager.ts：`if (enableHardwareKeyboard) configEntries.push('hw.keyboard=yes')`；
+#  同理 `settings put secure show_ime_with_hard_keyboard 0` 也只在 true 时执行）。
+# 于是「系统镜像自带的硬件键盘」这一档不会被去掉，命中 Android 默认策略
+# `show_ime_with_hard_keyboard=0`：点输入框时**软键盘根本不显示**，
+# 应用拿到的 ime insets 恒为 0 —— 而 ImeTracker 仍然会打 onShown、LatinIME 也会 Starting input，
+# 所以表现为「输入法看起来正常，但 inset 用例失败」。
+#
+# 真实取证（v8.0 加 API 36 腿时）：
+#   API 35：pIme=294（键盘占 640 里的 294px），我们的根布局 padB=294 —— 通过
+#   API 36：pIme=0（窗口高度也没变，仍是 640），padB=48（只剩导航栏）—— 失败
+# 两者的 softInputMode、窗口尺寸、isVisible(ime()) 完全相同，差别只在「键盘有没有真的画出来」。
+# 打开这个开关后，接了硬件键盘的模拟器也会显示软键盘，ime insets 才会正常出现。
+adb shell settings put secure show_ime_with_hard_keyboard 1 >/dev/null 2>&1 || true
+
+echo "===== 输入法 / 键盘诊断（用于复查上面这条前提）====="
+echo "android sdk: $(adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
+echo "show_ime_with_hard_keyboard: $(adb shell settings get secure show_ime_with_hard_keyboard 2>/dev/null | tr -d '\r')"
+echo "可用输入法: $(adb shell ime list -s 2>/dev/null | tr '\n' ' ')"
+if [ -f "${ANDROID_AVD_HOME:-/home/runner/.android/avd}/test.avd/config.ini" ]; then
+  grep -i "hw.keyboard" "${ANDROID_AVD_HOME:-/home/runner/.android/avd}/test.avd/config.ini" \
+    || echo "(AVD config.ini 未显式设置 hw.keyboard —— 沿用系统镜像默认值)"
+else
+  echo "(未找到 AVD config.ini)"
+fi
+
 ./gradlew :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.webdavUrl="http://10.0.2.2:${PORT}/dav/" \
   -Pandroid.testInstrumentationRunnerArguments.webdavControlUrl="http://10.0.2.2:${PORT}/__control__/" \
