@@ -83,7 +83,10 @@ object SyncRetry {
                 // 网络可用才执行：网络状态由系统盯着，因此不需要 ACCESS_NETWORK_STATE 权限
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                 .setMinimumLatency(MIN_LATENCY_MS)
-                .setBackoffCriteria(JobInfo.BACKOFF_POLICY_EXPONENTIAL, BACKOFF_MS)
+                // 注意参数顺序：官方签名是 (long initialBackoffMillis, @BackoffPolicy int backoffPolicy)
+                // —— 毫秒在前、策略在后（与直觉相反，写反了 build() 会抛 IllegalArgumentException）。
+                // 不设的话系统默认是 {30 秒, 指数退避}，这里显式写出来是为了"60 秒起步"可读可测
+                .setBackoffCriteria(BACKOFF_MS, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
                 // 进程被杀、设备重启后任务仍在（需要 RECEIVE_BOOT_COMPLETED，见 AndroidManifest）
                 .setPersisted(true)
                 .build()
