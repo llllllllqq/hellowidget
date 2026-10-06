@@ -2,7 +2,7 @@
 
 一个轻量 Android 应用：**文本编辑器 + 桌面小组件**。在应用里输入文本，退出后内容以**可上下滚动的小部件**形式展示在桌面，支持自定义外观，且**零后台进程、数据永不损坏**。
 
-当前版本：**v7.9.0**（versionCode 27，minSdk 21 / targetSdk 35）
+当前版本：**v8.0.0**（versionCode 28，compileSdk 36 / minSdk 24 / targetSdk 36）
 
 ## 功能特性
 
@@ -28,6 +28,7 @@
 
 ## 版本历史
 
+- **v8.0.0** 工具链与依赖整体升级（功能不变；唯一的用户可见变化是**不再支持 Android 5.0/5.1/6.0**）。①**minSdk 21 → 24**：这是 appcompat 1.8.0（默认 minSdk 已提到 23）与 Robolectric 4.16+（已移除 SDK 21/22 模拟）的前提，同时白拿原生 multidex 与 API 24 起的 `JobScheduler.getPendingJob`，三处按版本号分叉的死分支随之删除。②**targetSdk 35 → 36、compileSdk 35 → 36**：Google Play 自 **2026-08-31** 起要求新包与更新必须 target API 36+，35 已不合规。③**AGP 8.6.1 → 9.4.1、Gradle 8.7 → 9.6.0**，并改用 **AGP 内置 Kotlin**（随 AGP 提供 KGP 2.2.10）——`org.jetbrains.kotlin.android` 与 AGP 9 的新 DSL 不兼容，官方迁移指南要求移除；`kotlinOptions{}` 随之下线（`jvmTarget` 默认等于 `compileOptions.targetCompatibility`，仍是 17）。④依赖整体升级：**appcompat 1.8.0 / core-ktx 1.18.0 / activity-ktx 1.13.0 / lifecycle-runtime-ktx 2.11.0 / datastore-core 1.2.1 / OkHttp 5.4.0 / Robolectric 4.17**（`androidx.test` 与 JUnit 已是最新，未动）。两个**只有读产物才知道**的硬约束决定了这条线的上限：`androidx.core:core:1.19.x` 的 AAR 元数据要求 `minCompileSdk=37`，`okhttp-android:5.5.0` 同样要求 37（5.4.0 才是 36），所以停在 compileSdk 36 + core-ktx 1.18.0 + OkHttp 5.4.0；升级前先按 Gradle module metadata 把整棵依赖图（45 个模块）的 aar-metadata 核了一遍，**0 个与 compileSdk 36 / minSdk 24 冲突**，并对 `okhttp-android-5.4.0` 的 classes.jar 逐个 `javap` 确认要用的 API 与 Kotlin 元数据（`mv=[2,1,0]`）都在。⑤CI：三个 job 统一 **JDK 21**（Robolectric 4.16+ 在 SDK 36 上跑测试强制要求），Gradle action 升到 v6.4.0，模拟器矩阵由 **API 34/35 改为 API 35/36**（targetSdk 36 的行为变更——预测性返回默认开启、边到边 opt-out 被彻底禁用等——只有 API 36 真机能验；原先 34 那档关心的「未强制边到边 + 显式 `enableEdgeToEdge()`」路径由 Robolectric 的 `@Config(sdk = [34])` 继续覆盖），并新增 **release 包冒烟**：AGP 9 起资源收缩完全并入 R8（`optimizedResourceShrinking`）、keep 规则语义收紧（`strictFullModeForKeepRules`），而仪器化测试跑的是 debug 包 —— 现在会把真正要发布的 release 包装进模拟器启动一次，确认进程存活且无 `FATAL EXCEPTION`。⑥升级过程中被真机 CI 抓到的两件事（静态分析都看不见）：**API 36 系统镜像自带硬件键盘**，而 workflows 里的 `enable-hw-keyboard: false` 在 emulator-runner 里其实是**空操作**（它只在为 true 时才写 `hw.keyboard=yes`），于是软键盘根本不会被画出来、`ime()` inset 恒为 0 —— 同轮 35/36 对照取证：API 35 的 `pIme=294`、API 36 的 `pIme=0`（窗口高度都没变），修复是脚本里显式 `settings put secure show_ime_with_hard_keyboard 1`；以及 **appcompat 1.8.0 有两条变更恰好落在我们「绕 AppCompat 内部行为」的两处实现上**（Toolbar 高度计算 → v7.7.1 那次的固定 56dp 顶栏；配置变更分发到 view tree → `configChanges="uiMode"` 的深色模式手动重建），两条既有回归用例正盯着它们。⑦顺手清掉两处历史遗留：`themes.xml` 里从 Material 模板抄来、在 `Theme.AppCompat.*` 中并不存在的属性残留（aapt 会静默忽略）与那次手改留下的错误缩进；以及 Manifest 上 minSdk 21 时代的 `tools:ignore="UnusedAttribute"` 兼容标注。
 - **v7.9.0** 修「保存了却没上传、只能清后台」这个报障。①**网络层换成 OkHttp 4.12.0**（单例原型客户端 + `connectTimeout 15s` / `readTimeout 30s` / `writeTimeout 30s` / **`callTimeout 60s`**，`close()` 真正 cancel 在途请求）：旧的手写 Socket 客户端**没有写超时**、`close()` 也是空实现，一条半开连接（对端不再 ACK / 网络切换 / NAT 映射失效）就能让阻塞的 `write()` 卡住，而全局互斥锁被它占着 → 之后每一次保存、甚至「立即上传」都只是静默排队，进程被系统冻结时更会表现为「永久坏掉」；`callTimeout` 官方语义是覆盖 DNS 解析 → 建连 → 写正文 → 服务端处理 → 读响应**全流程**。**为什么不是 OkHttp 5.x**：5.x 的 class 元数据版本是 `mv=[2,1,0]`，需要 Kotlin ≥ 2.1 才能消费，而本项目编译用的是 Kotlin 2.0.21（会直接报 "Module was compiled with an incompatible version of Kotlin"）；4.12.0 的 `mv=[1,8,0]` 与 Kotlin 2.0.x 兼容，且本次要用的能力（`callTimeout`、`Call.cancel`、`sslSocketFactory(factory, tm)`、`Credentials.basic(u, p, UTF_8)`）它全都有 —— 升 Kotlin 与升 OkHttp 5 留作单独的后续改动，不混进这次修 bug 的版本。②**自愈通道**：写盘成功后立刻给系统排一个 `JobScheduler` **一次性持久化任务**（`NETWORK_TYPE_ANY` + 指数退避 + `setPersisted`，id 固定只会有一个），上传成功即撤销；只对**看起来是暂时性**的失败（网络 / 超时 / IO / 5xx / 目录缺失 / 锁定 / 配额）重试，凭据错误、证书不受信这类需要人介入的失败不自动重试（避免重试风暴）；自动重试**最多 5 次**（指数退避，60 秒起步），用完就停 —— 这样既不做「后台长期驻留」（系统里只留这一个一次性任务，成功即撤销，没有任何周期任务、常驻服务或线程），又能覆盖「网络抖一下 / 服务器短暂不可用」这类瞬时故障；预算用完时同步设置页显示「已用完 N 次自动重试」，用户点「立即同步」或再次保存即可重新排队。为此**新增一个 normal 级权限 `ACCESS_NETWORK_STATE`**：`JobSchedulerService.enforceValidJobRequest` 对「带连通性约束的任务」强制要求调用方持有它，少了它 `schedule()` 直接抛 `SecurityException`、整条自愈通道静默失效（这正是 CI 真机日志抓到的：`ACCESS_NETWORK_STATE required for jobs with a connectivity constraint`）；该权限安装即授予、无运行时弹窗、不涉及隐私，代价是「一个网络权限都不要」的说法到此为止 —— 换来的是「保存了却没传上去」有一条系统级兜底。③**失败不再静默**：进锁前后、服务启动 / 结束（含耗时）、同步结果都打日志；同步设置页新增「上次尝试」与「自动重试：已排队 / 无」两行，复发时用户截一张图就够。④协程被取消也留下明确终态（旧实现会让状态行永远停在「正在同步…」），客户端构造异常同样被接住。⑤`startForeground()` 失败改为降级为进程内同步（旧实现是未捕获异常 → 直接崩溃），并实现 Android 15 要求的 `Service.onTimeout()`。⑥JVM 用例 117 → 148 条（任务排入 / 只留一个 / 撤销 / 退避与最短延迟 / 临时性失败判定 / 成功后结束 / 取消后终态 / 重试预算上限 / 保存路径确实排了任务 / Manifest 权限与 `BIND_JOB_SERVICE` / OkHttp 的整次调用超时与 `close()` 取消），真机用例新增 1 条（失败后系统必须收下重试任务、网络恢复后补传成功并撤销），CI 还会导出同步相关 logcat。**不变量全部保持**：无条件 PUT、不跟随跳转、无任何 `If-*`、TOFU 指纹只增不减、绝不并发 PUT、1 分钟闸门与橙点语义不变
 - **v7.8.0** 上传时机收敛为「**保存即上传**」+ 打开应用**只看不传**：①删除「打开应用（含旋转 / 深色模式重建 / 进程恢复）自动补一次上传」这条路径（`SyncTrigger.APP_OPEN` 与 `SyncEngine.shouldSyncOnOpen` 一并删除），打开应用改为**纯检测** —— `SyncManager.hasPendingUpload()` 用「当前内容哈希 vs 上次成功上传的哈希」判断有没有改动，零网络、零落盘、不写 `lastAttemptAt`；②检测结果表现为顶部「立即上传」按钮图标右上角的**橙色圆点**（`#FF6900` 小米橙，紫底上最醒目；用 `LayerDrawable` 在运行时叠加，**不替换原图标、不新增图标资源**），成功上传后自动熄灭；③**任何保存都触发自动上传**（返回键 / 失焦 / 切后台 / 旋转 / 跳设置页 / 深色模式切换，原来这后三种是静默保存不上传），密集保存由 1 分钟闸门合并；④删除 `syncAfterLeave()`（没有内容需要保存就不该有上传）；⑤上传失败改为弹 **Toast** 报错（不再留失败通知，原因仍记在同步状态行）；⑥新增 8 条 JVM 用例（检测语义、橙点开关、空内容新用户不亮、保存即上传）与 3 条真机用例（打开应用不碰服务器、橙点真的被画成橙色像素、无改动时零橙色像素）
 - **v7.7.2** 自动同步的节流间隔从 **30 分钟缩短为 1 分钟**（`SyncEngine.MIN_SYNC_INTERVAL_MS = 60 * 1000L`）：关闭编辑器 / 打开应用触发的自动同步，现在只要距上次尝试满 1 分钟就会执行，不再一次失败就干等半小时；「立即上传 / 立即同步」的 MANUAL 通道依旧完全不受节流限制，其余行为未改。单测新增一条钉住该值的用例（`SyncEngineTest.throttleInterval_isOneMinute`）
@@ -115,7 +116,7 @@ export KEYSTORE_PASSWORD=... KEY_ALIAS=... KEY_PASSWORD=...
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-Gradle 版本由仓库内的 wrapper 固定（`gradle/wrapper/gradle-wrapper.properties` → 8.7），无需本机安装 Gradle。
+Gradle 版本由仓库内的 wrapper 固定（`gradle/wrapper/gradle-wrapper.properties` → 9.6.0），无需本机安装 Gradle。
 
 ## 项目结构
 
@@ -123,9 +124,10 @@ Gradle 版本由仓库内的 wrapper 固定（`gradle/wrapper/gradle-wrapper.pro
 hellowidget/
 ├── .github/workflows/build.yml    # CI：质量门禁 + 构建 + 仪器化测试 + 发布 Release
 ├── .github/scripts/webdav_stub_server.py  # CI 用的零依赖 WebDAV 测试服务器
-├── gradlew / gradle/wrapper/      # Gradle wrapper（版本锁定 8.7）
+├── .github/scripts/release_smoke.sh       # CI 用的 release 包冒烟（装进模拟器启动一次）
+├── gradlew / gradle/wrapper/      # Gradle wrapper（版本锁定 9.6.0）
 ├── app/
-│   ├── build.gradle.kts           # 构建配置（compileSdk 35 / minSdk 21 / targetSdk 35）
+│   ├── build.gradle.kts           # 构建配置（compileSdk 36 / minSdk 24 / targetSdk 36）
 │   └── src/
 │       ├── main/
 │       │   ├── AndroidManifest.xml
@@ -139,7 +141,7 @@ hellowidget/
 │       │   │   ├── SyncRetryJobService.kt # 系统级兜底重试任务（JobScheduler 拉起，不显示通知）
 │       │   │   ├── sync/                  # 同步核心
 │       │   │   │   ├── SyncEngine.kt          # 决策表 + 1 分钟闸门（纯函数，可单测）
-│       │   │   │   ├── OkHttpWebDavClient.kt  # OkHttp 4.12：全流程超时 + 可取消 + TOFU 证书固定
+│       │   │   │   ├── OkHttpWebDavClient.kt  # OkHttp 5.4：全流程超时 + 可取消 + TOFU 证书固定
 │       │   │   │   ├── TlsPinning.kt          # 证书指纹校验（TOFU，只增不减）
 │       │   │   │   ├── SyncManager.kt         # 编排：触发、上传、状态流；hasPendingUpload() 纯检测（橙点）
 │       │   │   │   ├── SyncSettings.kt        # 同步配置与状态存取
@@ -157,7 +159,7 @@ hellowidget/
 │       │   └── res/                       # 布局、字符串（中/英）、主题、图标
 │       ├── test/                          # JVM 单元测试（Robolectric，云端运行）
 │       └── androidTest/                   # 仪器化测试（CI 模拟器上运行）
-├── build.gradle.kts               # 根构建配置（AGP 8.6.1, Kotlin 2.0.21）
+├── build.gradle.kts               # 根构建配置（AGP 9.4.1 + AGP 内置 Kotlin）
 ├── gradle.properties              # 全局配置 + 版本号唯一来源
 └── settings.gradle.kts
 ```
