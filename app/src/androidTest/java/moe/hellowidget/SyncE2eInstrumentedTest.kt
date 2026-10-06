@@ -20,6 +20,7 @@ import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncLauncher
 import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncNotifier
+import moe.hellowidget.sync.SyncRetry
 import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncStatus
 import moe.hellowidget.sync.SyncTrigger
@@ -484,6 +485,64 @@ class SyncE2eInstrumentedTest {
                 SyncSettings.lastAttemptAt(context)
             )
         }
+    }
+
+    // ------------------------------------------------------------ v7.9：上传失败后的系统级自愈
+
+    /**
+     * v7.9 的自愈通道，正对「保存了却没上传，只能清后台」那个报障：
+     *
+     *  1. 上传失败之后，系统里**必须还留着一个待执行的重试任务** —— 否则用户又只剩橙点，
+     *     而橙点永远不会自己变绿；
+     *  2. 那个任务真的能在网络恢复后把欠的内容补上去，成功之后自己撤销，不留常驻唤醒源。
+     *
+     * 场景：把地址指向一定拒绝连接的端口（`10.0.2.2:1`）→ 按返回键保存（用户报障的原路径）
+     * → 同步快速失败；随后把地址改回 CI 上的 WebDAV 桩服务器，并直接执行一次重试任务
+     * （真机上那一步由系统在有网络时完成，测试里等不了 90 秒的最短延迟）。
+     */
+    @Test
+    fun failedUpload_leavesASystemRetryQueued_andThatRetryFinishesTheUpload() {
+        val goodConfig = SyncSettings.config(context)!!
+        SyncRetry.cancel(context)
+        SyncSettings.saveConfig(context, goodConfig.copy(baseUrl = "http://10.0.2.2:1/dav/"))
+        SyncSettings.setEnabled(context, true)
+        SyncSettings.resetRuntimeState(context)
+
+        val typed = "网络恢复后应当补传的内容"
+        assertTrue(runBlocking { ContentStore.write(typed) })
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            awaitEditorReady(scenario)
+            // 返回键 = 用户报障时的那条路径：先落盘、再触发上传
+            scenario.onActivity { activity ->
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+
+            val failDeadline = SystemClock.uptimeMillis() + 60_000
+            while (SystemClock.uptimeMillis() < failDeadline &&
+                SyncSettings.lastResult(context) != SyncEngine.RESULT_FAILED
+            ) {
+                SystemClock.sleep(200)
+            }
+            assertEquals(
+                "指向不可达端口时同步必须明确失败（lastResult=${SyncSettings.lastResult(context)}）",
+                SyncEngine.RESULT_FAILED,
+                SyncSettings.lastResult(context)
+            )
+            assertTrue(
+                "上传失败后必须留下系统重试任务，否则又变回「只能清后台」",
+                SyncRetry.isScheduled(context)
+            )
+        }
+
+        // 网络恢复：模拟系统在合适时机拉起那个任务（真机上还要过 90 秒最短延迟与 1 分钟闸门）
+        SyncSettings.saveConfig(context, goodConfig)
+        SyncSettings.setLastAttemptAt(context, System.currentTimeMillis() - 120_000)
+        val needsAnotherRetry = runBlocking { SyncRetry.runOnce(context) }
+
+        assertFalse("内容已经补传成功，不该再重试", needsAnotherRetry)
+        assertFalse("成功后必须撤销重试任务，不留常驻唤醒源", SyncRetry.isScheduled(context))
+        assertEquals("重试必须真的把内容传上去", typed, cloud(uploadedName()))
     }
 
     // ------------------------------------------------------------ 工具

@@ -30,15 +30,19 @@ object SyncLauncher {
 
     fun request(context: Context, trigger: SyncTrigger): Boolean {
         val appContext = context.applicationContext
-        if (!isReady(appContext)) return false
+        if (!isReady(appContext)) {
+            Log.i(TAG, "同步条件不满足（未启用或配置不完整），本次触发忽略：trigger=$trigger")
+            return false
+        }
         return try {
             ContextCompat.startForegroundService(
                 appContext,
                 SyncService.intent(appContext, trigger)
             )
+            Log.i(TAG, "已请求系统启动同步前台服务：trigger=$trigger")
             true
         } catch (e: Exception) {
-            Log.w(TAG, "无法启动同步前台服务，降级为进程内同步（通知由 SyncManager 补上）", e)
+            Log.w(TAG, "无法启动同步前台服务，降级为进程内同步（通知由 SyncManager 补上）：trigger=$trigger", e)
             SyncManager.requestInProcess(appContext, trigger)
             false
         }

@@ -96,6 +96,9 @@
     <string name="sync_skip_not_configured">Settings are incomplete — skipped</string>
     <string name="sync_skip_throttled">Less than 1 minute since the last sync — skipped (changes go up at the next allowed moment or via "Sync now")</string>
     <string name="sync_time_never">never</string>
+    <string name="sync_last_attempt">Last attempt: %1$s</string>
+    <string name="sync_retry_queued">Automatic retry: queued — changes are still not uploaded; the system will retry once the network is available</string>
+    <string name="sync_retry_none">Automatic retry: none (nothing pending)</string>
     <string name="sync_cleartext_warning">⚠ Plain http is in use: your password and notes travel unencrypted and can be read by others on the same network. Use https when possible (self-signed certificates can be pinned below).</string>
     <string name="sync_tls_pending">Server certificate fingerprint (not trusted yet): %1$s</string>
     <string name="sync_tls_trusted">Trusted certificate fingerprint: %1$s</string>

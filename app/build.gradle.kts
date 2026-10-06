@@ -116,6 +116,13 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     // ViewCompat.setStateDescription / updatePadding 等 View 扩展
     implementation("androidx.core:core-ktx:1.13.1")
+    // 每个请求阶段都要有超时且可取消：手写 Socket 的写超时缺失会让半开连接卡住整次同步。
+    // 这里刻意用 4.12.0 而不是 5.x：OkHttp 5.x 的 class 元数据是 mv=[2,1,0]，要求 Kotlin ≥ 2.1，
+    // 而本项目编译用的是 Kotlin 2.0.21（会直接报 "Module was compiled with an incompatible version
+    // of Kotlin"）。4.12.0 的 mv=[1,8,0] 与 Kotlin 2.0.x 兼容，本次要用的能力它全都有：
+    // callTimeout（覆盖 DNS→连接→写正文→读响应）、Call.cancel、sslSocketFactory(factory, tm)、
+    // Credentials.basic(u, p, UTF_8)。升 Kotlin + 升 OkHttp 5 留作单独的后续改动。
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // 投产 QA：JVM 单元测试
     testImplementation("junit:junit:4.13.2")

@@ -60,7 +60,7 @@ object SyncManager {
      */
     @VisibleForTesting
     internal var clientFactory: (SyncConfig, (String) -> Unit) -> WebDavClient =
-        { config, onUntrusted -> HttpWebDavClient(config, onUntrusted) }
+        { config, onUntrusted -> OkHttpWebDavClient(config, onUntrusted) }
 
     /** 待上传内容的读取入口；单测里替换掉，避免依赖 DataStore 的具体实现 */
     @VisibleForTesting
@@ -115,7 +115,15 @@ object SyncManager {
         context: Context,
         trigger: SyncTrigger,
         progress: Boolean
-    ): SyncStatus = mutex.withLock { doSync(context.applicationContext, trigger, progress) }
+    ): SyncStatus {
+        // v7.9：进锁前后各记一条日志。故障复发时「有『同步请求』却迟迟没有『获得同步锁』」
+        // 就是「上一次同步卡住、一直占着锁」的决定性证据（用户只需要把 logcat 截下来）。
+        Log.i(TAG, "同步请求：trigger=$trigger")
+        return mutex.withLock {
+            Log.i(TAG, "获得同步锁：trigger=$trigger")
+            doSync(context.applicationContext, trigger, progress)
+        }
+    }
 
     // ------------------------------------------------------------------ 闸门
 
@@ -142,29 +150,45 @@ object SyncManager {
         SyncSettings.setLastAttemptAt(context, now)
         val startedAt = System.currentTimeMillis()
         _status.value = SyncStatus.Running(trigger, startedAt)
+        Log.i(TAG, "开始同步：trigger=$trigger")
         // 进程内路径没有前台服务，通知得自己发（放在闸门之后：被跳过时不打扰用户）
         if (progress) SyncNotifier.postProgress(context)
 
-        val client = clientFactory(config) { fingerprint ->
-            // 只记录「待确认」，本次仍然失败：证书信任必须由用户在看到指纹后决定
-            SyncSettings.setPendingTlsPin(context, fingerprint)
-        }
-
         var uploaded = false
+        var client: WebDavClient? = null
         return try {
-            val outcome = uploadOnce(context, client, config)
+            // 客户端构造本身也可能抛（TLS/参数问题），因此也放进 try：
+            // 否则会带着 Running 状态逃出去，状态行永远停在「正在同步…」
+            val created = clientFactory(config) { fingerprint ->
+                // 只记录「待确认」，本次仍然失败：证书信任必须由用户在看到指纹后决定
+                SyncSettings.setPendingTlsPin(context, fingerprint)
+            }
+            client = created
+            val outcome = uploadOnce(context, created, config)
             uploaded = outcome is SyncStatus.Success && outcome.uploaded
             _status.value = outcome
+            Log.i(TAG, "同步结束：$outcome（耗时 ${System.currentTimeMillis() - startedAt}ms）")
             if (outcome is SyncStatus.Success) {
+                // 内容已经在云端（或本地本来就没有改动）：撤销系统重试任务，不必再唤醒进程
+                SyncRetry.cancel(context)
                 if (outcome.uploaded) SyncNotifier.showUploadSucceededToast(context)
             }
             outcome
         } catch (e: CancellationException) {
+            // 协程被取消也必须留下终态：否则状态行会永远停在「正在同步…」，
+            // 让人误以为上传还在进行（SyncService 被销毁时就会发生）
+            Log.w(TAG, "同步被取消：trigger=$trigger")
+            _status.value = SyncStatus.Failed(
+                System.currentTimeMillis(), WebDavError.IO, "同步被取消"
+            )
             throw e
         } catch (e: Throwable) {
             val (error, detail) = classify(e)
             val safeDetail = sanitize(detail, config.password)
-            Log.w(TAG, "同步失败：$error ${safeDetail.take(200)}")
+            Log.w(
+                TAG,
+                "同步失败：$error ${safeDetail.take(200)}（耗时 ${System.currentTimeMillis() - startedAt}ms）"
+            )
             if (error == WebDavError.TLS_UNTRUSTED) SyncSettings.setPendingTlsPin(context, detail)
             SyncSettings.recordFailure(context, error)
             SyncNotifier.showUploadFailedToast(context, error, safeDetail)
@@ -176,7 +200,7 @@ object SyncManager {
                 if (uploaded) SyncNotifier.awaitProgressVisibleFor(startedAt)
                 SyncNotifier.cancelProgress(context)
             }
-            client.close()
+            client?.close()
         }
     }
 

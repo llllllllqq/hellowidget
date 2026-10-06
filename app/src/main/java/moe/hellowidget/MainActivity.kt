@@ -33,6 +33,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import moe.hellowidget.databinding.ActivityMainBinding
 import moe.hellowidget.sync.SyncLauncher
 import moe.hellowidget.sync.SyncManager
+import moe.hellowidget.sync.SyncRetry
 import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncStatus
 import moe.hellowidget.sync.SyncTrigger
@@ -639,6 +640,12 @@ class MainActivity : AppCompatActivity() {
         val appContext = applicationContext
         ContentStore.saveScope.launch {
             val ok = ContentStore.write(text)
+            // v7.9：写盘成功就**先**把「这次改动还没传上去」记到系统里（一次性持久化重试任务）。
+            // 放在触发上传之前是有意的：接下来的触发有可能根本没跑起来 —— 前台服务被系统
+            // 静默拒绝、进程立刻被冻结/回收 —— 那正是 v7.8.0「只保存、不上传、橙点不灭」的形态，
+            // 而那种情况下如果没有这一步，就没有任何东西记得"还欠一次上传"。
+            // 上传成功后 SyncManager 会撤销它；内容没变时它醒来也一个请求都不发。
+            if (ok && syncTrigger != null) SyncRetry.schedule(appContext)
             withContext(Dispatchers.Main) {
                 if (!ok) {
                     // 写盘失败：允许后续离开时机重试，避免只剩内存里这一份

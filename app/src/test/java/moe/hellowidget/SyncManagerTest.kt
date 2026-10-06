@@ -12,6 +12,7 @@ import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncErrorText
 import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncNotifier
+import moe.hellowidget.sync.SyncRetry
 import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncStatus
 import moe.hellowidget.sync.SyncTrigger
@@ -99,6 +100,8 @@ class SyncManagerTest {
     fun setUp() {
         // 通知权限（API 33+ 需要）；不过权限时进度通知不会显示，测不到
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        // setPersisted(true) 的前置权限（v7.9 的系统重试任务）：JobInfo.Builder.build() 会检查它
+        shadowOf(app).grantPermissions(Manifest.permission.RECEIVE_BOOT_COMPLETED)
         SyncSettings.setEnabled(context, true)
         SyncSettings.saveConfig(
             context,
@@ -119,7 +122,7 @@ class SyncManagerTest {
     fun tearDown() {
         SyncManager.contentReader = { moe.hellowidget.ContentStore.read() }
         SyncManager.clientFactory = { config, onUntrusted ->
-            moe.hellowidget.sync.HttpWebDavClient(config, onUntrusted)
+            moe.hellowidget.sync.OkHttpWebDavClient(config, onUntrusted)
         }
         SyncSettings.resetRuntimeState(context)
     }
@@ -183,6 +186,21 @@ class SyncManagerTest {
         assertEquals(
             SyncEngine.sha256Hex("内容 A".toByteArray()),
             SyncSettings.lastUploadedHash(context)
+        )
+    }
+
+    @Test
+    fun uploadSuccess_cancelsTheScheduledSystemRetry() {
+        // 「保存」时排入的系统重试任务（v7.9 的自愈通道）
+        SyncRetry.schedule(context)
+        assertTrue("前置条件：任务已排队", SyncRetry.isScheduled(context))
+
+        val status = sync()
+
+        assertTrue("第一次同步（本机从未上传过）必须上传，实际：$status", status is SyncStatus.Success)
+        assertFalse(
+            "上传成功后必须撤销系统重试任务，否则会留下一个永远醒来的后台任务",
+            SyncRetry.isScheduled(context)
         )
     }
 

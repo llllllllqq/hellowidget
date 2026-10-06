@@ -17,12 +17,10 @@ import kotlin.concurrent.thread
 /**
  * JVM 单测用的极简 HTTP/1.1 桩服务器。
  *
- * 存在的意义：`HttpWebDavClient` 是手写的 Socket 实现，因此「PROPFIND/MKCOL/MOVE/COPY
- * 这些自定义方法到底发出去了什么」可以在纯 JVM 上被**真实地**观测到 ——
- * 断言的是桩服务器收到的原始请求行与请求头，而不是我们自己的分支逻辑。
+ * 存在的意义：`OkHttpWebDavClient` 发出的请求可以在纯 JVM 上被**真实地**观测到 ——
+ * 断言的是桩服务器收到的原始请求行、请求头与正文，而不是我们自己的分支逻辑。
  *
- * 行为约定（与客户端一致）：一个连接只处理一个请求，响应后立即关闭
- * （客户端固定发送 `Connection: close`）。
+ * 行为约定：一个连接只处理一个请求，响应后立即关闭（响应固定带 `Connection: close`）。
  *
  * 传入 [sslContext] 即可变成 HTTPS 桩服务器（用于验证自签名证书与指纹固定）。
  */
@@ -49,7 +47,11 @@ class StubHttpServer(
         /** 用分块传输编码发送正文（验证客户端的分块解码） */
         val chunked: Boolean = false,
         /** 不发 Content-Length：正文靠 EOF 定界（验证客户端的降级路径） */
-        val omitContentLength: Boolean = false
+        val omitContentLength: Boolean = false,
+        /** 声明一个比实际正文更大的 Content-Length（正文更短）：验证客户端的 8 KiB 读取上限 */
+        val declaredContentLength: Int? = null,
+        /** 写完响应后保持连接不关（毫秒）：验证读取上限/整体超时不会挂在「对端不说话」上 */
+        val stallAfterWriteMs: Long = 0
     )
 
     private val serverSocket: ServerSocket = if (sslContext != null) {
@@ -125,6 +127,8 @@ class StubHttpServer(
         val response = responder(request)
         writeResponse(output, method, response)
         output.flush()
+        // 需要观察「对端不再说话」的用例靠它把连接挂着：客户端若不设上限就会一直等下去
+        if (response.stallAfterWriteMs > 0) Thread.sleep(response.stallAfterWriteMs)
     }
 
     private fun writeResponse(output: BufferedOutputStream, method: String, response: Response) {
@@ -137,7 +141,9 @@ class StubHttpServer(
             response.chunked -> head.append("Transfer-Encoding: chunked\r\n")
             // HEAD 也要带上实体长度（这正是 HEAD 的语义），但正文不发送
             !response.omitContentLength ->
-                head.append("Content-Length: ").append(response.body.size).append("\r\n")
+                head.append("Content-Length: ")
+                    .append(response.declaredContentLength ?: response.body.size)
+                    .append("\r\n")
             else -> Unit
         }
         head.append("Connection: close\r\n\r\n")

@@ -92,6 +92,9 @@
     <string name="sync_skip_not_configured">设置不完整，本次跳过</string>
     <string name="sync_skip_throttled">距上次同步不足 1 分钟，本次跳过（改动会在下次允许时机或点击「立即同步」时上传）</string>
     <string name="sync_time_never">从未</string>
+    <string name="sync_last_attempt">上次尝试：%1$s</string>
+    <string name="sync_retry_queued">自动重试：已排队 —— 还有改动没传上去，系统会在网络可用时自动重试</string>
+    <string name="sync_retry_none">自动重试：无（没有待上传的改动）</string>
     <string name="sync_cleartext_warning">⚠ 当前使用明文 http：口令与笔记内容会以未加密方式经过网络，同一网络中的他人可能读取。条件允许时请改用 https（自建证书可在下方信任指纹）。</string>
     <string name="sync_tls_pending">服务器证书指纹（尚未信任）：%1$s</string>
     <string name="sync_tls_trusted">已信任证书指纹：%1$s</string>

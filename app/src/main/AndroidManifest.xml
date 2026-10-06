@@ -8,12 +8,16 @@
         FOREGROUND_SERVICE / FOREGROUND_SERVICE_DATA_SYNC：同步期间用前台服务承载
         （通知栏进度条 + 进程不被回收），dataSync 类型是 Android 14+ 的强制要求。
         POST_NOTIFICATIONS：Android 13+ 显示进度条需要（用户拒绝时同步照跑，只是没有通知栏反馈）。
-        刻意**不申请** ACCESS_NETWORK_STATE：失败即报错，少一个权限。
+        RECEIVE_BOOT_COMPLETED：v7.9 起的系统重试任务用 setPersisted(true)，这是它的前置权限
+        （只声明权限，不注册任何开机广播接收器 —— 我们不需要在开机时做任何事）。
+        刻意**不申请** ACCESS_NETWORK_STATE：失败即报错，少一个权限
+        （JobScheduler 的网络约束由系统自己盯着，也不需要它）。
     -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!--
         tools:ignore="UnusedAttribute"：networkSecurityConfig 只对 API 24+ 生效，
@@ -75,6 +79,18 @@
             android:name=".SyncService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!--
+            v7.9：保存后没能上传成功时的系统级兜底 —— JobScheduler 的一次性持久化任务。
+            android:permission="android.permission.BIND_JOB_SERVICE"：只有系统能绑定它，
+            否则任何应用都能伪造一次"同步"请求。
+            setPersisted(true) 需要 RECEIVE_BOOT_COMPLETED 权限（见上方 uses-permission），
+            否则 JobInfo.Builder.build() 会直接抛异常。不显示任何通知，只把欠的上传补上。
+        -->
+        <service
+            android:name=".SyncRetryJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!--
             小组件 Provider。exported="false"：系统仍可投递 APPWIDGET_UPDATE

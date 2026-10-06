@@ -27,6 +27,7 @@ import moe.hellowidget.sync.SyncErrorText
 import moe.hellowidget.sync.SyncLauncher
 import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncNotifier
+import moe.hellowidget.sync.SyncRetry
 import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncStatus
 import moe.hellowidget.sync.SyncTrigger
@@ -183,6 +184,8 @@ class SyncActivity : AppCompatActivity() {
             builder.append('\n').append(getString(R.string.sync_history_note))
         }
         builder.append('\n').append(lastResultLine())
+        attemptLine()?.let { builder.append('\n').append(it) }
+        retryLine()?.let { builder.append('\n').append(it) }
         SyncManager.status.value.let { live ->
             when (live) {
                 is SyncStatus.Running -> builder.append('\n')
@@ -215,6 +218,29 @@ class SyncActivity : AppCompatActivity() {
                 )
             else -> getString(R.string.sync_status_never)
         }
+    }
+
+    /**
+     * v7.9：最后一次**尝试**（无论成败）的时间。
+     *
+     * 状态行原本只说「上次结果」，而排查「保存了却没上传」时最需要的恰恰是
+     * 「最后一次尝试发生在什么时候」—— 配上 [retryLine] 用户拍一张截图就够了。
+     */
+    private fun attemptLine(): String? {
+        val attemptAt = SyncSettings.lastAttemptAt(this)
+        if (attemptAt <= 0) return null
+        return getString(R.string.sync_last_attempt, formatTime(attemptAt))
+    }
+
+    /**
+     * v7.9：系统级重试任务是否还在排队。
+     * 「已排队」= 本地还有没传上去的改动，系统会在有网络时自动重试，橙点会一直亮到成功为止。
+     */
+    private fun retryLine(): String? {
+        if (!SyncSettings.enabled(this) || SyncSettings.config(this) == null) return null
+        return getString(
+            if (SyncRetry.isScheduled(this)) R.string.sync_retry_queued else R.string.sync_retry_none
+        )
     }
 
     private fun skipText(reason: moe.hellowidget.sync.SkipReason): Int = when (reason) {

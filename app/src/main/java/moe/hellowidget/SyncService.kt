@@ -63,14 +63,29 @@ class SyncService : Service() {
             0
         }
         val startedAt = System.currentTimeMillis()
-        ServiceCompat.startForeground(
-            this,
-            SyncNotifier.ID_PROGRESS,
-            SyncNotifier.progressNotification(this),
-            foregroundServiceType
-        )
-
         val trigger = parseTrigger(intent)
+        val foreground = try {
+            ServiceCompat.startForeground(
+                this,
+                SyncNotifier.ID_PROGRESS,
+                SyncNotifier.progressNotification(this),
+                foregroundServiceType
+            )
+            true
+        } catch (e: Exception) {
+            // v7.9：系统可能拒绝前台服务（后台启动限制 / dataSync 额度用尽 / 类型不允许）。
+            // 这里**必须**接住 —— 让它冒泡就是未捕获异常，系统会直接杀掉进程
+            // （RemoteServiceException），而用户只会看到「保存了却没上传」。
+            // 降级为进程内同步：上传照做，进度通知与结果提示由 SyncManager 自己发。
+            Log.w(TAG, "前台服务启动被系统拒绝，降级为进程内同步：trigger=$trigger", e)
+            false
+        }
+        if (!foreground) {
+            SyncManager.requestInProcess(applicationContext, trigger)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        Log.i(TAG, "同步服务启动：trigger=$trigger")
 
         scope.launch {
             val status = try {
@@ -89,10 +104,22 @@ class SyncService : Service() {
                 // 上传已经完成，但通知刚发出去可能还没被渲染出来：补足最短可见时长
                 SyncNotifier.awaitProgressVisibleFor(startedAt)
             }
+            Log.i(TAG, "同步服务结束：$status（耗时 ${System.currentTimeMillis() - startedAt}ms）")
             ServiceCompat.stopForeground(this@SyncService, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
         }
         return START_NOT_STICKY
+    }
+
+    /**
+     * v7.9：Android 15 起 `dataSync` 前台服务有「24 小时内累计最多 6 小时」的系统上限，
+     * 到点系统会回调它，并要求服务在几秒内 `stopSelf()`；不照做系统会生成 failure（崩溃）。
+     * 本应用的每一次同步都被网络客户端的 `callTimeout` 封顶，正常永远走不到这里 ——
+     * 实现它才算真的符合官方对 `dataSync` 的要求。
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.e(TAG, "dataSync 前台服务到达系统时限，立即停止（startId=$startId, type=$fgsType）")
+        stopSelf(startId)
     }
 
     override fun onDestroy() {
