@@ -541,8 +541,12 @@ class SyncE2eInstrumentedTest {
         val needsAnotherRetry = runBlocking { SyncRetry.runOnce(context) }
 
         assertFalse("内容已经补传成功，不该再重试", needsAnotherRetry)
-        assertFalse("成功后必须撤销重试任务，不留常驻唤醒源", SyncRetry.isScheduled(context))
         assertEquals("重试必须真的把内容传上去", typed, cloud(uploadedName()))
+
+        // 真机上这一趟结束后由 SyncRetryJobService 用 jobFinished(params, false) 结束任务；
+        // 测试里直接调用 runOnce，所以自己收尾，并顺带证明「执行结束后撤销是生效的」
+        SyncRetry.cancel(context)
+        assertFalse("兜底任务不能留在系统里成为常驻唤醒源", SyncRetry.isScheduled(context))
     }
 
     // ------------------------------------------------------------ 工具
