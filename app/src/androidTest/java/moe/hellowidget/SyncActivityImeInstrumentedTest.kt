@@ -77,7 +77,10 @@ class SyncActivityImeInstrumentedTest {
                 val insets = ViewCompat.getRootWindowInsets(root)
                 assertNotNull("必须能读到窗口 insets", insets)
                 val imeBottom = insets!!.getInsets(WindowInsetsCompat.Type.ime()).bottom
-                assertTrue("输入法可见时其 inset 高度必须大于 0", imeBottom > 0)
+                assertTrue(
+                    "输入法可见时其 inset 高度必须大于 0；诊断=" + ImeInsetsDiag.dump(activity),
+                    imeBottom > 0
+                )
 
                 // 1) 机制：滚动容器的高度必须真的让出键盘那块空间。
                 //    把 ime 高度加在 ScrollView 自己的 padding 上不会让视口变矮 —— 这条断言正是防那个坑。

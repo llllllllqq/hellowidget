@@ -634,7 +634,10 @@ class MainActivityEntryInstrumentedTest {
             assertNotNull("必须能读到窗口 insets", insets)
 
             val imeBottom = insets!!.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            assertTrue("输入法可见时其 inset 高度必须大于 0", imeBottom > 0)
+            assertTrue(
+                "输入法可见时其 inset 高度必须大于 0；诊断=" + ImeInsetsDiag.dump(activity),
+                imeBottom > 0
+            )
 
             val editorLocation = IntArray(2)
             editor.getLocationOnScreen(editorLocation)
