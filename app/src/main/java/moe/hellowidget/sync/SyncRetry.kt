@@ -4,7 +4,6 @@ import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.ComponentName
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import moe.hellowidget.SyncRetryJobService
@@ -149,14 +148,10 @@ object SyncRetry {
     fun isScheduled(context: Context): Boolean {
         val scheduler = scheduler(context.applicationContext) ?: return false
         return try {
-            // getPendingJob 从 API 24 就有，语义最直接；老系统回退到 getAllPendingJobs（API 21+）。
-            // 两者都查不到时返回 false —— 注意个别系统上"刚排的任务查不到"确实存在，
+            // minSdk 24 起 getPendingJob（API 24）恒可用，不再需要 getAllPendingJobs 回退分支。
+            // 查不到时返回 false —— 注意个别系统上"刚排的任务查不到"确实存在，
             // 因此这个值只用于界面提示与诊断，不能当成"一定没排上"的判据（见 schedule 的 @return）。
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                scheduler.getPendingJob(JOB_ID) != null
-            } else {
-                scheduler.allPendingJobs.any { it.id == JOB_ID }
-            }
+            scheduler.getPendingJob(JOB_ID) != null
         } catch (e: Exception) {
             Log.w(TAG, "查询系统重试任务失败", e)
             false

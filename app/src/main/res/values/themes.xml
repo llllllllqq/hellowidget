@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-        <style name="Theme.HelloWorld" parent="Theme.AppCompat.Light.NoActionBar">
+    <!--
+        只允许使用 **AppCompat 真正存在的**主题属性。
+        历史坑（commit c8aea77）：这里一度从 Material 模板抄来了 colorPrimaryVariant /
+        colorOnPrimary / colorSecondary / colorSecondaryVariant / colorOnSecondary ——
+        这些属性在 Theme.AppCompat.* 里并不存在，aapt 只会在编译期静默忽略，
+        等到运行时才发现主题色没生效。AppCompat 对应的名字是 colorPrimaryDark / colorAccent。
+    -->
+    <style name="Theme.HelloWorld" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="colorPrimary">@color/purple_500</item>
         <item name="colorPrimaryDark">@color/purple_700</item>
         <item name="colorAccent">@color/teal_200</item>

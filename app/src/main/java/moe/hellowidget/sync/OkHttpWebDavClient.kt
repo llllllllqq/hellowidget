@@ -19,7 +19,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
 /**
- * WebDAV 客户端（OkHttp 4.12.0）：单向上传需要的 `PUT` 与 `MKCOL`。
+ * WebDAV 客户端（OkHttp 5.4.0）：单向上传需要的 `PUT` 与 `MKCOL`。
  *
  * ## 为什么从手写 Socket 换成 OkHttp
  * 旧实现自己拼 HTTP/1.1，`output.write()` / `flush()` **没有任何写超时**，`close()` 还是空实现：
@@ -29,7 +29,8 @@ import okhttp3.Response
  * 「DNS 解析 + 连接 + 写正文 + 服务器处理 + 读响应」整条链路，任何一步挂住都会在确定时限内失败；
  * `close()` 也能真正取消进行中的请求（见 [close]）。
  *
- * 版本选 4.12.0 而不是 5.x 的原因见 `app/build.gradle.kts` 的依赖注释（Kotlin 元数据版本）。
+ * 版本从 4.12.0 升到 5.4.0 的前提（Kotlin ≥ 2.1）由 AGP 9 的内置 Kotlin 满足；
+ * 为什么不是 5.5.0（它要求 compileSdk 37）见 `app/build.gradle.kts` 的依赖注释。
  *
  * ## 语义与安全策略与旧实现一致
  *  - 只有两个动作：`PUT`（强制覆盖，不带任何 `If-Match` / `If-None-Match` / `If-*-Since`）与 `MKCOL`；

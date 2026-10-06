@@ -176,9 +176,9 @@ object SyncNotifier {
         return PendingIntent.getActivity(context, 10, intent, pendingIntentFlags())
     }
 
+    // minSdk 24 起 FLAG_IMMUTABLE（API 23+）恒可用 —— 不再需要按版本拼 flags
     private fun pendingIntentFlags(): Int =
-        PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
     /** Toast 里最多带出的服务器细节长度：一句话能读完，完整细节看同步设置页的状态行 */
     private const val TOAST_DETAIL_MAX = 80

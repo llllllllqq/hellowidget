@@ -263,8 +263,8 @@ class MainActivity : AppCompatActivity() {
      * 上传图标 + 可选的橙点角标。
      *
      * 橙点用 `LayerDrawable` 叠在原图标上（**不替换图标、不新增图标资源**），
-     * 位置用 **inset** 手工算到右上角：`setLayerGravity` 需要 API 23，而本项目 minSdk 21
-     * （CI 的 lint 会直接报 `NewApi` 错误），inset 从 API 1 就在，一条代码路径通吃 21~35。
+     * 位置用 **inset** 手工算到右上角：`setLayerInset` 从 API 1 就在，一条代码路径通吃所有受支持的版本，
+     * 不必换成依赖 `setLayerGravity`（API 23）的重力写法 —— 那只是同一效果的另一种表达，换了要重新验证角标位置。
      */
     private fun uploadIcon(withDot: Boolean): Drawable? {
         val icon = ContextCompat.getDrawable(this, R.drawable.ic_action_upload) ?: return null
