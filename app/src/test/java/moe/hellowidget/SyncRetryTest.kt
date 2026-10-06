@@ -295,7 +295,9 @@ class SyncRetryTest {
         )
 
         assertNotNull("SyncRetryJobService 必须在 Manifest 里声明，否则系统无法拉起它", info)
-        assertEquals(Manifest.permission.BIND_JOB_SERVICE, info.permission)
+        // 用字面量而不是 Manifest.permission 常量：BIND_JOB_SERVICE 是 @SystemApi，
+        // 公共 SDK（单测编译用的就是它）里没有这个常量
+        assertEquals("android.permission.BIND_JOB_SERVICE", info.permission)
         assertFalse("只允许系统绑定，不能导出", info.exported)
     }
 

@@ -2,6 +2,7 @@ package moe.hellowidget
 
 import android.app.ActivityManager
 import android.app.NotificationManager
+import android.app.job.JobScheduler
 import android.content.Context
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -508,9 +509,22 @@ class SyncE2eInstrumentedTest {
         SyncSettings.setEnabled(context, true)
         SyncSettings.resetRuntimeState(context)
 
+        // 设备级前提自检：「排入系统任务」这件事本身必须先能在这台设备上用。
+        // 后面 app 流程里的断言一旦失败，就能一眼分清是「系统不让排 / 查不到」
+        // 还是「app 的保存路径没有排任务」—— 否则一次 CI 只能试一个方向。
+        SyncRetry.schedule(context)
+        val directScheduleWorks = SyncRetry.isScheduled(context)
+        val directPendingIds = pendingJobIds()
+        SyncRetry.cancel(context)
+
         val typed = "网络恢复后应当补传的内容"
         assertTrue(runBlocking { ContentStore.write(typed) })
 
+        // 先把失败这一次的现场全部记下来，再去断言（断言会中断测试，后面还想跑"补传成功"那一段）
+        var resultAfterFailure = ""
+        var scheduledAfterFailure = false
+        var pendingIdsAfterFailure = ""
+        var statusAfterFailure = ""
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             awaitEditorReady(scenario)
             // 返回键 = 用户报障时的那条路径：先落盘、再触发上传
@@ -524,24 +538,31 @@ class SyncE2eInstrumentedTest {
             ) {
                 SystemClock.sleep(200)
             }
-            assertEquals(
-                "指向不可达端口时同步必须明确失败（lastResult=${SyncSettings.lastResult(context)}）",
-                SyncEngine.RESULT_FAILED,
-                SyncSettings.lastResult(context)
-            )
-            assertTrue(
-                "上传失败后必须留下系统重试任务，否则又变回「只能清后台」",
-                SyncRetry.isScheduled(context)
-            )
+            resultAfterFailure = SyncSettings.lastResult(context)
+            scheduledAfterFailure = SyncRetry.isScheduled(context)
+            pendingIdsAfterFailure = pendingJobIds()
+            statusAfterFailure = SyncManager.status.value.toString()
         }
 
         // 网络恢复：模拟系统在合适时机拉起那个任务（真机上还要过 90 秒最短延迟与 1 分钟闸门）
         SyncSettings.saveConfig(context, goodConfig)
         SyncSettings.setLastAttemptAt(context, System.currentTimeMillis() - 120_000)
         val needsAnotherRetry = runBlocking { SyncRetry.runOnce(context) }
+        val recovered = cloud(uploadedName())
 
-        assertFalse("内容已经补传成功，不该再重试", needsAnotherRetry)
-        assertEquals("重试必须真的把内容传上去", typed, cloud(uploadedName()))
+        // 现场诊断放在断言消息里：CI 日志里直接能看到"到底哪一环断了"
+        val scene = "result=$resultAfterFailure scheduledAfterFailure=$scheduledAfterFailure " +
+            "pendingIdsAfterFailure=$pendingIdsAfterFailure statusAfterFailure=$statusAfterFailure " +
+            "[设备自检] directScheduleWorks=$directScheduleWorks directPendingIds=$directPendingIds"
+
+        assertEquals("指向不可达端口时同步必须明确失败（$scene）", SyncEngine.RESULT_FAILED, resultAfterFailure)
+        assertTrue(
+            "[设备自检] 这台设备上「排入系统重试任务 + 查回来」必须可用（$scene）",
+            directScheduleWorks
+        )
+        assertTrue("上传失败后必须留下系统重试任务，否则又变回「只能清后台」（$scene）", scheduledAfterFailure)
+        assertFalse("内容已经补传成功，不该再重试（$scene）", needsAnotherRetry)
+        assertEquals("重试必须真的把内容传上去（$scene）", typed, recovered)
 
         // 真机上这一趟结束后由 SyncRetryJobService 用 jobFinished(params, false) 结束任务；
         // 测试里直接调用 runOnce，所以自己收尾，并顺带证明「执行结束后撤销是生效的」
@@ -550,6 +571,14 @@ class SyncE2eInstrumentedTest {
     }
 
     // ------------------------------------------------------------ 工具
+
+    /** 当前待执行的系统任务 id；查询失败时把异常原样带出来（诊断信息比空列表有用得多） */
+    private fun pendingJobIds(): String = try {
+        (context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler)
+            .allPendingJobs.map { it.id }.toString()
+    } catch (e: Exception) {
+        "查询失败 ${e.javaClass.simpleName}: ${e.message}"
+    }
 
     /** 等编辑器异步读盘完成（解禁）——只有解禁后才能编辑与保存 */
     private fun awaitEditorReady(scenario: ActivityScenario<MainActivity>, timeoutMs: Long = 10_000) {

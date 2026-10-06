@@ -90,8 +90,13 @@ object SyncRetry {
                 // 进程被杀、设备重启后任务仍在（需要 RECEIVE_BOOT_COMPLETED，见 AndroidManifest）
                 .setPersisted(true)
                 .build()
-            scheduler.schedule(job)
-            Log.i(TAG, "已排入系统重试任务（jobId=$JOB_ID，最短延迟 ${MIN_LATENCY_MS / 1000}s）")
+            val result = scheduler.schedule(job)
+            if (result == JobScheduler.RESULT_SUCCESS) {
+                Log.i(TAG, "已排入系统重试任务（jobId=$JOB_ID，最短延迟 ${MIN_LATENCY_MS / 1000}s）")
+            } else {
+                // 系统可以"收下但不排"（返回 RESULT_FAILURE，不抛异常）：绝不能把它当成功
+                Log.w(TAG, "系统拒绝了重试任务（result=$result），本次不会自动补传")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "排入系统重试任务失败（不影响本次上传）", e)
         }
