@@ -110,7 +110,7 @@ class SyncRetryTest {
 
     @Test
     fun schedule_enqueuesOnePersistedJobWithNetworkConstraintAndExponentialBackoff() {
-        SyncRetry.schedule(context)
+        assertTrue("系统必须收下这个任务（返回值要如实反映）", SyncRetry.schedule(context))
 
         val job = pendingRetryJob()
         assertNotNull("保存后必须留下一个系统重试任务", job)

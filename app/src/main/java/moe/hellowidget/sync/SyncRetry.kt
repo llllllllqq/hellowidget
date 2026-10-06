@@ -4,6 +4,7 @@ import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.ComponentName
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import moe.hellowidget.SyncRetryJobService
@@ -67,15 +68,19 @@ object SyncRetry {
      *
      * 未启用同步 / 配置不完整时不排（那种情况橙点也不会亮）。任何异常都不能影响
      * 保存与上传本身，因此这里全部吞掉并记日志。
+     *
+     * @return 系统是否**收下**了这个任务（`JobScheduler.RESULT_SUCCESS`）。
+     *   注意"收下"不等于"查得到"：`getAllPendingJobs()` 在个别系统上查不到刚排的任务，
+     *   因此返回值只用于诊断与测试，调用方不必据此改变行为。
      */
-    fun schedule(context: Context) {
+    fun schedule(context: Context): Boolean {
         val appContext = context.applicationContext
         if (!SyncLauncher.isReady(appContext)) {
             Log.i(TAG, "同步未启用或配置不完整，不排重试任务")
-            return
+            return false
         }
-        val scheduler = scheduler(appContext) ?: return
-        try {
+        val scheduler = scheduler(appContext) ?: return false
+        return try {
             // build() 自己也会抛（缺 RECEIVE_BOOT_COMPLETED 权限、一个约束都没有等），
             // 所以它必须和 schedule() 一起被接住：这里抛出去会顺着调用方（保存路径）冒上去，
             // 让「刷新小组件 / 触发上传 / finish()」全都做不成 —— 兜底功能绝不允许拖垮主流程。
@@ -93,12 +98,15 @@ object SyncRetry {
             val result = scheduler.schedule(job)
             if (result == JobScheduler.RESULT_SUCCESS) {
                 Log.i(TAG, "已排入系统重试任务（jobId=$JOB_ID，最短延迟 ${MIN_LATENCY_MS / 1000}s）")
+                true
             } else {
                 // 系统可以"收下但不排"（返回 RESULT_FAILURE，不抛异常）：绝不能把它当成功
                 Log.w(TAG, "系统拒绝了重试任务（result=$result），本次不会自动补传")
+                false
             }
         } catch (e: Exception) {
             Log.w(TAG, "排入系统重试任务失败（不影响本次上传）", e)
+            false
         }
     }
 
@@ -124,8 +132,14 @@ object SyncRetry {
     fun isScheduled(context: Context): Boolean {
         val scheduler = scheduler(context.applicationContext) ?: return false
         return try {
-            // getAllPendingJobs() 从 API 21 就在，一条路径通吃，不必为 24+ 单开分支
-            scheduler.allPendingJobs.any { it.id == JOB_ID }
+            // getPendingJob 从 API 24 就有，语义最直接；老系统回退到 getAllPendingJobs（API 21+）。
+            // 两者都查不到时返回 false —— 注意个别系统上"刚排的任务查不到"确实存在，
+            // 因此这个值只用于界面提示与诊断，不能当成"一定没排上"的判据（见 schedule 的 @return）。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                scheduler.getPendingJob(JOB_ID) != null
+            } else {
+                scheduler.allPendingJobs.any { it.id == JOB_ID }
+            }
         } catch (e: Exception) {
             Log.w(TAG, "查询系统重试任务失败", e)
             false

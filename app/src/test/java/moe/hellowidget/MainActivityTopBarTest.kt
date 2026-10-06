@@ -12,6 +12,7 @@ import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.runBlocking
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncEngine
+import moe.hellowidget.sync.SyncRetry
 import moe.hellowidget.sync.SyncSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -323,5 +324,38 @@ class MainActivityTopBarTest {
         }
         assertNotNull("保存（含应用内跳转的静默保存）必须触发自动上传", started)
         assertEquals(SyncService::class.java.name, started!!.component?.className)
+    }
+
+    /**
+     * v7.9：保存时必须**同时**把「这次改动还没传上去」交给系统（一次性持久化重试任务）。
+     *
+     * 这是"上传失败不至于永久丢失"的唯一兜底：即使紧接着的触发被系统吞掉、
+     * 进程被冻结或回收，系统仍然记着这件事，会在有网络时重新拉起进程补传。
+     * 真机侧的端到端证据由 `SyncE2eInstrumentedTest` 覆盖，这里钉住「保存路径确实排了」。
+     */
+    @Test
+    fun everySave_alsoHandsThePendingUploadToTheSystemRetry() {
+        configureSync()
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        awaitEditorEnabled(activity)
+        assertFalse("前置条件：还没有排过重试任务", SyncRetry.isScheduled(app))
+        editorOf(activity).setText("保存时应当把它交给系统重试")
+
+        // 打开设置页（openingSettings = true）→ 随后的 onStop 属于「静默保存」
+        assertTrue(activity.onOptionsItemSelected(RoboMenuItem(R.id.action_webdav)))
+        controller.pause().stop()
+        awaitContent("保存时应当把它交给系统重试")
+
+        // 写盘在 IO 线程、排任务在写盘之后：交替 idle 直到它真的排上
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!SyncRetry.isScheduled(app) && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(20)
+        }
+        assertTrue(
+            "保存必须把待上传内容交给系统重试任务，否则上传失败后又变回「只能清后台」",
+            SyncRetry.isScheduled(app)
+        )
     }
 }

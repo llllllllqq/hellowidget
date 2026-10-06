@@ -139,4 +139,11 @@ else
 fi
 
 ls -l "$SHOT_DIR" || true
+
+# 同步相关的应用日志：CI 日志里能直接看到「有没有排上系统重试任务、闸门为什么跳过、
+# 同步为什么失败、系统重试任务有没有被执行」。v7.9 那次 setBackoffCriteria 参数顺序事故
+# 就是靠这类证据定位的 —— 而 logcat 默认不会出现在 Gradle 输出里。
+echo "===== 同步相关 logcat（同步编排 / 前台服务 / 系统重试任务）====="
+adb logcat -d -v brief -s SyncRetry:* SyncRetryJob:* SyncManager:* SyncLauncher:* SyncService:* SyncNotifier:* 2>&1 | tail -100 || true
+
 exit "$STATUS"
