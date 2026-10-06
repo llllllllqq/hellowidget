@@ -378,8 +378,13 @@ jobs:
           ls -la dist
           APK=$(find dist -name 'app-release.apk' | head -1)
           if [ -z "$APK" ]; then echo "::error::未找到已签名的 app-release.apk（未签名包不能发布）"; exit 1; fi
-          unzip -l "$APK" | grep -q 'META-INF/CERT' || { echo "::error::APK 未签名"; exit 1; }
-          echo "release APK: $APK"
+          # 判定必须用 apksigner，不能看 META-INF/CERT：
+          # minSdk ≥ 24 时 AGP 默认**关闭 v1（JAR）签名**（v2/v3 已足够覆盖 API 24+），
+          # 此时已签名的包里根本没有 META-INF/CERT* —— 旧判定会在发版时误报「未签名」并卡住发布。
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          BT="$(ls -d "$SDK"/build-tools/*/ 2>/dev/null | sort -V | tail -1)"
+          "${BT}apksigner" verify --print-certs "$APK"
+          echo "release APK: $APK（apksigner 校验通过）"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

@@ -22,11 +22,16 @@ if [ -z "$APK" ]; then
 fi
 echo "release APK: $APK"
 
-# fork PR / 无 secrets 时是未签名包，装不上 —— 与 release job 的判定保持一致，跳过而不是失败
-if ! unzip -l "$APK" | grep -q 'META-INF/CERT'; then
-  echo "::warning::release APK 未签名（fork PR / 无 secrets）—— 无法安装，跳过 release 冒烟"
+# fork PR / 无 secrets 时是未签名包，装不上 —— 与 release job 的判定保持一致，跳过而不是失败。
+# 判定用 apksigner 而不是 META-INF/CERT：minSdk ≥ 24 时 AGP 默认关闭 v1（JAR）签名
+# （v2/v3 已足够覆盖 API 24+），已签名的包里没有 META-INF/CERT*。
+SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+BT="$(ls -d "$SDK"/build-tools/*/ 2>/dev/null | sort -V | tail -1)"
+if ! "${BT}apksigner" verify "$APK" >/dev/null 2>&1; then
+  echo "::warning::release APK 未通过 apksigner 校验（fork PR / 无 secrets 时为未签名包）—— 无法安装，跳过 release 冒烟"
   exit 0
 fi
+echo "apksigner 校验通过（v1 已按 minSdk 24 关闭，v2/v3 签名块存在即可安装）"
 
 adb logcat -c >/dev/null 2>&1 || true
 if ! adb install -r "$APK" 2>&1 | tail -3; then
