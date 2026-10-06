@@ -325,6 +325,9 @@ class SyncRetryTest {
         assertEquals(1, SyncSettings.retryAttempts(context))
 
         putFailure = null
+        // 绕开 1 分钟闸门：真机上两次重试之间至少隔 90 秒（SyncRetry.MIN_LATENCY_MS），
+        // 测试里直接调用 runOnce，必须自己把 lastAttemptAt 拨回去，否则这次会被节流跳过
+        SyncSettings.setLastAttemptAt(context, System.currentTimeMillis() - 120_000)
         assertFalse("成功后不该再重试", SyncRetry.runOnce(context))
         assertEquals("成功后预算归零", 0, SyncSettings.retryAttempts(context))
     }
