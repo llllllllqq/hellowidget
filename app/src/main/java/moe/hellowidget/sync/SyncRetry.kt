@@ -85,7 +85,10 @@ object SyncRetry {
             // 所以它必须和 schedule() 一起被接住：这里抛出去会顺着调用方（保存路径）冒上去，
             // 让「刷新小组件 / 触发上传 / finish()」全都做不成 —— 兜底功能绝不允许拖垮主流程。
             val job = JobInfo.Builder(JOB_ID, ComponentName(appContext, SyncRetryJobService::class.java))
-                // 网络可用才执行：网络状态由系统盯着，因此不需要 ACCESS_NETWORK_STATE 权限
+                // 「有网络才执行」。注意：带连通性约束的任务要求调用方持有 ACCESS_NETWORK_STATE，
+                // 否则 JobSchedulerService.enforceValidJobRequest 会直接抛 SecurityException
+                // （真机实测："ACCESS_NETWORK_STATE required for jobs with a connectivity constraint"）。
+                // Manifest 里已经声明了它 —— 少了这个权限，整个自愈通道会静默失效。
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                 .setMinimumLatency(MIN_LATENCY_MS)
                 // 注意参数顺序：官方签名是 (long initialBackoffMillis, @BackoffPolicy int backoffPolicy)

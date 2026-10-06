@@ -301,16 +301,35 @@ class SyncRetryTest {
         assertFalse("只允许系统绑定，不能导出", info.exported)
     }
 
+    /** 合并后的 Manifest 里声明了哪些权限（比 checkPermission 更直接：后者可能被测试自己授予） */
+    private fun requestedPermissions(): List<String> =
+        context.packageManager
+            .getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+            .requestedPermissions
+            ?.toList()
+            .orEmpty()
+
     @Test
     fun persistedJobPermission_isDeclaredInTheManifest() {
-        val granted = context.packageManager.checkPermission(
-            Manifest.permission.RECEIVE_BOOT_COMPLETED,
-            context.packageName
+        assertTrue(
+            "setPersisted(true) 需要 RECEIVE_BOOT_COMPLETED（见 AndroidManifest），" +
+                "实际声明：${requestedPermissions()}",
+            requestedPermissions().contains(Manifest.permission.RECEIVE_BOOT_COMPLETED)
         )
-        assertEquals(
-            "setPersisted(true) 需要 RECEIVE_BOOT_COMPLETED，否则 JobInfo.Builder.build() 会抛异常",
-            PackageManager.PERMISSION_GRANTED,
-            granted
+    }
+
+    /**
+     * v7.9 真机日志抓到的坑：带连通性约束的任务要求调用方持有 `ACCESS_NETWORK_STATE`，
+     * 否则 `JobScheduler.schedule()` 抛 `SecurityException`（"required for jobs with a
+     * connectivity constraint"）—— 而它只会被 [SyncRetry.schedule] 的兜底 catch 吞掉，
+     * 表现为「自愈通道静默失效」。这条用例把它钉在单测里。
+     */
+    @Test
+    fun connectivityPermission_isDeclaredOrTheRetryJobWouldBeSilentlyRejected() {
+        assertTrue(
+            "JobScheduler 的连通性约束要求 ACCESS_NETWORK_STATE，否则真机上排任务会抛 SecurityException，" +
+                "实际声明：${requestedPermissions()}",
+            requestedPermissions().contains(Manifest.permission.ACCESS_NETWORK_STATE)
         )
     }
 

@@ -10,14 +10,20 @@
         POST_NOTIFICATIONS：Android 13+ 显示进度条需要（用户拒绝时同步照跑，只是没有通知栏反馈）。
         RECEIVE_BOOT_COMPLETED：v7.9 起的系统重试任务用 setPersisted(true)，这是它的前置权限
         （只声明权限，不注册任何开机广播接收器 —— 我们不需要在开机时做任何事）。
-        刻意**不申请** ACCESS_NETWORK_STATE：失败即报错，少一个权限
-        （JobScheduler 的网络约束由系统自己盯着，也不需要它）。
+        ACCESS_NETWORK_STATE：v7.9 起系统重试任务带「有网络才执行」的约束，而
+        JobSchedulerService.enforceValidJobRequest 明确要求：带 connectivity 约束的任务，
+        调用方必须持有该权限，否则 schedule() 直接抛 SecurityException
+        （CI 真机日志实测："android.permission.ACCESS_NETWORK_STATE required for jobs with a
+        connectivity constraint"）。这是 normal 级权限，安装即授予、无运行时弹窗、不涉及隐私；
+        代价是 v7.2~v7.8「一个网络权限都不要」的说法到此为止 —— 换取的是"保存了却没传上去"
+        能有一条系统级自愈通道。
     -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
         tools:ignore="UnusedAttribute"：networkSecurityConfig 只对 API 24+ 生效，
