@@ -35,6 +35,7 @@ object SyncSettings {
     const val KEY_LAST_SUCCESS_AT = "sync_last_success_at"
     const val KEY_LAST_UPLOADED_HASH = "sync_last_uploaded_hash"
     const val KEY_LAST_UPLOADED_TS = "sync_last_uploaded_ts"
+    const val KEY_RETRY_ATTEMPTS = "sync_retry_attempts"
 
     const val DEFAULT_FILE_NAME = "note.txt"
 
@@ -120,6 +121,16 @@ object SyncSettings {
     }
 
     /**
+     * 本次「还有内容没传上去」已经自动重试过几次。
+     * 上限见 [SyncRetry.MAX_ATTEMPTS]：用完就停，不做长期后台驻留 —— 剩下的交给橙点与用户。
+     */
+    fun retryAttempts(context: Context): Int = context.prefs.getInt(KEY_RETRY_ATTEMPTS, 0)
+
+    fun setRetryAttempts(context: Context, attempts: Int) {
+        context.prefs.edit().putInt(KEY_RETRY_ATTEMPTS, attempts).apply()
+    }
+
+    /**
      * 记录一次成功。`uploadedHash` 是本次同步结束时本地内容的哈希 ——
      * 它既是下一次「本地有没有变」的基准，也是「确认无需上传」时的基准；
      * `uploadedTs` 是这次实际上传用的 unix 秒时间戳（没有上传时传上一次的值）。
@@ -150,6 +161,7 @@ object SyncSettings {
             .remove(KEY_LAST_SUCCESS_AT)
             .remove(KEY_LAST_UPLOADED_HASH)
             .remove(KEY_LAST_UPLOADED_TS)
+            .remove(KEY_RETRY_ATTEMPTS)
             .apply()
     }
 }

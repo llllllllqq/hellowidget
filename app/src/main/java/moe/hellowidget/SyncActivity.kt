@@ -233,14 +233,19 @@ class SyncActivity : AppCompatActivity() {
     }
 
     /**
-     * v7.9：系统级重试任务是否还在排队。
-     * 「已排队」= 本地还有没传上去的改动，系统会在有网络时自动重试，橙点会一直亮到成功为止。
+     * v7.9：系统级重试任务的状态。
+     * 「已排队」= 本地还有没传上去的改动，系统会在有网络时自动重试；
+     * 「已用完」= 自动重试用满 [SyncRetry.MAX_ATTEMPTS] 次后停下（不做长期后台驻留），
+     * 需要用户点「立即同步」或再次保存才会重新排队 —— 这条提示必须说清楚，不能让用户以为已经传上去了。
      */
     private fun retryLine(): String? {
         if (!SyncSettings.enabled(this) || SyncSettings.config(this) == null) return null
-        return getString(
-            if (SyncRetry.isScheduled(this)) R.string.sync_retry_queued else R.string.sync_retry_none
-        )
+        return when {
+            SyncRetry.isScheduled(this) -> getString(R.string.sync_retry_queued)
+            SyncSettings.retryAttempts(this) >= SyncRetry.MAX_ATTEMPTS ->
+                getString(R.string.sync_retry_exhausted, SyncRetry.MAX_ATTEMPTS)
+            else -> getString(R.string.sync_retry_none)
+        }
     }
 
     private fun skipText(reason: moe.hellowidget.sync.SkipReason): Int = when (reason) {

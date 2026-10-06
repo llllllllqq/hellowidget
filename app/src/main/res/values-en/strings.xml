@@ -99,6 +99,7 @@
     <string name="sync_last_attempt">Last attempt: %1$s</string>
     <string name="sync_retry_queued">Automatic retry: queued — changes are still not uploaded; the system will retry once the network is available</string>
     <string name="sync_retry_none">Automatic retry: none (nothing pending)</string>
+    <string name="sync_retry_exhausted">Automatic retry: all %1$d automatic attempts used, changes are still not uploaded — tap \"Sync now\" or save again</string>
     <string name="sync_cleartext_warning">⚠ Plain http is in use: your password and notes travel unencrypted and can be read by others on the same network. Use https when possible (self-signed certificates can be pinned below).</string>
     <string name="sync_tls_pending">Server certificate fingerprint (not trusted yet): %1$s</string>
     <string name="sync_tls_trusted">Trusted certificate fingerprint: %1$s</string>

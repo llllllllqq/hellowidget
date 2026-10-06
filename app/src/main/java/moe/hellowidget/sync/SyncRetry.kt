@@ -49,6 +49,15 @@ object SyncRetry {
     const val BACKOFF_MS = 60 * 1000L
 
     /**
+     * 每次「保存」之后最多自动重试几次。
+     *
+     * 必须有上限：指数退避的系统上限是 5 小时，没有上限时"某个永远传不上去的内容"会让系统
+     * **永远**每隔几小时唤醒一次进程 —— 那正是产品明确不要的"后台长期驻留"。
+     * 用完预算就停：任务从系统里消失，橙点继续亮着，用户点「立即同步」或下次保存会重新排。
+     */
+    const val MAX_ATTEMPTS = 5
+
+    /**
      * 这一次重试任务是否正在执行。
      *
      * 存在的理由是一个会变成死循环的坑：任务成功之后 [SyncManager] 会调 [cancel]，
@@ -81,6 +90,8 @@ object SyncRetry {
         }
         val scheduler = scheduler(appContext) ?: return false
         return try {
+            // 用户又保存了一次：重试预算重新给满（这正是"用户动一下就能救回来"的路径）
+            SyncSettings.setRetryAttempts(appContext, 0)
             // build() 自己也会抛（缺 RECEIVE_BOOT_COMPLETED 权限、一个约束都没有等），
             // 所以它必须和 schedule() 一起被接住：这里抛出去会顺着调用方（保存路径）冒上去，
             // 让「刷新小组件 / 触发上传 / finish()」全都做不成 —— 兜底功能绝不允许拖垮主流程。
@@ -115,12 +126,15 @@ object SyncRetry {
 
     /** 撤销待执行的重试任务：内容已经在云端（或本来就没改动），不必再唤醒进程 */
     fun cancel(context: Context) {
+        val appContext = context.applicationContext
+        // 内容已经安全抵达云端：本次的重试预算归零
+        SyncSettings.setRetryAttempts(appContext, 0)
         if (running) {
             // 正在执行的这一趟自己会收尾，见 [running] 的说明（直接 cancel 会把它重排回来）
             Log.i(TAG, "重试任务正在执行，撤销请求忽略（它自己会用 jobFinished 结束）")
             return
         }
-        val scheduler = scheduler(context.applicationContext) ?: return
+        val scheduler = scheduler(appContext) ?: return
         try {
             scheduler.cancel(JOB_ID)
         } catch (e: Exception) {
@@ -177,18 +191,39 @@ object SyncRetry {
             Log.i(TAG, "同步已被关闭或配置失效，重试任务结束")
             return false
         }
+        val attempts = SyncSettings.retryAttempts(appContext)
+        if (attempts >= MAX_ATTEMPTS) {
+            // 预算用完就彻底停下：不做长期后台驻留，剩下的交给橙点与用户
+            Log.i(TAG, "自动重试已用完 $MAX_ATTEMPTS 次，停止唤醒进程（下次保存或手动上传会重新排）")
+            return false
+        }
         // running 期间忽略 SyncManager 的成功撤销：否则会把正在跑的这一次取消 → onStopJob
         // 返回"请重排"→ 死循环（详见 [running]）
         running = true
-        try {
+        val again = try {
             // 依旧走 SyncManager 的互斥锁：与前台服务路径串行，绝不并发 PUT
             val status = SyncManager.performSync(appContext, SyncTrigger.CLOSE_EDITOR)
-            val again = shouldReschedule(status)
-            Log.i(TAG, "系统重试任务执行结果：$status，${if (again) "将继续重试" else "结束"}")
-            return again
+            val retry = shouldReschedule(status)
+            if (retry) {
+                val used = attempts + 1
+                SyncSettings.setRetryAttempts(appContext, used)
+                Log.i(
+                    TAG,
+                    "系统重试任务执行结果：$status（已用 $used/$MAX_ATTEMPTS 次，${
+                        if (used < MAX_ATTEMPTS) "将继续重试" else "已达上限，停止自动重试"
+                    }）"
+                )
+                used < MAX_ATTEMPTS
+            } else {
+                // 传上去了（或本来就没改动）：预算归零
+                SyncSettings.setRetryAttempts(appContext, 0)
+                Log.i(TAG, "系统重试任务执行结果：$status（结束）")
+                false
+            }
         } finally {
             running = false
         }
+        return again
     }
 
     /**

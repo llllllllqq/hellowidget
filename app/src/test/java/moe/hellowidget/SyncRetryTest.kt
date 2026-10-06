@@ -285,6 +285,59 @@ class SyncRetryTest {
         assertFalse(again)
     }
 
+    // ------------------------------------------------------------ 重试预算（不做长期后台驻留）
+
+    /**
+     * 必须有上限：指数的系统上限是 5 小时，没有上限时"永远传不上去的内容"
+     * 会让系统永远每隔几小时唤醒一次进程。
+     */
+    @Test
+    fun runOnce_stopsAfterTheAttemptBudget_soTheProcessIsNotWokenForever() = runBlocking {
+        putFailure = WebDavException(WebDavError.TIMEOUT)
+
+        repeat(SyncRetry.MAX_ATTEMPTS - 1) { index ->
+            assertTrue("第 ${index + 1} 次仍在预算内，应当继续重试", SyncRetry.runOnce(context))
+        }
+        assertFalse("用满预算必须停下", SyncRetry.runOnce(context))
+        assertFalse("停下之后即使系统再拉起也不该继续", SyncRetry.runOnce(context))
+        assertEquals(
+            "停止时的计数就是上限值",
+            SyncRetry.MAX_ATTEMPTS,
+            SyncSettings.retryAttempts(context)
+        )
+    }
+
+    @Test
+    fun savingAgain_givesAFreshRetryBudget() = runBlocking {
+        putFailure = WebDavException(WebDavError.TIMEOUT)
+        repeat(SyncRetry.MAX_ATTEMPTS) { SyncRetry.runOnce(context) }
+        assertFalse("预算已用完", SyncRetry.runOnce(context))
+
+        SyncRetry.schedule(context) // 用户又保存了一次
+
+        assertTrue("再次保存必须重新给足预算（这是用户自救的路径）", SyncRetry.runOnce(context))
+    }
+
+    @Test
+    fun successfulRetry_resetsTheAttemptBudget() = runBlocking {
+        putFailure = WebDavException(WebDavError.TIMEOUT)
+        assertTrue(SyncRetry.runOnce(context))
+        assertEquals(1, SyncSettings.retryAttempts(context))
+
+        putFailure = null
+        assertFalse("成功后不该再重试", SyncRetry.runOnce(context))
+        assertEquals("成功后预算归零", 0, SyncSettings.retryAttempts(context))
+    }
+
+    @Test
+    fun resetRuntimeState_clearsTheRetryBudget() {
+        SyncSettings.setRetryAttempts(context, 3)
+
+        SyncSettings.resetRuntimeState(context)
+
+        assertEquals(0, SyncSettings.retryAttempts(context))
+    }
+
     // ------------------------------------------------------------ 声明层面
 
     @Test
