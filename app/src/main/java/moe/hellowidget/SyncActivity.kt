@@ -211,8 +211,18 @@ class SyncActivity : AppCompatActivity() {
         val successAt = SyncSettings.lastSuccessAt(this)
         val attemptAt = SyncSettings.lastAttemptAt(this)
         return when (SyncSettings.lastResult(this)) {
-            SyncEngine.RESULT_SUCCESS ->
-                getString(R.string.sync_status_success, formatTime(successAt))
+            SyncEngine.RESULT_SUCCESS -> {
+                // v8.0.1（D3）：区分「真的传上去了」与「本地无改动、一个请求都没发」——
+                // 两者都会写 RESULT_SUCCESS，旧文案让后者也显示成「上次同步成功」，
+                // 实测排查时正是它造成了一次误判（以为内容已在云端）。
+                // null = 升级前的老数据，保持原来的中性文案。
+                val text = when (SyncSettings.lastSuccessUploaded(this)) {
+                    false -> R.string.sync_status_success_noop
+                    true -> R.string.sync_status_success_uploaded
+                    null -> R.string.sync_status_success
+                }
+                getString(text, formatTime(successAt))
+            }
             SyncEngine.RESULT_FAILED ->
                 getString(
                     R.string.sync_status_failed,
@@ -328,9 +338,17 @@ class SyncActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * v8.0.1（D4）：时间戳**精确到秒**（原来的 SHORT/SHORT 只有分钟）。
+     *
+     * 原因是一次真实排查卡在这里：页面显示「上次尝试 08:55」+「上次自动上传通道 08:56」，
+     * 而 1 分钟闸门恰好是 60 秒 —— 真实间隔是 1 秒还是 119 秒，决定了这次同步是
+     * 「被闸门跳过」还是「压根没跑起来」，而分钟精度把这两种情况的截图变得一模一样。
+     * MEDIUM 时间格式自带秒，且仍是本地化格式。
+     */
     private fun formatTime(at: Long): String =
         if (at <= 0) getString(R.string.sync_time_never)
-        else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(at))
+        else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(at))
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()

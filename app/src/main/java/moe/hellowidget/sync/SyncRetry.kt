@@ -66,8 +66,16 @@ object SyncRetry {
      *
      * 想拿加急的收益又不抢所有权，需要**两个任务 id**（延迟的持久网 + 仅在
      * 「前台服务确实没起来」时启用的即时加急升级），那是独立一轮的改动，不混进本次修复。
+     *
+     * ## v8.0.1（D6）：为什么是 65 秒
+     * 这个值是**我们自己**的选择，只为满足一件事：兜底任务醒来时，那一次尝试留下的
+     * 节流窗口已经过期（闸门是 [SyncEngine.MIN_SYNC_INTERVAL_MS] = 60 秒）——
+     * 否则它会被自己的闸门静默跳过、白烧一次重试预算。
+     * 原先取 90 秒留了 30 秒余量，实测（用户设备）表现为"退出后要等一分半才补传"，
+     * 而真正的故障窗口只有那次尝试是否过了闸门 —— 65 秒足够、又少等 25 秒。
+     * 再配合 D1（已排着就不重排），反复保存也不会把这个截止时间往后推。
      */
-    const val MIN_LATENCY_MS = 90 * 1000L
+    const val MIN_LATENCY_MS = 65 * 1000L
 
     /** 退避起点；JobScheduler 会按指数放大（系统上限 5 小时） */
     const val BACKOFF_MS = 60 * 1000L
@@ -95,12 +103,24 @@ object SyncRetry {
         private set
 
     /**
-     * 排入（或刷新）重试任务。**写盘成功后立刻调用** —— 放在"触发上传之前"是有意的：
+     * 确保系统里有一个待执行的重试任务。**写盘成功后立刻调用** —— 放在"触发上传之前"是有意的：
      * 接下来的触发可能根本没跑起来，那样就没有任何东西记得"还有内容没传上去"。
      * 上传成功后 [SyncManager] 会调用 [cancel] 把它撤销。
      *
      * 未启用同步 / 配置不完整时不排（那种情况橙点也不会亮）。任何异常都不能影响
      * 保存与上传本身，因此这里全部吞掉并记日志。
+     *
+     * ## v8.0.1（D1）：已经有待执行任务时**不重排**
+     * 官方 `JobScheduler.schedule()` 原文：*"Will replace any currently scheduled job with the
+     * same ID with the new information in the JobInfo. If a job with the given ID is currently
+     * running, it will be stopped."*；而 `setMinimumLatency()` 的语义是 *"Milliseconds before
+     * which this job will not be considered for execution"* —— 这个"不早于"时刻**从排入那一刻
+     * 算起**。
+     *
+     * 于是旧实现有个会让"兜底"在最需要它时恰好失效的缺陷：每次保存都重排 → 同 id 被替换 →
+     * **截止时间被一次次推后 [MIN_LATENCY_MS]**。只要用户保存得比这个间隔更勤
+     * （"编辑 → 退出 → 回来 → 再编辑 → 再退出"），兜底任务就**永远轮不到执行**。
+     * 现在只要系统里已经有待执行任务，就保留它更早的截止时间，只把重试预算重置。
      *
      * @return 系统是否**收下**了这个任务（`JobScheduler.RESULT_SUCCESS`）。
      *   注意"收下"不等于"查得到"：`getAllPendingJobs()` 在个别系统上查不到刚排的任务，
@@ -113,9 +133,14 @@ object SyncRetry {
             return false
         }
         val scheduler = scheduler(appContext) ?: return false
+        // 用户又保存了一次：重试预算重新给满（这正是"用户动一下就能救回来"的路径）
+        SyncSettings.setRetryAttempts(appContext, 0)
+        // v8.0.1（D1）：已经排着就**不重排** —— 重排只会把截止时间往后推（见 [schedule] 的 KDoc）
+        if (isScheduled(appContext)) {
+            Log.i(TAG, "已存在待执行的重试任务，保留其更早的截止时间，本次不重排")
+            return true
+        }
         return try {
-            // 用户又保存了一次：重试预算重新给满（这正是"用户动一下就能救回来"的路径）
-            SyncSettings.setRetryAttempts(appContext, 0)
             // build() 自己也会抛（缺 RECEIVE_BOOT_COMPLETED 权限、一个约束都没有等），
             // 所以它必须和 schedule() 一起被接住：这里抛出去会顺着调用方（保存路径）冒上去，
             // 让「刷新小组件 / 触发上传 / finish()」全都做不成 —— 兜底功能绝不允许拖垮主流程。

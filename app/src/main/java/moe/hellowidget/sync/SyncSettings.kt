@@ -38,6 +38,15 @@ object SyncSettings {
     const val KEY_RETRY_ATTEMPTS = "sync_retry_attempts"
 
     /**
+     * v8.0.1（D3）：上一次「成功」到底是**真的传上去了**，还是「本地没改动、一个请求都没发」。
+     *
+     * 这两件事都会写 [KEY_LAST_RESULT] = success，于是设置页那句「上次同步成功」**无法**证明
+     * 内容到了云端 —— 实测排查时正是它造成了一次误判。落盘这个标志后，
+     * 页面才能明确区分「上次已上传」与「上次无改动、无需上传」。
+     */
+    const val KEY_LAST_SUCCESS_UPLOADED = "sync_last_success_uploaded"
+
+    /**
      * v8.0.1：「最后一次自动上传是怎么启动的」的原始证据。
      *
      * 存成一段 ASCII token（例如 `fgs-rejected:ForegroundServiceStartNotAllowedException`
@@ -162,16 +171,34 @@ object SyncSettings {
      * 记录一次成功。`uploadedHash` 是本次同步结束时本地内容的哈希 ——
      * 它既是下一次「本地有没有变」的基准，也是「确认无需上传」时的基准；
      * `uploadedTs` 是这次实际上传用的 unix 秒时间戳（没有上传时传上一次的值）。
+     *
+     * @param uploaded 这一次是否**真的**发生了上传。`false` = 本地自上次成功后没改动、
+     *   一个请求都没发（见 [KEY_LAST_SUCCESS_UPLOADED] 的说明）。
+     *   默认 `true`，因为绝大多数调用点是"确实传上去了"。
      */
-    fun recordSuccess(context: Context, uploadedHash: String, uploadedTs: Long) {
+    fun recordSuccess(
+        context: Context,
+        uploadedHash: String,
+        uploadedTs: Long,
+        uploaded: Boolean = true
+    ) {
         context.prefs.edit()
             .putString(KEY_LAST_RESULT, SyncEngine.RESULT_SUCCESS)
             .putString(KEY_LAST_ERROR, "")
             .putLong(KEY_LAST_SUCCESS_AT, System.currentTimeMillis())
             .putString(KEY_LAST_UPLOADED_HASH, uploadedHash)
             .putLong(KEY_LAST_UPLOADED_TS, uploadedTs)
+            .putBoolean(KEY_LAST_SUCCESS_UPLOADED, uploaded)
             .apply()
     }
+
+    /** 上一次成功是否真的上传了；`null` = 从未成功过（或升级前的老数据） */
+    fun lastSuccessUploaded(context: Context): Boolean? =
+        if (context.prefs.contains(KEY_LAST_SUCCESS_UPLOADED)) {
+            context.prefs.getBoolean(KEY_LAST_SUCCESS_UPLOADED, false)
+        } else {
+            null
+        }
 
     fun recordFailure(context: Context, error: WebDavError) {
         context.prefs.edit()
@@ -190,6 +217,7 @@ object SyncSettings {
             .remove(KEY_LAST_UPLOADED_HASH)
             .remove(KEY_LAST_UPLOADED_TS)
             .remove(KEY_RETRY_ATTEMPTS)
+            .remove(KEY_LAST_SUCCESS_UPLOADED)
             .remove(KEY_LAUNCH_NOTE)
             .remove(KEY_LAUNCH_NOTE_AT)
             .apply()

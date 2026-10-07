@@ -213,7 +213,13 @@ object SyncManager {
 
         if (!SyncEngine.hasLocalChanges(localHash, SyncSettings.lastUploadedHash(context))) {
             // 本地自上次成功上传后没有任何改动：一个请求都不发（省流量、省服务器配额）
-            SyncSettings.recordSuccess(context, localHash, SyncSettings.lastUploadedTs(context))
+            // D3：显式记 uploaded=false —— 否则设置页会把这次"什么都没做"显示成"上次同步成功"
+            SyncSettings.recordSuccess(
+                context,
+                localHash,
+                SyncSettings.lastUploadedTs(context),
+                uploaded = false
+            )
             return SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
         }
 
@@ -223,7 +229,7 @@ object SyncManager {
             lastUploadedSec = SyncSettings.lastUploadedTs(context)
         )
         putNewFile(client, config, bytes, timestampSec)
-        SyncSettings.recordSuccess(context, localHash, timestampSec)
+        SyncSettings.recordSuccess(context, localHash, timestampSec, uploaded = true)
         return SyncStatus.Success(System.currentTimeMillis(), uploaded = true)
     }
 

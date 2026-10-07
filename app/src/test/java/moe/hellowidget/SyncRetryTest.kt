@@ -27,6 +27,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -151,6 +152,33 @@ class SyncRetryTest {
             1,
             scheduler.allPendingJobs.count { it.id == SyncRetry.JOB_ID }
         )
+    }
+
+    /**
+     * v8.0.1（D1）：已有待执行任务时**不许重排**。
+     *
+     * 官方 `schedule()` 会用新 JobInfo **替换**同 id 的任务，而 `setMinimumLatency` 的
+     * "不早于"时刻是**从排入那一刻**算起的。旧实现每次保存都重排 ⇒ 截止时间被一次次推后 ⇒
+     * 只要保存间隔小于该延迟，"兜底"就永远不会执行（恰好在最需要它时失效）。
+     *
+     * 断言用的是"待执行任务还是**同一个对象**"：一旦被重排，Robolectric 里存的就是新的 JobInfo。
+     */
+    @Test
+    fun schedule_doesNotReplaceAnAlreadyPendingJob() {
+        assertTrue(SyncRetry.schedule(context))
+        val first = pendingRetryJob()
+        assertNotNull("前置条件：第一次必须排上", first)
+
+        SyncSettings.setRetryAttempts(context, 3) // 模拟"已经失败过 3 次"
+        assertTrue("已有待执行任务时也应如实返回 true", SyncRetry.schedule(context))
+
+        assertSame(
+            "已排着的任务不能被替换 —— 替换会把兜底任务的截止时间往后推",
+            first,
+            pendingRetryJob()
+        )
+        assertEquals("用户又保存了一次，重试预算必须重新给满", 0, SyncSettings.retryAttempts(context))
+        assertEquals(1, scheduler.allPendingJobs.count { it.id == SyncRetry.JOB_ID })
     }
 
     @Test

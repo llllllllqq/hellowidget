@@ -88,6 +88,9 @@
     <string name="sync_history_note">Every upload creates a new file with a unix timestamp; older files are left untouched (the cloud keeps the full history)</string>
     <string name="sync_status_never">Never synced yet</string>
     <string name="sync_status_success">Last sync succeeded: %1$s</string>
+    <!-- v8.0.1: distinguish "really uploaded" from "nothing changed, no request sent" (both store result=success) -->
+    <string name="sync_status_success_uploaded">Last upload to the cloud: %1$s</string>
+    <string name="sync_status_success_noop">Last sync succeeded but nothing changed locally, so nothing was uploaded (no request was sent): %1$s</string>
     <string name="sync_upload_succeeded">Uploaded to WebDAV</string>
     <string name="sync_failed_toast">Upload failed: %1$s</string>
     <string name="sync_status_failed">Last sync failed: %1$s %2$s</string>
@@ -97,7 +100,7 @@
     <string name="sync_skip_throttled">Less than 1 minute since the last sync — skipped (changes go up at the next allowed moment or via "Sync now")</string>
     <string name="sync_time_never">never</string>
     <string name="sync_last_attempt">Last attempt: %1$s</string>
-    <string name="sync_retry_queued">Automatic retry: queued — changes are still not uploaded; the system will retry once the network is available</string>
+    <string name="sync_retry_queued">Automatic retry: queued (a save arms a system fallback; if the content is already in the cloud the job sends no request)</string>
     <string name="sync_retry_none">Automatic retry: none (nothing pending)</string>
     <string name="sync_retry_exhausted">Automatic retry: all %1$d automatic attempts used, changes are still not uploaded — tap \"Sync now\" or save again</string>
     <!-- v8.0.1 diagnostics: the value is an ASCII token identical to logcat, so it can be copied as-is -->

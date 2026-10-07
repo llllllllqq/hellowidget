@@ -65,6 +65,29 @@ class SyncSettingsTest {
         assertTrue(SyncSettings.lastSuccessAt(context) > 0)
     }
 
+    /**
+     * v8.0.1（D3）：上一次「成功」是**真的传上去了**，还是「本地无改动、一个请求都没发」。
+     *
+     * 两者都会写 `RESULT_SUCCESS`，所以旧设置页那句「上次同步成功」**无法**证明内容到了云端
+     * —— 实测排查时正是它造成了一次误判。
+     */
+    @Test
+    fun recordSuccess_remembersWhetherAnythingWasActuallyUploaded() {
+        SyncSettings.recordSuccess(context, "hash-1", 1_735_689_600L, uploaded = false)
+        assertEquals("没发请求时必须记为 false", false, SyncSettings.lastSuccessUploaded(context))
+
+        SyncSettings.recordSuccess(context, "hash-2", 1_735_689_601L, uploaded = true)
+        assertEquals("真上传了必须记为 true", true, SyncSettings.lastSuccessUploaded(context))
+
+        // 旧调用点（不传 uploaded）沿用"确实上传了"的语义，行为不变
+        SyncSettings.recordSuccess(context, "hash-3", 1_735_689_602L)
+        assertEquals(true, SyncSettings.lastSuccessUploaded(context))
+
+        // 重置运行时状态必须把它一并清掉，否则会显示上一次运行期的旧结论
+        SyncSettings.resetRuntimeState(context)
+        assertNull(SyncSettings.lastSuccessUploaded(context))
+    }
+
     @Test
     fun recordSuccess_clearsAPreviousFailure() {
         SyncSettings.recordFailure(context, WebDavError.UNAUTHORIZED)

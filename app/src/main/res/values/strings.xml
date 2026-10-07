@@ -84,6 +84,9 @@
     <string name="sync_history_note">每次上传都会新建一个带 unix 时间戳的文件，旧文件保持原样（云端自动保留全部历史）</string>
     <string name="sync_status_never">尚未同步过</string>
     <string name="sync_status_success">上次同步成功：%1$s</string>
+    <!-- v8.0.1：区分"真传上去了"与"本地无改动、一个请求都没发"（两者都写 result=success） -->
+    <string name="sync_status_success_uploaded">上次已上传到云端：%1$s</string>
+    <string name="sync_status_success_noop">上次同步成功，但本地无改动、未上传（一个请求都没发）：%1$s</string>
     <string name="sync_upload_succeeded">已上传到云端</string>
     <string name="sync_failed_toast">上传失败：%1$s</string>
     <string name="sync_status_failed">上次同步失败：%1$s %2$s</string>
@@ -93,7 +96,7 @@
     <string name="sync_skip_throttled">距上次同步不足 1 分钟，本次跳过（改动会在下次允许时机或点击「立即同步」时上传）</string>
     <string name="sync_time_never">从未</string>
     <string name="sync_last_attempt">上次尝试：%1$s</string>
-    <string name="sync_retry_queued">自动重试：已排队 —— 还有改动没传上去，系统会在网络可用时自动重试</string>
+    <string name="sync_retry_queued">自动重试：已排队（保存后由系统兜底补传；若内容已在云端，任务醒来不会发任何请求）</string>
     <string name="sync_retry_none">自动重试：无（没有待上传的改动）</string>
     <string name="sync_retry_exhausted">自动重试：已用完 %1$d 次自动重试，仍有改动未上传 —— 请点「立即同步」或再次保存</string>
     <!-- v8.0.1 诊断：值与 logcat 完全一致（ASCII token），方便直接抄给开发者 -->
