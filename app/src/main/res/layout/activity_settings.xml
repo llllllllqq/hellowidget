@@ -373,59 +373,5 @@
             android:layout_marginTop="24dp"
             android:text="@string/settings_reset" />
 
-        <!--
-            v8.2.0：备份与换机迁移。
-
-            刻意放在本页最底部：它是"把整台设备上的这份数据搬走/搬回来"的操作，
-            与上面那些外观调参不是一个类别，但也不值得为它单开一页/一个入口
-            （用户精简明确要求少加界面）。两个按钮等宽并排，各自打开系统文件选择器。
-        -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="24dp"
-            android:background="@color/settings_divider" />
-
-        <TextView
-            android:id="@+id/backup_section_title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/settings_section_backup"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/backup_hint"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/backup_hint"
-            android:textColor="@color/settings_secondary"
-            android:textSize="12sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btn_export_backup"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/backup_export" />
-
-            <Button
-                android:id="@+id/btn_import_backup"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:text="@string/backup_import" />
-        </LinearLayout>
-
     </LinearLayout>
 </ScrollView>

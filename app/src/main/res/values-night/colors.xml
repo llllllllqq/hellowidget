@@ -12,4 +12,6 @@
         比页面底色 #121212 略亮：深色模式下不能靠加深来分块（会糊成一片），要靠明度差。
     -->
     <color name="settings_panel">#1E1E1E</color>
+    <!-- v8.3.0：深色模式下顶栏的首帧兜底值 = 编辑器默认配色的深色背景（黑），见 values/colors.xml -->
+    <color name="top_bar_default">#FF000000</color>
 </resources>

@@ -1,8 +1,10 @@
 package moe.hellowidget
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -28,6 +30,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.abs
 
 /**
  * v7.1 新功能的**真机级**验证（CI 里跑在 Android 模拟器上），v7.7 起同时覆盖顶部导航栏。
@@ -41,9 +44,11 @@ import java.io.File
  *  4. 输入法弹出后 Activity 仍持有窗口焦点，且**没有触发失焦保存**
  *     （AOSP 中 IME 窗口带 FLAG_NOT_FOCUSABLE，不会夺走 Activity 的窗口焦点）；
  *  5. **顶部导航栏真的装载了 4 个入口**（设置 / WebDAV 同步 / 立即上传 / 撤回），
- *     顶部系统栏高度由独立占位条承担、导航栏内容区高度完整，并且**白色的标题与 4 个图标
+ *     顶部系统栏高度由独立占位条承担、导航栏内容区高度完整，并且**标题与 4 个图标
  *     真的被画进了像素里**（v7.7.1 回归：旧实现把系统栏 inset 当成导航栏自己的 padding，
- *     在系统栏很高的手机上标题被裁成底部一条缝、4 个按钮完全看不见）；
+ *     在系统栏很高的手机上标题被裁成底部一条缝、4 个按钮完全看不见；
+ *     v8.3.0 起顶栏与编辑区同色，判据随之改成「与底色形成对比的像素」，
+ *     见 [contrastingPixelsIn]）；
  *  6. 编辑区没有被键盘遮住（targetSdk 35 边到边下必须自行消费 ime insets）。
  *
  * 关于「最终」：实测输入法首帧可见时焦点可能短暂不在编辑器上，
@@ -127,7 +132,8 @@ class MainActivityEntryInstrumentedTest {
      * v7.7.1 的教训：旧实现在这里断言的是「toolbar.paddingTop >= 状态栏高度」——
      * 等于把事故的成因写成了预期行为，而模拟器的状态栏只有 24dp，
      * 于是「导航栏内容被系统栏挤没」这件事在两个 API 上全绿通过，用户的手机上却完全不可用。
-     * 现在断言的是用户真正在意的结果：内容区高度完整、白色标题与图标真的出现在像素里。
+     * 现在断言的是用户真正在意的结果：内容区高度完整、标题与图标真的出现在像素里
+     * （v8.3.0 起判据是"与顶栏底色形成对比"，而不是固定的"白色/亮像素"）。
      */
     @Test
     fun topBar_holdsTheFourEntries_andItsContentIsNeverSqueezed() {
@@ -225,18 +231,43 @@ class MainActivityEntryInstrumentedTest {
                     )
                 }
 
-                // 4) 最终证据：把导航栏画进 Bitmap，标题与 4 个按钮的位置上必须真的出现亮像素
-                //    （白字 / 白图标叠在紫色底上；旧实现里这些区域整片是空的紫色）
+                // 4) 最终证据：把导航栏画进 Bitmap，标题与 4 个按钮的位置上必须真的出现
+                //    **与底色形成对比**的像素（v8.3.0 起底色 = 编辑器配色：
+                //    浅色白底黑字 / 深色黑底白字，所以不能再数"亮像素"——
+                //    白底上到处都是亮像素，那样等于什么都没验证）。
+                val barColor = (toolbar.background as? ColorDrawable)?.color ?: Color.TRANSPARENT
+                val night = (activity.resources.configuration.uiMode and
+                    Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+                val editorBg = EditorSettings.bg(activity, night)
+                if (editorBg != Color.TRANSPARENT) {
+                    assertEquals("顶栏底色必须与编辑区背景色相同", editorBg, barColor)
+                } else {
+                    // 用 assertTrue 而不是 assertNotEquals：JUnit 对 (String, int, int) 的
+                    // assertNotEquals 重载在 Kotlin 下容易撞上装箱/加宽二义性，这里不需要冒这个险。
+                    assertTrue(
+                        "「无背景」时顶栏取窗口底色，也不能再是旧品牌紫",
+                        barColor != Color.parseColor("#FF6200EE")
+                    )
+                }
+                assertEquals(
+                    "状态栏那条占位条必须与顶栏同色（视觉上是一条整顶栏）",
+                    barColor,
+                    (strip.background as? ColorDrawable)?.color
+                )
+                Log.i(tag, "顶栏底色=#${Integer.toHexString(barColor)}（编辑器背景=#${Integer.toHexString(editorBg)}）")
+
                 val bitmap = Bitmap.createBitmap(toolbar.width, toolbar.height, Bitmap.Config.ARGB_8888)
                 toolbar.draw(Canvas(bitmap))
                 val toolbarLocation = IntArray(2)
                 toolbar.getLocationInWindow(toolbarLocation)
-                val titlePainted = paintedPixelsIn(bitmap, boundsInToolbar(toolbarLocation, titleView))
-                assertTrue("标题必须真的被画出来（亮像素=$titlePainted）", titlePainted >= 30)
+                val titlePainted =
+                    contrastingPixelsIn(bitmap, boundsInToolbar(toolbarLocation, titleView), barColor)
+                assertTrue("标题必须真的被画出来（与底色不同的像素=$titlePainted）", titlePainted >= 30)
                 items.forEachIndexed { index, item ->
-                    val painted = paintedPixelsIn(bitmap, boundsInToolbar(toolbarLocation, item))
+                    val painted =
+                        contrastingPixelsIn(bitmap, boundsInToolbar(toolbarLocation, item), barColor)
                     assertTrue(
-                        "第 ${index + 1} 个按钮的图标必须真的被画出来（亮像素=$painted）",
+                        "第 ${index + 1} 个按钮的图标必须真的被画出来（与底色不同的像素=$painted）",
                         painted >= 30
                     )
                 }
@@ -334,28 +365,31 @@ class MainActivityEntryInstrumentedTest {
     }
 
     /**
-     * 统计位图指定矩形内「明显比导航栏紫底更亮」的像素数。
+     * 统计位图指定矩形内「与顶栏底色形成对比」的像素数。
      *
-     * 顶部导航栏是紫色底（亮度约 56）+ 白色标题 / 白色图标，所以「这块区域里到底有没有
-     * 亮像素」就是「文字和按钮到底有没有真的画到屏幕上」的直接证据 —— 只看视图尺寸是不够的
-     * （v7.7 的事故里，视图都在、尺寸也不为零，但内容被裁得看不见）。
+     * v8.3.0 起顶栏底色 = 编辑器配色（默认浅色=白底黑字、深色=黑底白字），
+     * 因此判据必须**相对实际底色**，而不是像 v7.7 那样固定数"亮像素"：
+     * 白底上到处都是亮像素，固定阈值等于什么都没验证。
      *
-     * 阈值取 128（而不是「接近纯白」）：禁用状态的动作按钮图标会带上 alpha，
-     * 与紫底混合后亮度约 155，仍然明显亮于底色。
+     * 这里数亮度差 ≥ 60 的像素 —— 这才是"文字和按钮真的画到了屏幕上"的证据，
+     * 只看视图尺寸不够（v7.7 的事故里视图都在、尺寸也不为零，但内容被裁得看不见）。
+     * 阈值 60 对禁用状态也成立：禁用图标是 50% alpha 的黑叠在白底上（亮度约 127 vs 255）。
      */
-    private fun paintedPixelsIn(bitmap: Bitmap, bounds: IntArray): Int {
+    private fun contrastingPixelsIn(bitmap: Bitmap, bounds: IntArray, background: Int): Int {
+        val backgroundLuminance = luminanceOf(background)
         var count = 0
         for (y in maxOf(0, bounds[1]) until minOf(bitmap.height, bounds[3])) {
             for (x in maxOf(0, bounds[0]) until minOf(bitmap.width, bounds[2])) {
                 val pixel = bitmap.getPixel(x, y)
                 if (Color.alpha(pixel) < 200) continue
-                val luminance =
-                    (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
-                if (luminance >= 128) count++
+                if (abs(luminanceOf(pixel) - backgroundLuminance) >= 60) count++
             }
         }
         return count
     }
+
+    private fun luminanceOf(color: Int): Int =
+        (Color.red(color) * 299 + Color.green(color) * 587 + Color.blue(color) * 114) / 1000
 
     /** 记录焦点归属时间线，直到编辑器拿到焦点或超时 */
     private fun awaitEditorFocused(

@@ -62,27 +62,6 @@
     <string name="color_picker_title_editor_dark_bg">Custom dark-mode editor background</string>
     <string name="color_picker_title_editor_dark_text">Custom dark-mode editor text color</string>
 
-    <!-- ===== Backup & device migration (v8.2.0) ===== -->
-    <string name="settings_section_backup">Backup &amp; device migration</string>
-    <string name="backup_hint">Exports one backup file (your text, appearance colors and WebDAV settings); after switching phones or reinstalling, tap "Restore from backup" to bring everything back. Note: the WebDAV password inside is plain text, so keep the file safe. System cloud backup and the transfer tool from your phone maker are allowed to carry this data too.</string>
-    <string name="backup_export">Export backup file</string>
-    <string name="backup_import">Restore from backup</string>
-    <string name="backup_exported">Backup exported</string>
-    <string name="backup_export_failed">Export failed: cannot write to the chosen location</string>
-    <string name="backup_import_unreadable">Cannot read the chosen file</string>
-    <string name="backup_import_invalid">Not a valid HelloWidget backup: %1$s</string>
-    <string name="backup_bad_not_json">the file content is not JSON</string>
-    <string name="backup_bad_foreign_app">the file comes from another app</string>
-    <string name="backup_bad_format">the format version is missing</string>
-    <string name="backup_bad_newer_format">the backup was exported by a newer app version — update the app first</string>
-    <string name="backup_bad_no_content">the backup contains no text</string>
-    <string name="backup_import_confirm_title">Restore this backup?</string>
-    <string name="backup_import_confirm_message">Your current text will be replaced by the text in the backup (%1$d characters), and appearance plus WebDAV settings will be replaced too. This cannot be undone.</string>
-    <string name="backup_import_confirm">Restore</string>
-    <string name="backup_imported">Backup restored (text and settings)</string>
-    <string name="backup_imported_partial">Text and appearance restored; the WebDAV settings in the backup are invalid and were skipped</string>
-    <string name="backup_import_failed">Restore failed: the text could not be written, your existing content is untouched</string>
-
     <!-- ===== WebDAV sync (v7.2) ===== -->
     <string name="sync_title">WebDAV sync</string>
     <string name="sync_subtitle">Uploads your latest content to your own WebDAV. Automatic sync only uploads — the cloud copy never overwrites this device.</string>
@@ -94,13 +73,13 @@
     <string name="sync_file_name_hint">note.txt</string>
     <string name="sync_username_label">User name</string>
     <string name="sync_password_label">Password</string>
-    <string name="sync_password_hint">An app-specific password is recommended so it can be revoked on its own. It is stored in the app-private directory and is excluded from cloud backup and device transfer.</string>
+    <string name="sync_password_hint">An app-specific password is recommended so it can be revoked on its own. It is stored in plain text in the app-private directory and is carried along by cloud backup and device transfer — the price of not losing the setup when switching phones, so keep those backups safe.</string>
     <string name="sync_save">Save settings</string>
     <string name="sync_now">Sync now</string>
     <string name="sync_trust_button">Trust and remember this certificate fingerprint</string>
     <string name="sync_status_section">Sync status</string>
     <!-- v8.1.0: no more 1-minute throttle, so this says "every save tries immediately; only failures back off" -->
-    <string name="sync_behavior_hint">Sync timing: uploads happen only when content is saved (exit/back, going to the background, plus the automatic saves triggered by rotation or a dark-mode switch) — every save tries **immediately**, with no throttle at all. Whether a request is actually sent depends only on whether the content changed (if nothing changed, no request is sent). At most one upload runs at a time; when saves outpace the upload, later ones are merged into the run in progress. Only **failures** create a retry interval (1 s / 3 s inside the foreground window, then exponential backoff by the system fallback job, at most 5 times). Opening the app only checks whether anything changed locally since the last successful upload — if so, an orange dot lights up on the "Upload to cloud now" button, and nothing is uploaded. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
+    <string name="sync_behavior_hint">Sync timing: uploads happen only when content is saved (exit/back, going to the background, plus the automatic saves triggered by rotation or a dark-mode switch) — every save tries **immediately**, with no throttle at all. Whether a request is actually sent depends only on whether the content changed (if nothing changed, no request is sent). At most one upload runs at a time; when saves outpace the upload, later ones are merged into the run in progress. Only **failures** create a retry interval (1 s / 3 s inside the foreground window, then exponential backoff by the system fallback job, at most 5 times). Opening the app only reads the file from disk: no checking, no network, and therefore no automatic upload. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
     <string name="sync_upload_not_ready">WebDAV sync is off or not fully configured — open “WebDAV sync” and set it up first</string>
     <string name="sync_state_enabled">Status: enabled</string>
     <string name="sync_state_disabled">Status: disabled</string>

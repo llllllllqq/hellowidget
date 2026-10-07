@@ -38,27 +38,6 @@ internal class UndoHistory : TextWatcher {
     /** 已记录的编辑步数（历史深度；仅供测试与调试观察） */
     val size: Int get() = edits.size
 
-    /**
-     * v8.2.0：在**不计入历史**的状态下执行一次程序化写入（恢复备份时用它整份替换正文）。
-     *
-     * 为什么必须走这里、而不是"摘掉监听器再挂回去"：监听器的挂载时机由编辑页的异步读盘
-     * 决定（读盘完成才挂），"摘掉再挂回"会在两条路径交叉时把同一个监听器挂上两次，
-     * 于是每一步编辑被记两遍、撤回要按两次 —— 而那种时序只有在用户手速极快时才出现。
-     * 复用 [applying] 标志则与"撤回自己产生的变更"共用同一条排除逻辑，没有时序假设。
-     */
-    fun <T> withoutRecording(block: () -> T): T = try {
-        applying = true
-        block()
-    } finally {
-        applying = false
-    }
-
-    /** 清空历史（恢复备份后，撤回的终点应当是"恢复后的内容"） */
-    fun clear() {
-        edits.clear()
-        pendingRemoved = ""
-    }
-
     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
         if (applying || s == null) {
             pendingRemoved = ""

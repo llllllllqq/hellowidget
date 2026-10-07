@@ -16,10 +16,11 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.ColorUtils
+import androidx.core.graphics.drawable.DrawableCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -50,27 +51,6 @@ class MainActivity : AppCompatActivity() {
 
     /** 顶部导航栏里的「撤回」动作项；创建菜单后持有，用于实时切换可用状态 */
     private var undoMenuItem: MenuItem? = null
-
-    /**
-     * v8.2.0：设置页可能**恢复了备份**（正文被整份替换）。
-     *
-     * 那种情况下编辑器里这一份内容已经过期，绝不能在接下来的保存路径里写回磁盘 ——
-     * 因此设置页把恢复后的正文原样回传（[SettingsActivity] 的 `EXTRA_RESTORED_CONTENT`），
-     * 由本回调**同步**替换编辑器文本（回调发生在 onResume 之前，因此早于任何保存时机）。
-     *
-     * 为什么不在回调里重读磁盘：那是一次异步 IO，读回来之前用户就可能已经离开界面，
-     * 旧内容会被写回磁盘、把刚恢复的东西盖掉。走 Intent 回传则是零窗口的。
-     */
-    private val settingsLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val restored = if (result.resultCode == RESULT_OK) {
-            result.data?.getStringExtra(EXTRA_RESTORED_CONTENT)
-        } else {
-            null
-        }
-        if (restored != null) applyRestoredContent(restored)
-    }
 
     /** 已记录的可撤回步数（0 = 内容已回到刚打开时的样子）；供单测观察撤回历史 */
     @VisibleForTesting
@@ -215,27 +195,6 @@ class MainActivity : AppCompatActivity() {
         installBackHandler()
     }
 
-    // ------------------------------------------------------------ 备份恢复（v8.2.0）
-
-    /**
-     * 用备份里的内容替换编辑器文本（由设置页恢复成功后回传，见 [settingsLauncher]）。
-     *
-     * 三件事必须一起做，少一件都会留下"旧内容反扑"的口子：
-     *  1. 替换文本 —— 且**不能记进撤回历史**：程序化写入不是用户的编辑，
-     *     记进去会让「撤回」把备份内容一步步退回恢复前的旧内容
-     *     （走 [UndoHistory.withoutRecording]，理由见那里的注释）；
-     *  2. 清空撤回历史（撤回的终点应当是"恢复后的内容"）；
-     *  3. 光标回到第一行行首（与全新进入应用一致）。
-     */
-    @VisibleForTesting
-    internal fun applyRestoredContent(content: String) {
-        undoHistory.withoutRecording { binding.editor.setText(content) }
-        binding.editor.setSelection(0)
-        undoHistory.clear()
-        refreshUndoAction()
-        Log.i(TAG, "已应用备份恢复后的内容（${content.length} 字）")
-    }
-
     /**
      * 返回键退出：异步原子写盘 → 写盘结果确认后收尾 → 最后才 finish()。
      * Activity 在写盘期间保持可见，写盘不会再被界面销毁打断。
@@ -266,14 +225,17 @@ class MainActivity : AppCompatActivity() {
         menuInflater.inflate(R.menu.main_menu, menu)
         undoMenuItem = menu.findItem(R.id.action_undo)
         refreshUndoAction()
+        // 图标 tint 要跟着编辑器的文字色走（见 [applyTopBarColors]）。菜单刚装载完就上一次色，
+        // 免得第一帧里出现"主题默认的白图标"——底色现在已经不是紫色了，白图标会直接看不见。
+        applyTopBarColors()
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        // 打开设置页（外观 + 备份与换机迁移）
+        // 打开设置页（小组件外观 + 编辑器配色）
         R.id.action_appearance -> {
             openingSettings = true
-            settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
+            startActivity(Intent(this, SettingsActivity::class.java))
             true
         }
         // 打开 WebDAV 同步设置页
@@ -514,6 +476,8 @@ class MainActivity : AppCompatActivity() {
      * 按当前系统浅色/深色模式应用用户自定义的编辑器背景色与文字色，
      * 并把编辑区字号同步成设置页里的「字体大小」（v7.7：与桌面小组件共用一个值）。
      * 每次回到前台（含从设置页返回、深色模式重建后）都会重新应用。
+     *
+     * v8.3.0 起顶部导航栏（连同状态栏那条占位条）也在这一步一起上色，见 [applyTopBarColors]。
      */
     private fun applyEditorAppearance() {
         val night = isNightMode()
@@ -529,6 +493,51 @@ class MainActivity : AppCompatActivity() {
         binding.editor.setHintTextColor(
             Color.argb(128, Color.red(text), Color.green(text), Color.blue(text))
         )
+        applyTopBarColors()
+    }
+
+    /**
+     * v8.3.0：顶部导航栏与编辑区**同色**（用户要求：原来固定在顶部的紫色要跟编辑器一个颜色，
+     * 且浅色 / 深色模式各用各的那一组）。
+     *
+     * 底色取 [EditorSettings] 里**当前模式**的那一组，因此深色模式切换后（本 Activity 会
+     * 保存内容再 recreate）重新走到这里，顶栏与编辑区是一起变的，不会只变一半。
+     * 「无背景」时编辑区透出的是**窗口底色**，所以这里解析同一个来源 `android:colorBackground`，
+     * 两者仍然一致。
+     *
+     * 标题色与图标 tint 都必须取**编辑器的文字色**，不能像以前那样写死白色：
+     * 底色现在就是用户的编辑器配色，浅色底下白字 / 白图标会直接消失。
+     * 用编辑器那一对「背景 + 文字」色最不容易出错 —— 用户在设置页选色时，
+     * 这对颜色本来就是按"能看清"挑的。
+     */
+    private fun applyTopBarColors() {
+        val night = isNightMode()
+        val barBg = topBarBackgroundColor(night)
+        val barText = EditorSettings.textColor(this, night)
+        binding.toolbar.setBackgroundColor(barBg)
+        binding.statusBarSpacer.setBackgroundColor(barBg)
+        binding.toolbar.setTitleTextColor(barText)
+        for (index in 0 until binding.toolbar.menu.size()) {
+            val icon = binding.toolbar.menu.getItem(index).icon ?: continue
+            DrawableCompat.setTint(icon, barText)
+        }
+        // 状态栏图标（时间 / 电量）的明暗也必须跟着底色走：底色深就要浅色图标。
+        // enableEdgeToEdge() 是按**主题**（浅色/深色 AppCompat 主题）决定的，
+        // 而"无背景 + 自定义深色编辑器配色"这类组合下二者可能不一致，所以这里以实际底色为准。
+        WindowCompat.getInsetsController(window, binding.root)?.isAppearanceLightStatusBars =
+            ColorUtils.calculateLuminance(barBg) > 0.5
+    }
+
+    /**
+     * 顶栏底色 = 编辑区在那一个模式下的背景色；「无背景」（透明）取窗口底色
+     * （编辑区透出来的正是它，因此这仍然是"同色"）。
+     */
+    private fun topBarBackgroundColor(night: Boolean): Int {
+        val editorBg = EditorSettings.bg(this, night)
+        if (editorBg != Color.TRANSPARENT) return editorBg
+        val value = TypedValue()
+        if (theme.resolveAttribute(android.R.attr.colorBackground, value, true)) return value.data
+        return if (night) Color.BLACK else Color.WHITE
     }
 
     private fun isNightMode(): Boolean =
@@ -539,12 +548,18 @@ class MainActivity : AppCompatActivity() {
      * 深色模式切换（系统设置变更）：本 Activity 在 Manifest 中声明了
      * configChanges="uiMode"，系统不会自动重建，而是回调本方法。
      * 这里先触发一次自动保存，再重建 Activity 以应用新的浅色/深色主题。
+     *
+     * v8.3.0：切换的**当场**先把编辑器与顶栏配色换成新模式那一组，再走保存 + 重建。
+     * 重建要等一次磁盘写入完成（毫秒级，但不是零），那段时间窗口底色已经是深色了，
+     * 顶栏却还停在浅色那一组 —— 用户会看到"切了一半"的一帧。
+     * 先上色就消除了这一帧；重建后 onResume 还会再上一次色，幂等。
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         val nightMode = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
         if (nightMode != lastNightMode) {
             lastNightMode = nightMode
+            applyEditorAppearance()
             handleNightModeSwitch()
         }
     }
@@ -689,15 +704,6 @@ class MainActivity : AppCompatActivity() {
 
         /** 编辑器内容上限（字符），见 [maxLengthFilter] 的说明 */
         const val MAX_CONTENT_CHARS = 100_000
-
-        /**
-         * v8.2.0：设置页恢复备份成功后回传的正文。
-         *
-         * 用 Intent 回传而不是"回来自个儿重读磁盘"，是为了**零时间窗**：回调发生在 onResume
-         * 之前，因此一定早于任何保存路径 —— 否则用户从设置页返回后立刻退出，
-         * 就会拿编辑器里恢复前的旧内容覆盖刚恢复的内容。
-         */
-        const val EXTRA_RESTORED_CONTENT = "moe.hellowidget.extra.RESTORED_CONTENT"
 
         val Context.prefs
             get() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

@@ -1,15 +1,19 @@
 package moe.hellowidget
 
 import android.app.Application
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.runBlocking
+import moe.hellowidget.MainActivity.Companion.prefs
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncRetry
@@ -145,7 +149,7 @@ class MainActivityTopBarTest {
 
         assertTrue(activity.onOptionsItemSelected(RoboMenuItem(R.id.action_appearance)))
         assertEquals(
-            "「设置」必须打开设置页（外观 + 备份）",
+            "「设置」必须打开设置页（小组件外观 + 编辑器配色）",
             SettingsActivity::class.java.name,
             shadowOf(activity).nextStartedActivity.component?.className
         )
@@ -209,6 +213,102 @@ class MainActivityTopBarTest {
             0L,
             SyncSettings.lastServerContactAt(app)
         )
+    }
+
+    // ------------------------------------------------------------ v8.3.0：顶栏与编辑区同色
+
+    /**
+     * v8.3.0（用户要求）：顶部导航栏与状态栏那条占位条都**不再是固定的品牌紫**，
+     * 而是取编辑器的背景色；标题色取编辑器的文字色（否则浅色底色下标题会看不见）。
+     *
+     * 这里只钉住"颜色来源"这一件事：真机上标题与 4 个图标是否真的画出来了，
+     * 由 `MainActivityEntryInstrumentedTest` 画进 Bitmap 数对比像素验证。
+     */
+    @Test
+    fun theTopBar_takesTheEditorColors_insteadOfTheThemePurple() {
+        val activity = setupWithTitle()
+
+        assertEquals(
+            "顶栏底色必须等于当前模式下编辑区的背景色",
+            EditorSettings.DEFAULT_LIGHT_BG,
+            topBarColor(activity)
+        )
+        assertEquals(
+            "标题色必须等于编辑区的文字色",
+            EditorSettings.DEFAULT_LIGHT_TEXT,
+            titleTextColor(activity)
+        )
+    }
+
+    /** 用户在设置页把编辑器配色改掉之后，顶栏必须跟着改（"同色"而不是"碰巧都是白"） */
+    @Test
+    fun theTopBar_followsACustomEditorColorPair() {
+        val customBg = Color.parseColor("#1A237E")
+        val customText = Color.YELLOW
+        app.prefs.edit()
+            .putInt(EditorSettings.KEY_LIGHT_BG, customBg)
+            .putInt(EditorSettings.KEY_LIGHT_TEXT, customText)
+            .commit()
+
+        val activity = setupWithTitle()
+
+        assertEquals("自定义编辑器背景色必须同时成为顶栏底色", customBg, topBarColor(activity))
+        assertEquals("自定义编辑器文字色必须同时成为标题色", customText, titleTextColor(activity))
+    }
+
+    /**
+     * 深色模式：顶栏必须换成**深色那一组**编辑器配色（黑底白字），
+     * 而不是继续用浅色那一组 —— 这是用户明确要求的"跟随一起切换"。
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = "night")
+    fun theTopBar_switchesToTheDarkEditorColors_withTheDarkMode() {
+        val activity = setupWithTitle()
+
+        assertEquals(
+            "深色模式下顶栏底色必须是深色编辑器背景色",
+            EditorSettings.DEFAULT_DARK_BG,
+            topBarColor(activity)
+        )
+        assertEquals(
+            "深色模式下标题色必须是深色编辑器文字色",
+            EditorSettings.DEFAULT_DARK_TEXT,
+            titleTextColor(activity)
+        )
+    }
+
+    /**
+     * 建一个"标题已存在"的编辑页：真机上标题由 manifest 的 label 经 AppCompat 的
+     * `setWindowTitle` 提供，Robolectric 里那条框架路径不保证走到，因此这里**直接调
+     * `Toolbar.setTitle`** —— 它一定会创建标题 TextView，并把这之前存下的
+     * `setTitleTextColor` 应用上（Toolbar 自己的行为）。随后 pause/resume 让
+     * [MainActivity] 再上一次色，确保断言看到的是"当前配色"而不是创建时的巧合。
+     */
+    private fun setupWithTitle(): MainActivity {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        activity.findViewById<Toolbar>(R.id.toolbar).title = "顶栏标题"
+        controller.pause().resume()
+        return activity
+    }
+
+    /** 顶栏底色（导航栏与状态栏占位条必须一致，否则"一条整顶栏"就断了） */
+    private fun topBarColor(activity: MainActivity): Int {
+        val toolbarColor = (activity.findViewById<Toolbar>(R.id.toolbar).background as ColorDrawable).color
+        val stripColor =
+            (activity.findViewById<View>(R.id.status_bar_spacer).background as ColorDrawable).color
+        assertEquals("状态栏占位条必须与导航栏同色", toolbarColor, stripColor)
+        return toolbarColor
+    }
+
+    private fun titleTextColor(activity: MainActivity): Int {
+        val toolbar = activity.findViewById<Toolbar>(R.id.toolbar)
+        val title = (0 until toolbar.childCount)
+            .map { toolbar.getChildAt(it) }
+            .filterIsInstance<TextView>()
+            .firstOrNull()
+        assertNotNull("导航栏标题视图必须存在", title)
+        return requireNotNull(title) { "导航栏标题视图必须存在" }.currentTextColor
     }
 
     // ------------------------------------------------------------ v7.8 语义：打开应用只读盘、不上传
