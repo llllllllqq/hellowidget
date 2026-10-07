@@ -28,9 +28,9 @@ import android.util.Log
  * `retryAttempts=0`。也就是说：
  *  - 该机应用**在 Doze 豁免名单上、不受待机分桶限制** ——
  *    上面那条「厂商把兜底任务压在低优先级桶里 / 后台断网」的假设**在这台设备上不成立**；
- *  - 唯一拦着兜底任务的，是**我们自己设的 90 秒 `setMinimumLatency`**。
+ *  - 唯一拦着兜底任务的，是**我们自己设的 `setMinimumLatency`**（当时 65 秒，v8.1.0 起 30 秒）。
  * 因此排查方向要从"系统压制"转向"那次上传本身为什么没成功"（看同步结果行的失败原因），
- * 以及"我们自己愿不愿意等这 90 秒"。
+ * 以及"我们自己愿不愿意等这 30 秒"。
  *
  * ## 设计约束
  *  - **只读、零网络、零落盘**：不写任何状态，不申请任何权限
@@ -115,7 +115,7 @@ object SyncDiagnostics {
      * 待执行的重试任务是不是**以加急身份**排着的；API 31 以下或查不到时返回 `null`。
      *
      * v8.0.1 试过给兜底任务加 `setExpedited(true)`，但平台明确禁止（见
-     * [SyncRetry.MIN_LATENCY_MS] 的记录：`An expedited job cannot have a time delay`），
+     * [SyncRetry.FIRST_RETRY_DELAY_MS] 的记录：`An expedited job cannot have a time delay`），
      * 所以本应用**恒为常规任务**，这里正常应显示 `false`。
      * 保留这条诊断的意义是"反证"：如果某台设备/某个 OEM 上它显示 `true`，
      * 说明系统改变了我们排出去的任务，这正是排查"为什么行为和预期不一样"的第一手证据。

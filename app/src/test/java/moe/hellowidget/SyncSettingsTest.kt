@@ -118,14 +118,15 @@ class SyncSettingsTest {
     fun resetRuntimeState_clearsResultAndHashButKeepsCredentials() {
         configure(enabled = true)
         SyncSettings.recordSuccess(context, "hash-1", 1_735_689_600L)
-        SyncSettings.setLastAttemptAt(context, 123L)
+        SyncSettings.setLastServerContactAt(context, 123L)
 
         SyncSettings.resetRuntimeState(context)
 
         assertEquals(SyncEngine.RESULT_NEVER, SyncSettings.lastResult(context))
         assertNull(SyncSettings.lastUploadedHash(context))
         assertEquals(0L, SyncSettings.lastUploadedTs(context))
-        assertEquals(0L, SyncSettings.lastAttemptAt(context))
+        assertEquals(0L, SyncSettings.lastServerContactAt(context))
+        assertEquals(0L, SyncSettings.nextRetryAt(context))
         assertEquals("note.txt", SyncSettings.fileName(context))
         assertEquals("http://127.0.0.1:1/dav/", SyncSettings.baseUrl(context))
     }
@@ -162,7 +163,7 @@ class SyncSettingsTest {
     //
     // 这组用例固化 v7.8 的核心语义：**打开应用只检测、不上传**，检测结果只用来决定
     // 「立即上传」按钮上那个橙点亮不亮。检测必须是纯函数式的：不建客户端、不发请求、
-    // 不写 lastAttemptAt（否则会把下一次真正的保存上传白白节流掉）。
+    // 不写 lastServerContactAt（那是"真的碰过云端"的证据，检测一次网络都没碰）。
 
     @Test
     fun hasPendingUpload_falseWhenSyncIsDisabled() {
@@ -216,9 +217,9 @@ class SyncSettingsTest {
 
         assertNull("检测绝不允许启动任何同步服务", shadowOf(app).nextStartedService)
         assertEquals(
-            "检测不得写 lastAttemptAt（否则下一次真正的保存上传会被平白节流掉）",
+            "检测不得写 lastServerContactAt（它只记录「真的访问过云端」的时刻）",
             0L,
-            SyncSettings.lastAttemptAt(context)
+            SyncSettings.lastServerContactAt(context)
         )
     }
 

@@ -214,8 +214,8 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // v7.8：每次同步结束（成功 / 失败 / 被节流跳过）后重算橙点：
-        // 成功 → 熄灭；失败或被节流 → 亮起（磁盘上确实还有没传上去的内容）。
+        // v7.8：每次同步结束（成功 / 失败 / 跳过）后重算橙点：
+        // 成功 → 熄灭；失败或跳过 → 亮起（磁盘上确实还有没传上去的内容）。
         // SyncManager 与 SyncService 同进程，因此从服务发起的上传这里也收得到。
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -345,7 +345,7 @@ class MainActivity : AppCompatActivity() {
             startActivity(SyncActivity.intent(this))
             true
         }
-        // 立即上传：先落盘再以 MANUAL 触发（不受 1 分钟节流限制）
+        // 立即上传：先落盘再以 MANUAL 触发（用户当下意图，不并入正在执行的那一趟同步）
         R.id.action_upload -> {
             uploadToCloudNow()
             true
@@ -381,7 +381,7 @@ class MainActivity : AppCompatActivity() {
      *
      * 先把编辑器里的当前内容原子落盘，再用 [SyncTrigger.MANUAL] 触发同步：
      * 同步读的是磁盘上的内容，不先落盘就会把**旧内容**推上云端（而且看起来「同步成功」）。
-     * MANUAL 不受 1 分钟节流限制 —— 这是用户明确的当下意图。
+     * MANUAL 是用户明确的当下意图，因此**永不并入**正在执行的那一趟同步（自己走一趟等锁）。
      */
     private fun uploadToCloudNow() {
         if (!SyncLauncher.isReady(this)) {
@@ -459,8 +459,10 @@ class MainActivity : AppCompatActivity() {
      * - 应用内跳转（设置页）/ 旋转：静默保存
      * v7.7 起保存成功不再弹 toast，只有写盘失败才提示（避免内容丢失无感知）。
      *
-     * v7.8：**只要是保存，就一定触发一次自动上传**（[SyncTrigger.CLOSE_EDITOR]，受 1 分钟闸门约束）——
-     * 包括应用内跳设置页与旋转这两种「静默保存」。反复保存（例如旋转 + onStop）由闸门合并成一次上传。
+     * v7.8：**只要是保存，就一定触发一次自动上传**（[SyncTrigger.CLOSE_EDITOR]）——
+     * 包括应用内跳设置页与旋转这两种「静默保存」。v8.1.0 起不再有任何节流：
+     * 每次保存都立刻尝试，「要不要真的发请求」只由内容哈希决定；
+     * 反复保存（例如旋转 + onStop）由 SyncManager 的单飞合并进正在执行的那一趟，绝不并发 PUT。
      */
     override fun onStop() {
         super.onStop()
@@ -618,8 +620,8 @@ class MainActivity : AppCompatActivity() {
      * 深色模式切换时的自动保存流程（静默保存：
      * 只有写盘失败才提示，成功不弹 toast）：保存完成后重建 Activity 应用新主题。
      *
-     * v7.8：这也是一次「保存」，因此同样触发自动上传（受 1 分钟闸门约束，
-     * 紧接着的旋转 / onStop 保存会被闸门合并掉）。
+     * v7.8：这也是一次「保存」，因此同样触发自动上传（v8.1.0 起无节流，
+     * 紧接着的旋转 / onStop 保存会被单飞合并掉）。
      */
     private fun handleNightModeSwitch() {
         if (nightSwitchSaving) return
@@ -669,8 +671,9 @@ class MainActivity : AppCompatActivity() {
      *   （用户要求删除全部保存成功提示），失败仍然提示 —— 那是可能丢内容的信号。
      * @param syncTrigger 写盘成功后要触发的一次 WebDAV 同步，null = 不触发。
      *   v7.8：**每一条保存路径都传 [SyncTrigger.CLOSE_EDITOR]**（旋转 / 深色模式 / 跳设置页
-     *   这些静默保存也一样）——「任何保存操作都触发自动上传」，密集保存由 1 分钟闸门合并。
-     *   MANUAL 只用于顶部「立即上传」按钮（不受闸门限制）。
+     *   这些静默保存也一样）——「任何保存操作都触发自动上传」，密集保存由 SyncManager
+     *   的单飞合并（一趟上传吸收它开始前登记的所有保存）。
+     *   MANUAL 只用于顶部「立即上传」按钮（永不参与合并）。
      * @param reason 只用于日志/诊断的路径标记，见 [SaveReason]。
      */
     private fun saveContent(

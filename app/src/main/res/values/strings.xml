@@ -73,10 +73,11 @@
     <string name="sync_password_label">口令</string>
     <string name="sync_password_hint">建议在 WebDAV 侧生成「应用专用密码」，便于随时单独吊销。口令只存在应用私有目录，且已被排除在系统备份与换机迁移之外。</string>
     <string name="sync_save">保存设置</string>
-    <string name="sync_now">立即同步（不受 1 分钟限制）</string>
+    <string name="sync_now">立即同步</string>
     <string name="sync_trust_button">信任并记住此证书指纹</string>
     <string name="sync_status_section">同步状态</string>
-    <string name="sync_behavior_hint">同步时机：只在保存内容时自动上传（退出/返回、切后台，以及旋转、切换深色模式等触发的自动保存），两次自动上传之间至少间隔 1 分钟；打开应用只检查上次上传后本地有没有新改动——有的话在顶部「立即上传」按钮上亮一个橙点，不会自动上传。「立即同步」不受限制。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
+    <!-- v8.1.0：不再有 1 分钟节流，所以这句话重写成"每次保存都立刻尝试 + 只有失败才有间隔" -->
+    <string name="sync_behavior_hint">同步时机：只在保存内容时自动上传（退出/返回、切后台，以及旋转、切换深色模式等触发的自动保存）—— 每次保存都会**立刻尝试**，没有任何节流；要不要真的发请求只由内容有没有变化决定（内容没变则一个请求都不发）。同一时刻最多一次上传，保存比上传快时后来者会自动合并进正在执行的那一趟。只有**失败**才产生重试间隔（前台窗口内 1 秒 / 3 秒，之后交给系统兜底任务指数退避，最多 5 次）。打开应用只检查上次上传后本地有没有新改动——有的话在顶部「立即上传」按钮上亮一个橙点，不会自动上传。同步期间通知栏显示进度条，结束后立即停止，不留下任何常驻后台任务。</string>
     <string name="sync_upload_not_ready">未启用或未完整配置 WebDAV 同步，请先打开「WebDAV 同步」设置</string>
     <string name="sync_state_enabled">状态：已启用</string>
     <string name="sync_state_disabled">状态：未启用</string>
@@ -93,10 +94,12 @@
     <string name="sync_status_running">正在同步…</string>
     <string name="sync_skip_disabled">未启用同步，本次跳过</string>
     <string name="sync_skip_not_configured">设置不完整，本次跳过</string>
-    <string name="sync_skip_throttled">距上次同步不足 1 分钟，本次跳过（改动会在下次允许时机或点击「立即同步」时上传）</string>
     <string name="sync_time_never">从未</string>
-    <string name="sync_last_attempt">上次尝试：%1$s</string>
+    <!-- v8.1.0：从"上次尝试"改为"上次访问云端"——空跑（零请求）不再更新它 -->
+    <string name="sync_last_server_contact">上次访问云端：%1$s</string>
     <string name="sync_retry_queued">自动重试：已排队（保存后由系统兜底补传；若内容已在云端，任务醒来不会发任何请求）</string>
+    <!-- v8.1.0：排任务时自己记下的"预计补传时刻"（JobInfo 不暴露绝对截止时间） -->
+    <string name="sync_retry_queued_at">自动重试：已排队，预计 %1$s 补传（若内容已在云端，任务醒来不会发任何请求）</string>
     <string name="sync_retry_none">自动重试：无（没有待上传的改动）</string>
     <string name="sync_retry_exhausted">自动重试：已用完 %1$d 次自动重试，仍有改动未上传 —— 请点「立即同步」或再次保存</string>
     <!-- v8.0.1 诊断：值与 logcat 完全一致（ASCII token），方便直接抄给开发者 -->

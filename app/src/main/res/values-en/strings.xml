@@ -77,10 +77,11 @@
     <string name="sync_password_label">Password</string>
     <string name="sync_password_hint">An app-specific password is recommended so it can be revoked on its own. It is stored in the app-private directory and is excluded from cloud backup and device transfer.</string>
     <string name="sync_save">Save settings</string>
-    <string name="sync_now">Sync now (ignores the 1-minute limit)</string>
+    <string name="sync_now">Sync now</string>
     <string name="sync_trust_button">Trust and remember this certificate fingerprint</string>
     <string name="sync_status_section">Sync status</string>
-    <string name="sync_behavior_hint">Sync timing: uploads happen only when content is saved (exit/back, going to the background, plus the automatic saves triggered by rotation or a dark-mode switch), and automatic uploads are at least 1 minute apart. Opening the app only checks whether anything changed locally since the last successful upload — if so, an orange dot lights up on the "Upload to cloud now" button, and nothing is uploaded. "Sync now" is not limited. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
+    <!-- v8.1.0: no more 1-minute throttle, so this says "every save tries immediately; only failures back off" -->
+    <string name="sync_behavior_hint">Sync timing: uploads happen only when content is saved (exit/back, going to the background, plus the automatic saves triggered by rotation or a dark-mode switch) — every save tries **immediately**, with no throttle at all. Whether a request is actually sent depends only on whether the content changed (if nothing changed, no request is sent). At most one upload runs at a time; when saves outpace the upload, later ones are merged into the run in progress. Only **failures** create a retry interval (1 s / 3 s inside the foreground window, then exponential backoff by the system fallback job, at most 5 times). Opening the app only checks whether anything changed locally since the last successful upload — if so, an orange dot lights up on the "Upload to cloud now" button, and nothing is uploaded. A progress notification is shown while syncing and removed the moment it ends — no background task is left behind.</string>
     <string name="sync_upload_not_ready">WebDAV sync is off or not fully configured — open “WebDAV sync” and set it up first</string>
     <string name="sync_state_enabled">Status: enabled</string>
     <string name="sync_state_disabled">Status: disabled</string>
@@ -97,10 +98,12 @@
     <string name="sync_status_running">Syncing…</string>
     <string name="sync_skip_disabled">Sync is disabled — skipped</string>
     <string name="sync_skip_not_configured">Settings are incomplete — skipped</string>
-    <string name="sync_skip_throttled">Less than 1 minute since the last sync — skipped (changes go up at the next allowed moment or via "Sync now")</string>
     <string name="sync_time_never">never</string>
-    <string name="sync_last_attempt">Last attempt: %1$s</string>
+    <!-- v8.1.0: "last attempt" became "last cloud contact" — a no-op run (zero requests) no longer updates it -->
+    <string name="sync_last_server_contact">Last cloud contact: %1$s</string>
     <string name="sync_retry_queued">Automatic retry: queued (a save arms a system fallback; if the content is already in the cloud the job sends no request)</string>
+    <!-- v8.1.0: the expected retry time is recorded locally when the job is scheduled (JobInfo exposes no absolute deadline) -->
+    <string name="sync_retry_queued_at">Automatic retry: queued, expected around %1$s (if the content is already in the cloud the job sends no request)</string>
     <string name="sync_retry_none">Automatic retry: none (nothing pending)</string>
     <string name="sync_retry_exhausted">Automatic retry: all %1$d automatic attempts used, changes are still not uploaded — tap \"Sync now\" or save again</string>
     <!-- v8.0.1 diagnostics: the value is an ASCII token identical to logcat, so it can be copied as-is -->

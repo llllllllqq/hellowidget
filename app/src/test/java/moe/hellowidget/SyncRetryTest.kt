@@ -127,9 +127,10 @@ class SyncRetryTest {
             JobInfo.BACKOFF_POLICY_EXPONENTIAL,
             job.backoffPolicy
         )
-        assertTrue(
-            "首次重试必须晚于 1 分钟闸门，否则会被自己的节流静默跳过",
-            job.minLatencyMillis > moe.hellowidget.sync.SyncEngine.MIN_SYNC_INTERVAL_MS
+        assertEquals(
+            "首次重试延迟是 30 秒：不再有闸门要躲，只需避开前台窗口的最坏占用（约 24 秒）",
+            moe.hellowidget.sync.SyncRetry.FIRST_RETRY_DELAY_MS,
+            job.minLatencyMillis
         )
         // v8.0.1：记录一条被 CI 抓到的平台事实，别再踩 ——
         // 给这条任务加 setExpedited(true) 会直接抛
@@ -250,7 +251,7 @@ class SyncRetryTest {
     }
 
     @Test
-    fun shouldReschedule_stopsAfterSuccess_andRetriesThrottledOnly() {
+    fun shouldReschedule_stopsAfterSuccess_andOnlyRetriesFailures() {
         assertFalse(
             "上传成功之后不该再唤醒进程",
             SyncRetry.shouldReschedule(SyncStatus.Success(System.currentTimeMillis(), uploaded = true))
@@ -259,10 +260,6 @@ class SyncRetryTest {
             "本地没有改动（一个请求都没发）同样算完成",
             SyncRetry.shouldReschedule(SyncStatus.Success(System.currentTimeMillis(), uploaded = false))
         )
-        assertTrue(
-            "被 1 分钟闸门跳过时要再试：内容确实还在本地",
-            SyncRetry.shouldReschedule(SyncStatus.Skipped(SkipReason.THROTTLED))
-        )
         assertFalse(
             "同步被用户关掉后不必再试",
             SyncRetry.shouldReschedule(SyncStatus.Skipped(SkipReason.NOT_ENABLED))
@@ -270,6 +267,19 @@ class SyncRetryTest {
         assertFalse(
             "配置不完整时再试也没用",
             SyncRetry.shouldReschedule(SyncStatus.Skipped(SkipReason.NOT_CONFIGURED))
+        )
+        // v8.1.0：闸门删除后不再有"被节流跳过"这一种结果，因此只剩"失败（且暂时性）才重试"
+        assertTrue(
+            "暂时性失败必须重试",
+            SyncRetry.shouldReschedule(
+                SyncStatus.Failed(System.currentTimeMillis(), WebDavError.NETWORK, "断网")
+            )
+        )
+        assertFalse(
+            "凭据错误这类需要人介入的失败不重试",
+            SyncRetry.shouldReschedule(
+                SyncStatus.Failed(System.currentTimeMillis(), WebDavError.UNAUTHORIZED, "401")
+            )
         )
     }
 
@@ -367,9 +377,8 @@ class SyncRetryTest {
         assertEquals(1, SyncSettings.retryAttempts(context))
 
         putFailure = null
-        // 绕开 1 分钟闸门：真机上两次重试之间至少隔 90 秒（SyncRetry.MIN_LATENCY_MS），
-        // 测试里直接调用 runOnce，必须自己把 lastAttemptAt 拨回去，否则这次会被节流跳过
-        SyncSettings.setLastAttemptAt(context, System.currentTimeMillis() - 120_000)
+        // v8.1.0：没有任何节流，直接再来一次即可
+        // （旧版必须先把 lastAttemptAt 拨回 2 分钟前，否则这次会被 1 分钟闸门静默跳过）
         assertFalse("成功后不该再重试", SyncRetry.runOnce(context))
         assertEquals("成功后预算归零", 0, SyncSettings.retryAttempts(context))
     }
