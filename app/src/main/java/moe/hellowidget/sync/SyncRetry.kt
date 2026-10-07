@@ -4,7 +4,6 @@ import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.ComponentName
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import moe.hellowidget.SyncRetryJobService
@@ -42,6 +41,31 @@ object SyncRetry {
     /**
      * 首次重试的最短延迟。必须大于 1 分钟闸门（[SyncEngine.MIN_SYNC_INTERVAL_MS]），
      * 否则重试会正好撞进刚才那次尝试留下的节流窗口被静默跳过 —— 那正是本次要修掉的形态。
+     *
+     * ## v8.0.1：为什么这条任务**故意保持常规、且故意带延迟**
+     *
+     * 为了让它在低优先级待机桶下也能跑，v8.0.1 试过 `setExpedited(true)`（官方承诺加急任务
+     * 「Bypass Doze, app standby, and battery saver network restrictions」）。**被平台直接否决**，
+     * CI（Robolectric + 真机）给出的原始报错是：
+     *
+     * ```
+     * java.lang.IllegalArgumentException: An expedited job cannot have a time delay
+     *     at android.app.job.JobInfo.enforceValidity(JobInfo.java:2279)
+     * ```
+     *
+     * 也就是说**加急 ⇒ 不允许任何时间延迟 ⇒ 必须立刻执行**。而官方另一条承诺是
+     * 「expedited jobs for the foreground app are guaranteed to be started before
+     * `JobScheduler.schedule(JobInfo)` returns」—— 应用还在前台时，任务会在 `schedule()`
+     * 返回之前就被系统拉起来，于是它会**和前台服务抢同一把互斥锁**；
+     * 一旦任务先拿到锁，上传就从唯一**用户可见**的路径（进度条 + 「已上传到云端」Toast）
+     * 被夺走，用户只看到"什么都没发生"。
+     *
+     * 因此这里保持常规 + 90 秒延迟：兜底任务只负责"补上没传成的那些"，
+     * 立即上传的所有权始终留给前台服务。[MIN_LATENCY_MS] 保证任务醒来时那一次尝试
+     * 已经结束、节流窗口也已过期。
+     *
+     * 想拿加急的收益又不抢所有权，需要**两个任务 id**（延迟的持久网 + 仅在
+     * 「前台服务确实没起来」时启用的即时加急升级），那是独立一轮的改动，不混进本次修复。
      */
     const val MIN_LATENCY_MS = 90 * 1000L
 
@@ -78,9 +102,6 @@ object SyncRetry {
      * 未启用同步 / 配置不完整时不排（那种情况橙点也不会亮）。任何异常都不能影响
      * 保存与上传本身，因此这里全部吞掉并记日志。
      *
-     * v8.0.1 起优先排**加急任务**（[JobInfo.Builder.setExpedited]，API 31+），
-     * 系统不接受时回落为常规任务 —— 理由见下方注释。
-     *
      * @return 系统是否**收下**了这个任务（`JobScheduler.RESULT_SUCCESS`）。
      *   注意"收下"不等于"查得到"：`getAllPendingJobs()` 在个别系统上查不到刚排的任务，
      *   因此返回值只用于诊断与测试，调用方不必据此改变行为。
@@ -91,94 +112,41 @@ object SyncRetry {
             Log.i(TAG, "同步未启用或配置不完整，不排重试任务")
             return false
         }
-        val scheduler = schedulerProvider(appContext) ?: return false
-        // 用户又保存了一次：重试预算重新给满（这正是"用户动一下就能救回来"的路径）
-        SyncSettings.setRetryAttempts(appContext, 0)
-
-        // v8.0.1：**先按「加急任务」排**。官方对 setExpedited(true) 的承诺正好对着本 bug 的机制：
-        //  - 「Bypass Doze, app standby, and battery saver network restrictions
-        //     (if the job has a connectivity constraint)」——
-        //    这是关键：官方文档写明 Rare 桶下**后台网络是 Disabled**，常规任务带着
-        //    NETWORK_TYPE_ANY 约束时会一直等不到约束满足，而加急任务明确绕过这条；
-        //  - 「Be less likely to be killed than regular jobs」；
-        //  - 配额与常规任务**分开计算**（Active 桶：加急 30 分钟/24h，常规 20 分钟/60min）。
-        //
-        // 代价必须处理掉：官方明确「配额用尽时 schedule() **立刻返回 RESULT_FAILURE
-        // 且任务不会被安排**」——如果只排加急，那"兜底"本身就变成了新的静默失败点。
-        // 所以配额不足（或加急被拒）时**回落到常规任务**，两者都不成才算失败。
-        // 附带好处：万一"加急 + persisted + 最小延迟"这个组合在某个平台上非法
-        // （build() 抛 IllegalArgumentException），异常也被 trySchedule 接住 →
-        // 照样会走常规分支，不会把保存路径拖垮。
-        val canExpedite = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-        if (canExpedite) {
-            val expedited = trySchedule(scheduler, appContext, expedited = true)
-            if (expedited == JobScheduler.RESULT_SUCCESS) {
-                Log.i(TAG, "已排入系统重试任务（jobId=$JOB_ID，加急，最短延迟 ${MIN_LATENCY_MS / 1000}s）")
-                return true
+        val scheduler = scheduler(appContext) ?: return false
+        return try {
+            // 用户又保存了一次：重试预算重新给满（这正是"用户动一下就能救回来"的路径）
+            SyncSettings.setRetryAttempts(appContext, 0)
+            // build() 自己也会抛（缺 RECEIVE_BOOT_COMPLETED 权限、一个约束都没有等），
+            // 所以它必须和 schedule() 一起被接住：这里抛出去会顺着调用方（保存路径）冒上去，
+            // 让「刷新小组件 / 触发上传 / finish()」全都做不成 —— 兜底功能绝不允许拖垮主流程。
+            val job = JobInfo.Builder(JOB_ID, ComponentName(appContext, SyncRetryJobService::class.java))
+                // 「有网络才执行」。注意：带连通性约束的任务要求调用方持有 ACCESS_NETWORK_STATE，
+                // 否则 JobSchedulerService.enforceValidJobRequest 会直接抛 SecurityException
+                // （真机实测："ACCESS_NETWORK_STATE required for jobs with a connectivity constraint"）。
+                // Manifest 里已经声明了它 —— 少了这个权限，整个自愈通道会静默失效。
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .setMinimumLatency(MIN_LATENCY_MS)
+                // 注意参数顺序：官方签名是 (long initialBackoffMillis, @BackoffPolicy int backoffPolicy)
+                // —— 毫秒在前、策略在后（与直觉相反，写反了 build() 会抛 IllegalArgumentException）。
+                // 不设的话系统默认是 {30 秒, 指数退避}，这里显式写出来是为了"60 秒起步"可读可测
+                .setBackoffCriteria(BACKOFF_MS, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
+                // 进程被杀、设备重启后任务仍在（需要 RECEIVE_BOOT_COMPLETED，见 AndroidManifest）
+                .setPersisted(true)
+                .build()
+            val result = scheduler.schedule(job)
+            if (result == JobScheduler.RESULT_SUCCESS) {
+                Log.i(TAG, "已排入系统重试任务（jobId=$JOB_ID，最短延迟 ${MIN_LATENCY_MS / 1000}s）")
+                true
+            } else {
+                // 系统可以"收下但不排"（返回 RESULT_FAILURE，不抛异常）：绝不能把它当成功
+                Log.w(TAG, "系统拒绝了重试任务（result=$result），本次不会自动补传")
+                false
             }
-            Log.w(TAG, "加急任务未被系统接受（result=$expedited），回落到常规任务")
-        }
-        val regular = trySchedule(scheduler, appContext, expedited = false)
-        if (regular == JobScheduler.RESULT_SUCCESS) {
-            Log.i(
-                TAG,
-                "已排入系统重试任务（jobId=$JOB_ID，常规，最短延迟 ${MIN_LATENCY_MS / 1000}s，" +
-                    "本次加急可用=$canExpedite）"
-            )
-            return true
-        }
-        // 系统可以"收下但不排"（返回 RESULT_FAILURE，不抛异常）：绝不能把它当成功
-        Log.w(TAG, "系统拒绝了重试任务（常规 result=$regular），本次不会自动补传")
-        return false
-    }
-
-    /**
-     * 构造兜底任务。
-     *
-     * 抽成独立函数只是为了**可测**：单测要能直接断言 builder 的契约
-     * （尤其是「加急 + `setPersisted(true)` + `setMinimumLatency`」这个组合
-     * 在 `build()` 时不抛异常），而不必依赖 Robolectric 的 JobScheduler 影子实现。
-     *
-     * 参数顺序坑（保留自 v7.9）：`setBackoffCriteria` 官方签名是
-     * `(long initialBackoffMillis, @BackoffPolicy int backoffPolicy)` —— 毫秒在前、策略在后，
-     * 写反了 `build()` 会抛 `IllegalArgumentException`。
-     */
-    @VisibleForTesting
-    internal fun buildJob(appContext: Context, expedited: Boolean): JobInfo {
-        val builder = JobInfo.Builder(
-            JOB_ID,
-            ComponentName(appContext, SyncRetryJobService::class.java)
-        )
-            // 「有网络才执行」。注意：带连通性约束的任务要求调用方持有 ACCESS_NETWORK_STATE，
-            // 否则 JobSchedulerService.enforceValidJobRequest 会直接抛 SecurityException
-            // （真机实测："ACCESS_NETWORK_STATE required for jobs with a connectivity constraint"）。
-            // Manifest 里已经声明了它 —— 少了这个权限，整个自愈通道会静默失效。
-            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-            .setMinimumLatency(MIN_LATENCY_MS)
-            // 不设的话系统默认是 {30 秒, 指数退避}，这里显式写出来是为了"60 秒起步"可读可测
-            .setBackoffCriteria(BACKOFF_MS, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
-            // 进程被杀、设备重启后任务仍在（需要 RECEIVE_BOOT_COMPLETED，见 AndroidManifest）
-            .setPersisted(true)
-        if (expedited && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // API 31+。官方明确加急任务「只允许 network / storage-not-low / persistence 三类约束」，
-            // 也就是说 setPersisted(true) 与它并存是**合法**的
-            //（这条判断由 SyncRetryTest 在 CI 上真跑一次 JobInfo.Builder.build() 钉住）。
-            builder.setExpedited(true)
-        }
-        return builder.build()
-    }
-
-    /**
-     * 真正调 `schedule()` 的地方：任何异常都吞成 `RESULT_FAILURE`，
-     * 让 [schedule] 能干净地走"加急失败 → 常规"的回落路径。
-     */
-    private fun trySchedule(scheduler: JobScheduler, appContext: Context, expedited: Boolean): Int =
-        try {
-            scheduler.schedule(buildJob(appContext, expedited))
         } catch (e: Exception) {
-            Log.w(TAG, "排入系统重试任务失败（expedited=$expedited，不影响本次上传）", e)
-            JobScheduler.RESULT_FAILURE
+            Log.w(TAG, "排入系统重试任务失败（不影响本次上传）", e)
+            false
         }
+    }
 
     /** 撤销待执行的重试任务：内容已经在云端（或本来就没改动），不必再唤醒进程 */
     fun cancel(context: Context) {
@@ -190,7 +158,7 @@ object SyncRetry {
             Log.i(TAG, "重试任务正在执行，撤销请求忽略（它自己会用 jobFinished 结束）")
             return
         }
-        val scheduler = schedulerProvider(appContext) ?: return
+        val scheduler = scheduler(appContext) ?: return
         try {
             scheduler.cancel(JOB_ID)
         } catch (e: Exception) {
@@ -203,7 +171,7 @@ object SyncRetry {
      * 用户拍一张截图就能说明"系统还记着这次没传上去"，不用再靠猜。
      */
     fun isScheduled(context: Context): Boolean {
-        val scheduler = schedulerProvider(context.applicationContext) ?: return false
+        val scheduler = scheduler(context.applicationContext) ?: return false
         return try {
             // minSdk 24 起 getPendingJob（API 24）恒可用，不再需要 getAllPendingJobs 回退分支。
             // 查不到时返回 false —— 注意个别系统上"刚排的任务查不到"确实存在，
@@ -295,18 +263,7 @@ object SyncRetry {
         else -> false
     }
 
-    /**
-     * 取 [JobScheduler] 的方式。
-     *
-     * 抽成可替换的 provider 是为了**可测**：只有假的 scheduler 才能在 JVM 上稳定复现
-     * 「加急被系统拒绝（`RESULT_FAILURE`）→ 必须回落到常规任务」这条路径 ——
-     * 那正是官方文档里"配额用尽时加急任务根本不会被安排"的形态。
-     * 与 [SyncManager.clientFactory] / `contentReader` 是同一套做法。
-     */
-    @VisibleForTesting
-    internal var schedulerProvider: (Context) -> JobScheduler? = { defaultScheduler(it) }
-
-    private fun defaultScheduler(context: Context): JobScheduler? = try {
+    private fun scheduler(context: Context): JobScheduler? = try {
         context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
     } catch (e: Exception) {
         Log.w(TAG, "取不到 JobScheduler", e)

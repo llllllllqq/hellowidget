@@ -88,9 +88,11 @@ object SyncDiagnostics {
     /**
      * 待执行的重试任务是不是**以加急身份**排着的；API 31 以下或查不到时返回 `null`。
      *
-     * 这条信息能直接验证 v8.0.1 的核心改动有没有生效：
-     * `expedited=true` 表示系统接下了加急身份（因此绕过后台网络限制），
-     * `expedited=false` 表示加急被拒、已回落为常规任务 —— 那正是要看到的"为什么还是慢"。
+     * v8.0.1 试过给兜底任务加 `setExpedited(true)`，但平台明确禁止（见
+     * [SyncRetry.MIN_LATENCY_MS] 的记录：`An expedited job cannot have a time delay`），
+     * 所以本应用**恒为常规任务**，这里正常应显示 `false`。
+     * 保留这条诊断的意义是"反证"：如果某台设备/某个 OEM 上它显示 `true`，
+     * 说明系统改变了我们排出去的任务，这正是排查"为什么行为和预期不一样"的第一手证据。
      */
     fun pendingJobExpedited(context: Context): Boolean? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null

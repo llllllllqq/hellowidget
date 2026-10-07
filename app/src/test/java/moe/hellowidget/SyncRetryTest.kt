@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.app.job.JobInfo
 import android.app.job.JobScheduler
-import android.app.job.JobWorkItem
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
@@ -47,12 +46,8 @@ import org.robolectric.annotation.LooperMode
  *     否则就变成无意义的唤醒风暴；
  *  3. 同步成功（含"本地没改动"）之后任务必须被撤销，不能留下永不结束的后台唤醒源。
  *
- * v8.0.1 追加：兜底任务以**加急**身份排入（`setExpedited`，API 31+），
- * 加急被拒或配额用尽时必须**回落为常规任务**。
- *
  * `@SuppressLint("NewApi")`：本类整体跑在 [Config] 指定的 `sdk = [34]` 上，
- * 因此 API 31 的 `JobInfo.isExpedited` 在这里是恒可用的；
- * lint 无法读到 Robolectric 的 `@Config`，只能在这里显式声明。
+ * 因此 API 31 的 `JobInfo.isExpedited` 在这里恒可用；lint 读不到 Robolectric 的 `@Config`。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -82,8 +77,6 @@ class SyncRetryTest {
 
     @After
     fun tearDown() {
-        // 防御性复位：万一某个用例在替换 schedulerProvider 之后抛异常，别把假实现漏给后面的用例
-        SyncRetry.schedulerProvider = { defaultSchedulerFor(it) }
         SyncManager.contentReader = { moe.hellowidget.ContentStore.read() }
         SyncManager.clientFactory = { config, onUntrusted ->
             moe.hellowidget.sync.OkHttpWebDavClient(config, onUntrusted)
@@ -137,6 +130,15 @@ class SyncRetryTest {
             "首次重试必须晚于 1 分钟闸门，否则会被自己的节流静默跳过",
             job.minLatencyMillis > moe.hellowidget.sync.SyncEngine.MIN_SYNC_INTERVAL_MS
         )
+        // v8.0.1：记录一条被 CI 抓到的平台事实，别再踩 ——
+        // 给这条任务加 setExpedited(true) 会直接抛
+        //   IllegalArgumentException: An expedited job cannot have a time delay
+        //     at android.app.job.JobInfo.enforceValidity(JobInfo.java:2279)
+        // 即「加急 ⇒ 不允许延迟 ⇒ 必须立刻执行」，而立刻执行会在应用仍处前台时
+        // 抢走 SyncManager 的互斥锁，把上传从"进度条 + 成功 Toast"这条唯一可见路径上夺走。
+        // 所以这里**故意**保持常规 + 延迟；想拿加急的收益需要独立一轮改成两个任务 id。
+        // （sdk 34 的 JobInfo.isExpedited 是 API 31，本类 @Config(sdk = [34]) 恒可用）
+        assertFalse("兜底任务刻意不使用加急", job.isExpedited)
     }
 
     @Test
@@ -193,111 +195,6 @@ class SyncRetryTest {
         job.cancel()
         job.join()
         assertFalse("收尾后必须回到非执行中状态", SyncRetry.running)
-    }
-
-    // ------------------------------------------------------------ v8.0.1：加急任务与回落
-
-    /**
-     * v8.0.1 的核心改动：兜底任务要以**加急**身份排出去。
-     *
-     * 官方对 `setExpedited(true)` 的承诺正好对着本 bug 的机制：
-     * 「Bypass Doze, app standby, and battery saver network restrictions
-     * (if the job has a connectivity constraint)」——官方文档写明 Rare 待机桶下
-     * **后台网络是 Disabled**，常规任务带着连接约束会一直等不到约束满足。
-     *
-     * 这一条同时钉住一个**容易被记错**的 API 事实：加急任务只允许
-     * network / storage-not-low / **persistence** 三类约束，所以
-     * `setExpedited(true)` 与 `setPersisted(true)` 并存必须合法（`build()` 不抛异常）。
-     * 如果哪天平台收紧了这条，这个用例会先红 —— 而不是等到用户手机上才发现。
-     */
-    @Test
-    fun buildJob_expeditedTaskCombinesWithPersistenceAndMinimumLatency() {
-        val job = SyncRetry.buildJob(context, expedited = true)
-
-        assertTrue("加急身份必须真的落到 JobInfo 上", job.isExpedited)
-        assertTrue("加急任务仍然必须能在重启后存活（persistence 是被允许的约束之一）", job.isPersisted)
-        assertEquals("连接约束不能丢", JobInfo.NETWORK_TYPE_ANY, job.networkType)
-        assertTrue(
-            "最短延迟必须仍然晚于 1 分钟闸门，否则加急任务会立刻撞进节流窗口白烧一次预算",
-            job.minLatencyMillis > moe.hellowidget.sync.SyncEngine.MIN_SYNC_INTERVAL_MS
-        )
-    }
-
-    @Test
-    fun buildJob_regularTaskIsNotMarkedExpedited() {
-        val job = SyncRetry.buildJob(context, expedited = false)
-
-        assertFalse("回落出来的常规任务不能带加急标志", job.isExpedited)
-        assertTrue("常规任务同样必须持久化", job.isPersisted)
-        assertEquals(JobInfo.NETWORK_TYPE_ANY, job.networkType)
-    }
-
-    /**
-     * 官方明确：「配额用尽时 `schedule()` **立刻返回 `RESULT_FAILURE`，
-     * 并且任务不会被成功安排**」。只排加急的话，"兜底"本身就成了新的静默失败点 ——
-     * 所以被拒时必须回落到常规任务。
-     */
-    @Test
-    fun schedule_fallsBackToARegularJobWhenExpeditedIsRejected() {
-        val fake = RejectingScheduler(rejectExpedited = true)
-        SyncRetry.schedulerProvider = { fake }
-        try {
-            assertTrue("加急被拒后必须靠常规任务兜住", SyncRetry.schedule(context))
-            assertEquals("只应留下一个任务（加急那个压根没排上）", 1, fake.scheduled.size)
-            assertFalse("回落出来的那个不能是加急", fake.scheduled.single().isExpedited)
-            assertTrue("回落后依然必须持久化", fake.scheduled.single().isPersisted)
-        } finally {
-            SyncRetry.schedulerProvider = { defaultSchedulerFor(it) }
-        }
-    }
-
-    /** 连常规任务都被系统拒绝时，返回值必须如实说"没排上"（不能再骗调用方） */
-    @Test
-    fun schedule_reportsFailureWhenBothExpeditedAndRegularAreRejected() {
-        val fake = RejectingScheduler(rejectExpedited = true, rejectAll = true)
-        SyncRetry.schedulerProvider = { fake }
-        try {
-            assertFalse("两个分支都被拒时必须返回 false", SyncRetry.schedule(context))
-            assertTrue("一个任务都不该排上", fake.scheduled.isEmpty())
-        } finally {
-            SyncRetry.schedulerProvider = { defaultSchedulerFor(it) }
-        }
-    }
-
-    private fun defaultSchedulerFor(ctx: Context): JobScheduler =
-        ctx.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
-
-    /**
-     * 假 JobScheduler：只负责"拒绝加急任务"这一种真机上极难复现、却真实存在的形态。
-     * 其余行为照常收下。
-     */
-    private class RejectingScheduler(
-        private val rejectExpedited: Boolean,
-        private val rejectAll: Boolean = false
-    ) : JobScheduler() {
-
-        val scheduled = mutableListOf<JobInfo>()
-
-        override fun schedule(job: JobInfo): Int {
-            if (rejectAll || (rejectExpedited && job.isExpedited)) return JobScheduler.RESULT_FAILURE
-            scheduled += job
-            return JobScheduler.RESULT_SUCCESS
-        }
-
-        override fun cancel(jobId: Int) {
-            scheduled.removeAll { it.id == jobId }
-        }
-
-        override fun cancelAll() {
-            scheduled.clear()
-        }
-
-        override fun enqueue(job: JobInfo, workItem: JobWorkItem): Int = JobScheduler.RESULT_FAILURE
-
-        override fun getAllPendingJobs(): MutableList<JobInfo> = scheduled.toMutableList()
-
-        override fun getPendingJob(jobId: Int): JobInfo? =
-            scheduled.firstOrNull { it.id == jobId }
     }
 
     // ------------------------------------------------------------ 重试判定（纯函数）

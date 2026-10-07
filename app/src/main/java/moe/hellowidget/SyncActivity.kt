@@ -273,8 +273,10 @@ class SyncActivity : AppCompatActivity() {
      * v8.0.1：系统侧诊断（只读、零网络、零落盘）。
      *
      * `bucket=RARE` 配上 `pendingJobReason=APP_STANDBY`，
-     * 就是「系统把兜底任务压在低优先级待机桶里（而 Rare 桶下后台网络是 Disabled）」的直接证据；
-     * `pendingJobExpedited=true` 则说明 v8.0.1 的加急改造生效了。
+     * 就是「系统把兜底任务压在低优先级待机桶里（而 Rare 桶下后台网络是 Disabled）」的直接证据。
+     * `pendingJobExpedited` 正常应为 `false`：本版的兜底任务**刻意**是常规 + 延迟
+     * （加急不允许延迟，而立刻执行会抢走前台服务的可见上传，见 `SyncRetry.MIN_LATENCY_MS` 的记录）；
+     * 若它显示 `true`，说明系统改动了我们排出去的任务。
      * 只在同步已启用时显示，未启用时不给用户看一堆无意义的 n/a。
      */
     private fun diagnosticsLine(): String? {
