@@ -188,7 +188,7 @@ class SyncRetryTest {
 
         SyncRetry.schedule(context)
 
-        assertFalse("未启用同步时不该排任务（那时橙点也不会亮）", SyncRetry.isScheduled(context))
+        assertFalse("未启用同步时不该排任务", SyncRetry.isScheduled(context))
     }
 
     @Test
@@ -291,7 +291,7 @@ class SyncRetryTest {
 
         assertFalse("上传成功后任务应当结束", again)
         assertEquals(
-            "内容必须真的传上去了（哈希落盘），否则橙点不会灭",
+            "内容必须真的传上去了（哈希落盘，设置页据此显示「上次成功上传」）",
             moe.hellowidget.sync.SyncEngine.sha256Hex(content.toByteArray()),
             SyncSettings.lastUploadedHash(context)
         )

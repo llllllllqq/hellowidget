@@ -1,4 +1,6 @@
-<!-- 顶部导航栏：外观设置（Material「settings」图标，24dp，白色填充以便叠在 colorPrimary 上） -->
+<!-- 顶部导航栏：设置（Material「settings」齿轮图标，24dp，白色填充以便叠在 colorPrimary 上）。
+     v8.2.0 起这一页除了外观，还放着「备份与换机迁移」，因此入口名称从「外观设置」改成「设置」——
+     图标本来就是齿轮，只是名字终于跟它对上了。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

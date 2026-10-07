@@ -167,7 +167,7 @@ object SyncSettings {
 
     /**
      * 本次「还有内容没传上去」已经自动重试过几次。
-     * 上限见 [SyncRetry.MAX_ATTEMPTS]：用完就停，不做长期后台驻留 —— 剩下的交给橙点与用户。
+     * 上限见 [SyncRetry.MAX_ATTEMPTS]：用完就停，不做长期后台驻留 —— 剩下的交给设置页状态行与用户。
      */
     fun retryAttempts(context: Context): Int = context.prefs.getInt(KEY_RETRY_ATTEMPTS, 0)
 

@@ -2,6 +2,7 @@ package moe.hellowidget
 
 import android.os.Looper
 import android.widget.EditText
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.fail
 import org.robolectric.Shadows.shadowOf
 
@@ -27,17 +28,19 @@ internal fun awaitEditorEnabled(activity: MainActivity, timeoutMs: Long = 10_000
 }
 
 /**
- * 等待「待上传」橙点的状态稳定到 [expected]。
+ * 等待磁盘上的内容变成 [expected]（写盘跑在 IO 线程，主线程 PAUSED 时必须交替推进）。
  *
- * v7.8 的检测是异步的（IO 线程算 SHA-256 → 回主线程改图标），PAUSED 模式下必须
- * idle 主线程消息队列才会推进，因此和 [awaitEditorEnabled] 同一套「idle + sleep」写法。
+ * 走 [ContentStore.read] 而不是直接读文件：与生产代码同一条路径，且不受 DataStore
+ * 内部文件名/目录布局变化影响。
  */
-internal fun awaitUploadPending(activity: MainActivity, expected: Boolean, timeoutMs: Long = 5_000) {
+internal fun awaitDiskContent(expected: String, timeoutMs: Long = 5_000) {
     val deadline = System.currentTimeMillis() + timeoutMs
+    var actual = ""
     while (System.currentTimeMillis() < deadline) {
+        actual = runBlocking { ContentStore.read() }
+        if (actual == expected) return
         shadowOf(Looper.getMainLooper()).idle()
-        if (activity.uploadPending == expected) return
-        Thread.sleep(10)
+        Thread.sleep(20)
     }
-    fail("等待「待上传」状态变为 $expected 超时（当前 ${activity.uploadPending}）")
+    fail("等待写盘超时：期望「$expected」，实际「$actual」")
 }

@@ -2,25 +2,23 @@
 <!--
     Android 12（API 31）及以上的备份 / 迁移规则。
 
-    本应用的全部内容就是用户的私人文本，因此**既不参与云备份，也不参与设备间迁移**。
+    v8.2.0 起**两条通道都显式包含**同样两个域 —— 云备份（Auto Backup）与设备间迁移
+    （厂商换机助手 / D2D）都能把用户数据带到新设备：
+      - file       → filesDir/user_content.dat（正文）+ 最多 3 份 corrupt_*.dat 现场
+      - sharedpref → hello_prefs（外观 / 编辑器配色 / WebDAV 配置与运行时状态）
 
-    为什么不能只写 android:allowBackup="false"：
-    官方文档明确指出，在部分厂商的 Android 12+ 设备上，allowBackup="false"
-    只停掉云备份，**不会**阻止 device-to-device 迁移，必须靠本文件显式排除。
+    与 v7.x 的对比：那时这里把五个域全部 exclude，官方文档明确写过"部分厂商 Android 12+ 上
+    allowBackup=false 只停云备份、不阻止设备迁移"，所以才需要这个文件兜底。
+    现在两个方向都是刻意开启的，这条注释保留下来是为了说明**为什么当初必须写它**
+    —— 规则文件从来不是装饰品，它是"数据能不能离机"这件事的唯一开关。
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="root" />
-        <exclude domain="file" />
-        <exclude domain="database" />
-        <exclude domain="sharedpref" />
-        <exclude domain="external" />
+        <include domain="file" path="." />
+        <include domain="sharedpref" path="." />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="root" />
-        <exclude domain="file" />
-        <exclude domain="database" />
-        <exclude domain="sharedpref" />
-        <exclude domain="external" />
+        <include domain="file" path="." />
+        <include domain="sharedpref" path="." />
     </device-transfer>
 </data-extraction-rules>

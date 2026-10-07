@@ -38,9 +38,12 @@ enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED }
  * 本机内容一变，下一次同步就整份覆盖它；本机没变，就一个请求都不发。
  *
  * ## v7.8：自动上传只由「保存」驱动
- * 打开应用（含旋转 / 深色模式重建）**不再**发起任何同步，只调用 [hasPendingUpload]
- * 做一次纯检测，结果交给界面在「立即上传」按钮上显示橙点。
+ * 打开应用（含旋转 / 深色模式重建）**不发起任何同步**。
  * 自动上传只发生在「保存内容」之后（返回键 / 失焦 / 切后台 / 旋转 / 深色模式等所有保存路径）。
+ *
+ * v8.2.0：v7.8 那条"打开应用顺手检测一次有没有待上传内容、据此点亮橙点"的链路已随橙点
+ * 一起删除（用户要求精简功能）。因此**本类只被"保存"与用户手动操作驱动**，
+ * 打开应用时一个请求、一次哈希都不算。
  *
  * ## v8.1.0：删掉 1 分钟闸门，换成「单飞 + 合并」
  * 旧实现过闸门后无条件写 `lastAttemptAt`，于是**一次零请求的空跑**（本地没改动、
@@ -131,26 +134,6 @@ object SyncManager {
                 Log.w(TAG, "进程内同步异常", e)
             }
         }
-    }
-
-    /**
-     * v7.8：**只检测、不上传**——「上次成功上传之后，本地内容又有改动了吗？」
-     *
-     * 这是顶部导航栏「立即上传」按钮上那个橙点唯一的判定依据（见 MainActivity）：
-     *  - **零网络、零落盘、零通知**：只是读一次已持久化的 `lastUploadedHash` + 算一次 SHA-256；
-     *  - 打开应用（以及每次同步结束）时调用，**绝不因此发起任何同步**；
-     *  - 判断放在这里而不是 MainActivity：编辑器只需把当前文本交进来，逻辑留在可单测的地方。
-     *
-     * 空内容的特例：本机**从未上传过**且内容为空（刚装好应用、还没写东西）时返回 false ——
-     * 否则新用户一装好就会看到一个没有意义的橙点。删空一份已上传过的内容仍算「有改动」（true）。
-     */
-    fun hasPendingUpload(context: Context, localText: String): Boolean {
-        if (!SyncSettings.enabled(context)) return false
-        if (SyncSettings.config(context) == null) return false
-        val lastUploadedHash = SyncSettings.lastUploadedHash(context)
-        if (lastUploadedHash == null && localText.isEmpty()) return false
-        val hash = SyncEngine.sha256Hex(localText.toByteArray(Charsets.UTF_8))
-        return SyncEngine.hasLocalChanges(hash, lastUploadedHash)
     }
 
     /**

@@ -4,9 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
-import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.LayerDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputFilter
@@ -19,30 +16,25 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import moe.hellowidget.databinding.ActivityMainBinding
 import moe.hellowidget.sync.SyncDiagnostics
 import moe.hellowidget.sync.SyncLauncher
-import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncRetry
 import moe.hellowidget.sync.SyncSettings
-import moe.hellowidget.sync.SyncStatus
 import moe.hellowidget.sync.SyncTrigger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
@@ -59,21 +51,26 @@ class MainActivity : AppCompatActivity() {
     /** 顶部导航栏里的「撤回」动作项；创建菜单后持有，用于实时切换可用状态 */
     private var undoMenuItem: MenuItem? = null
 
-    /** 顶部导航栏里的「立即上传」动作项；创建菜单后持有，用于切换橙点角标 */
-    private var uploadMenuItem: MenuItem? = null
-
     /**
-     * 「立即上传」按钮上是否显示橙点（= 上次成功上传之后本地又有改动）。
+     * v8.2.0：设置页可能**恢复了备份**（正文被整份替换）。
      *
-     * v7.8 语义：**只在检测点**重算（打开应用、回到前台、每次同步结束之后、保存后没能启动同步时），
-     * 不跟随每次按键。检测本身零网络、零落盘（见 [SyncManager.hasPendingUpload]）。
+     * 那种情况下编辑器里这一份内容已经过期，绝不能在接下来的保存路径里写回磁盘 ——
+     * 因此设置页把恢复后的正文原样回传（[SettingsActivity] 的 `EXTRA_RESTORED_CONTENT`），
+     * 由本回调**同步**替换编辑器文本（回调发生在 onResume 之前，因此早于任何保存时机）。
+     *
+     * 为什么不在回调里重读磁盘：那是一次异步 IO，读回来之前用户就可能已经离开界面，
+     * 旧内容会被写回磁盘、把刚恢复的东西盖掉。走 Intent 回传则是零窗口的。
      */
-    @VisibleForTesting
-    internal var uploadPending = false
-        private set
-
-    /** 检测的序号：异步算 hash 时只让最新一次的结果生效，避免旧结果覆盖新结果 */
-    private var pendingCheckSeq = 0
+    private val settingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val restored = if (result.resultCode == RESULT_OK) {
+            result.data?.getStringExtra(EXTRA_RESTORED_CONTENT)
+        } else {
+            null
+        }
+        if (restored != null) applyRestoredContent(restored)
+    }
 
     /** 已记录的可撤回步数（0 = 内容已回到刚打开时的样子）；供单测观察撤回历史 */
     @VisibleForTesting
@@ -156,7 +153,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         applySystemBarInsets(binding.root)
-        // 顶部导航栏（v7.7）：外观设置 / WebDAV 同步 / 立即上传 / 撤回 四个入口都在这里
+        // 顶部导航栏（v7.7）：设置 / WebDAV 同步 / 立即上传 / 撤回 四个入口都在这里
         setSupportActionBar(binding.toolbar)
 
         // 加载完成前禁止编辑：避免「用户已输入但磁盘旧内容尚未读入」时，
@@ -202,8 +199,9 @@ class MainActivity : AppCompatActivity() {
                 binding.editor.setSelection(0)
             }
             requestImeShow()
-            // v7.8：打开应用**只检测、不上传** —— 「上次成功上传后本地又有改动」就点亮橙点
-            detectPendingUpload(savedText)
+            // v8.2.0：打开应用**只读盘**，不检测、不上传。v7.8 起这里会算一次内容哈希并点亮
+            // 「立即上传」按钮上的橙点，那条链路现已随橙点一起删除（用户要求精简功能）——
+            // 现在打开应用只做一件事：把磁盘上的内容显示出来。
             // v8.0.1：打开应用是唯一"人一定在看"的时刻，顺手把系统侧的证据记一行：
             // 当前待机分桶 / 兜底任务是否待执行 / 系统说它为什么还没跑 / 上次自动上传是怎么启动的。
             // 排查「保存了却没传上去」时，这一行往往就够了。
@@ -214,86 +212,28 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // v7.8：每次同步结束（成功 / 失败 / 跳过）后重算橙点：
-        // 成功 → 熄灭；失败或跳过 → 亮起（磁盘上确实还有没传上去的内容）。
-        // SyncManager 与 SyncService 同进程，因此从服务发起的上传这里也收得到。
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                SyncManager.status.collect { status ->
-                    if (status is SyncStatus.Success ||
-                        status is SyncStatus.Failed ||
-                        status is SyncStatus.Skipped
-                    ) {
-                        detectPendingUpload(binding.editor.text.toString())
-                    }
-                }
-            }
-        }
-
         installBackHandler()
     }
 
-    // ------------------------------------------------------------ 「待上传」橙点
+    // ------------------------------------------------------------ 备份恢复（v8.2.0）
 
     /**
-     * 重算「待上传」状态并刷新「立即上传」按钮上的橙点。
+     * 用备份里的内容替换编辑器文本（由设置页恢复成功后回传，见 [settingsLauncher]）。
      *
-     * 只做一次 SHA-256（≤300KB，毫秒级）且跑在 IO 线程；结果永远来自
-     * 「当前文本 vs 上次成功上传的哈希」这个纯函数，因此进程重启后自动重现，不需要额外持久化。
+     * 三件事必须一起做，少一件都会留下"旧内容反扑"的口子：
+     *  1. 替换文本 —— 且**不能记进撤回历史**：程序化写入不是用户的编辑，
+     *     记进去会让「撤回」把备份内容一步步退回恢复前的旧内容
+     *     （走 [UndoHistory.withoutRecording]，理由见那里的注释）；
+     *  2. 清空撤回历史（撤回的终点应当是"恢复后的内容"）；
+     *  3. 光标回到第一行行首（与全新进入应用一致）。
      */
-    private fun detectPendingUpload(text: String) {
-        val seq = ++pendingCheckSeq
-        lifecycleScope.launch {
-            val pending = withContext(Dispatchers.IO) {
-                SyncManager.hasPendingUpload(applicationContext, text)
-            }
-            if (seq != pendingCheckSeq) return@launch // 已有更新的一次检测，丢弃本次结果
-            setUploadPending(pending)
-        }
-    }
-
-    private fun setUploadPending(pending: Boolean) {
-        if (pending == uploadPending) return
-        uploadPending = pending
-        refreshUploadBadge()
-    }
-
-    /**
-     * 刷新按钮外观：**替换的只是同一个上传图标的叠加状态**，不会换成别的图标 ——
-     * 有待上传内容时在图标右上角叠一个橙色圆点（小米橙 #FF6900，紫底上最醒目），
-     * 没有时就是原来的白云上传图标。橙点用代码合成（[Drawable] 叠加），不新增任何图标资源。
-     */
-    private fun refreshUploadBadge() {
-        val item = uploadMenuItem ?: return
-        item.setIcon(uploadIcon(uploadPending))
-        item.setTitle(if (uploadPending) R.string.menu_upload_now_pending else R.string.menu_upload_now)
-    }
-
-    /**
-     * 上传图标 + 可选的橙点角标。
-     *
-     * 橙点用 `LayerDrawable` 叠在原图标上（**不替换图标、不新增图标资源**），
-     * 位置用 **inset** 手工算到右上角：`setLayerInset` 从 API 1 就在，一条代码路径通吃所有受支持的版本，
-     * 不必换成依赖 `setLayerGravity`（API 23）的重力写法 —— 那只是同一效果的另一种表达，换了要重新验证角标位置。
-     */
-    private fun uploadIcon(withDot: Boolean): Drawable? {
-        val icon = ContextCompat.getDrawable(this, R.drawable.ic_action_upload) ?: return null
-        if (!withDot) return icon
-        val density = resources.displayMetrics.density
-        val dotSize = (UPLOAD_DOT_SIZE_DP * density).roundToInt()
-        val dot = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(ContextCompat.getColor(this@MainActivity, R.color.upload_pending_dot))
-            // 1dp 白描边：把橙点与白色的云朵图标笔画分开，紫底上轮廓也更清楚
-            setStroke(density.roundToInt().coerceAtLeast(1), Color.WHITE)
-            setSize(dotSize, dotSize)
-        }
-        val iconWidth = icon.intrinsicWidth.takeIf { it > 0 } ?: (ICON_SIZE_DP * density).roundToInt()
-        val iconHeight = icon.intrinsicHeight.takeIf { it > 0 } ?: (ICON_SIZE_DP * density).roundToInt()
-        return LayerDrawable(arrayOf(icon, dot)).apply {
-            // 让第 2 层只占右上角 dotSize×dotSize 那一小块
-            setLayerInset(1, iconWidth - dotSize, 0, 0, iconHeight - dotSize)
-        }
+    @VisibleForTesting
+    internal fun applyRestoredContent(content: String) {
+        undoHistory.withoutRecording { binding.editor.setText(content) }
+        binding.editor.setSelection(0)
+        undoHistory.clear()
+        refreshUndoAction()
+        Log.i(TAG, "已应用备份恢复后的内容（${content.length} 字）")
     }
 
     /**
@@ -325,18 +265,15 @@ class MainActivity : AppCompatActivity() {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         undoMenuItem = menu.findItem(R.id.action_undo)
-        uploadMenuItem = menu.findItem(R.id.action_upload)
         refreshUndoAction()
-        // 菜单可能在「待上传」状态已知之后才创建（启动检测是异步的），这里补齐橙点外观
-        refreshUploadBadge()
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        // 打开小组件外观设置页
+        // 打开设置页（外观 + 备份与换机迁移）
         R.id.action_appearance -> {
             openingSettings = true
-            startActivity(Intent(this, SettingsActivity::class.java))
+            settingsLauncher.launch(Intent(this, SettingsActivity::class.java))
             true
         }
         // 打开 WebDAV 同步设置页
@@ -481,10 +418,6 @@ class MainActivity : AppCompatActivity() {
         openingSettings = false
         savedOnLeave = false
         applyEditorAppearance()
-        // v7.8：从同步设置页回来（可能刚启用/改了配置）后重算一次橙点；内容尚未加载完时不猜
-        if (loadCompleted) {
-            detectPendingUpload(binding.editor.text.toString())
-        }
     }
 
     /**
@@ -688,8 +621,8 @@ class MainActivity : AppCompatActivity() {
             val ok = ContentStore.write(text)
             // v7.9：写盘成功就**先**把「这次改动还没传上去」记到系统里（一次性持久化重试任务）。
             // 放在触发上传之前是有意的：接下来的触发有可能根本没跑起来 —— 前台服务被系统
-            // 静默拒绝、进程立刻被冻结/回收 —— 那正是 v7.8.0「只保存、不上传、橙点不灭」的形态，
-            // 而那种情况下如果没有这一步，就没有任何东西记得"还欠一次上传"。
+            // 静默拒绝、进程立刻被冻结/回收 —— 那种情况下如果没有这一步，就没有任何东西
+            // 记得"还欠一次上传"。
             // 上传成功后 SyncManager 会撤销它；内容没变时它醒来也一个请求都不发。
             if (ok && syncTrigger != null) SyncRetry.schedule(appContext)
 
@@ -703,7 +636,7 @@ class MainActivity : AppCompatActivity() {
             // 这个队可能排得很久，等真正去 startForegroundService 时窗口已经关了。
             //
             // 现在：写盘 → 排兜底任务 → **立刻**请求前台服务，全部在 IO 线程上顺序完成；
-            // 真正需要主线程的东西（小组件、橙点、Toast、finish()）留在下面的 withContext 里。
+            // 真正需要主线程的东西（小组件、Toast、finish()）留在下面的 withContext 里。
             // ------------------------------------------------------------------
             val startedSync = if (ok && syncTrigger != null) {
                 SyncLauncher.request(appContext, syncTrigger)
@@ -722,10 +655,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 // 无论成功与否都刷新小组件（失败时小组件继续显示磁盘上的旧内容，保持一致）
                 TextWidgetProvider.updateWidgets(appContext)
-
-                // 没能启动同步（未启用/未配置，或前台服务被系统拒绝且降级也失败）：
-                // 不会再有同步终态回调，直接重算橙点，让用户看到「还有东西没传上去」
-                if (ok && syncTrigger != null && !startedSync) detectPendingUpload(text)
 
                 if (notifyFailure && !ok) {
                     Toast.makeText(appContext, R.string.save_failed, Toast.LENGTH_SHORT).show()
@@ -761,11 +690,14 @@ class MainActivity : AppCompatActivity() {
         /** 编辑器内容上限（字符），见 [maxLengthFilter] 的说明 */
         const val MAX_CONTENT_CHARS = 100_000
 
-        /** 「立即上传」按钮上橙点的直径（dp）——只在原图标右上角叠一个圆点，不新增图标资源 */
-        private const val UPLOAD_DOT_SIZE_DP = 9f
-
-        /** 图标基准边长（dp）：拿不到图标 intrinsic 尺寸时用它兜底 */
-        private const val ICON_SIZE_DP = 24f
+        /**
+         * v8.2.0：设置页恢复备份成功后回传的正文。
+         *
+         * 用 Intent 回传而不是"回来自个儿重读磁盘"，是为了**零时间窗**：回调发生在 onResume
+         * 之前，因此一定早于任何保存路径 —— 否则用户从设置页返回后立刻退出，
+         * 就会拿编辑器里恢复前的旧内容覆盖刚恢复的内容。
+         */
+        const val EXTRA_RESTORED_CONTENT = "moe.hellowidget.extra.RESTORED_CONTENT"
 
         val Context.prefs
             get() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

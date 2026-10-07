@@ -12,15 +12,13 @@
     <string name="save_failed">保存失败，请重试</string>
 
     <!-- 顶部导航栏（编辑页） -->
-    <string name="menu_appearance">外观设置</string>
+    <string name="menu_appearance">设置</string>
     <string name="menu_webdav">WebDAV 同步</string>
     <string name="menu_upload_now">立即上传到云端</string>
-    <!-- 有未上传改动时，同一个按钮的读屏名称（图标右上角会亮一个橙点） -->
-    <string name="menu_upload_now_pending">立即上传到云端（有未上传的改动）</string>
     <string name="menu_undo">撤回上一步</string>
 
     <!-- 设置页 -->
-    <string name="settings_title">小组件外观设置</string>
+    <string name="settings_title">设置</string>
     <string name="settings_preview">实时预览</string>
     <string name="settings_preview_sample">示例文字：字体、颜色、背景会实时跟随设置变化。\n第二行用于观察行距效果。</string>
     <string name="settings_font_size">字体大小（小组件与编辑器同步）</string>
@@ -59,6 +57,27 @@
     <string name="color_picker_title_editor_light_text">自定义浅色模式编辑器文字颜色</string>
     <string name="color_picker_title_editor_dark_bg">自定义深色模式编辑器背景颜色</string>
     <string name="color_picker_title_editor_dark_text">自定义深色模式编辑器文字颜色</string>
+
+    <!-- ===== 备份与换机迁移（v8.2.0） ===== -->
+    <string name="settings_section_backup">备份与换机迁移</string>
+    <string name="backup_hint">导出一个备份文件（含正文、外观配色与 WebDAV 设置），换机或重装后点「从备份恢复」即可原样还原。注意：文件里的 WebDAV 口令是明文，请妥善保管；系统云备份与换机助手也已获准带走这些数据。</string>
+    <string name="backup_export">导出备份文件</string>
+    <string name="backup_import">从备份恢复</string>
+    <string name="backup_exported">备份已导出</string>
+    <string name="backup_export_failed">导出失败：无法写入所选位置</string>
+    <string name="backup_import_unreadable">无法读取所选文件</string>
+    <string name="backup_import_invalid">不是有效的 HelloWidget 备份：%1$s</string>
+    <string name="backup_bad_not_json">文件内容不是 JSON 文本</string>
+    <string name="backup_bad_foreign_app">文件来自其他应用</string>
+    <string name="backup_bad_format">缺少格式版本号</string>
+    <string name="backup_bad_newer_format">备份由更新版本的应用导出，请先升级应用</string>
+    <string name="backup_bad_no_content">备份里没有正文</string>
+    <string name="backup_import_confirm_title">恢复备份？</string>
+    <string name="backup_import_confirm_message">当前内容将被备份里的正文覆盖（备份正文 %1$d 字），外观与 WebDAV 设置也会一并替换。此操作不可撤销。</string>
+    <string name="backup_import_confirm">恢复</string>
+    <string name="backup_imported">已恢复备份（正文与设置）</string>
+    <string name="backup_imported_partial">已恢复正文与外观；备份里的 WebDAV 设置不合法，已跳过</string>
+    <string name="backup_import_failed">恢复失败：正文未能写入磁盘，原有内容未受影响</string>
 
     <!-- ===== WebDAV 同步（v7.2） ===== -->
     <string name="sync_title">WebDAV 同步</string>

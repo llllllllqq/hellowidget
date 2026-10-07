@@ -1,34 +1,46 @@
 package moe.hellowidget
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import moe.hellowidget.MainActivity.Companion.prefs
 import moe.hellowidget.databinding.ActivitySettingsBinding
 import java.util.Locale
 
 /**
- * 小组件外观设置页：字体大小、字体颜色、背景颜色、背景透明度、防误触余量，
- * 以及浅色/深色模式各自的编辑器配色。
+ * 设置页：小组件外观（字体大小 / 颜色 / 背景 / 防误触余量）、浅色与深色模式各自的编辑器配色，
+ * 以及 **v8.2.0 起的备份与换机迁移**（导出 / 恢复一个备份文件）。
  *
  * QA 修复要点：
  *  - 滑杆拖动时只做廉价的本地预览，**松手才落盘 + 刷新桌面小组件**（原来每帧一次全量刷新）
  *  - 色板补齐无障碍语义（可访问名称、选中状态、48dp 触控目标）
  *  - targetSdk 35 边到边：消费系统栏 insets
+ *
+ * 备份的两个按钮都走系统的文件选择器（SAF），因此**不需要任何存储权限**，
+ * 用户自己决定文件放在哪（本地 / 网盘 / U 盘都行）。
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -63,6 +75,32 @@ class SettingsActivity : AppCompatActivity() {
     private var editorDarkBg = EditorSettings.DEFAULT_DARK_BG
     private var editorDarkText = EditorSettings.DEFAULT_DARK_TEXT
 
+    /**
+     * 导出备份：系统文件选择器（SAF `ACTION_CREATE_DOCUMENT`）。
+     * 结果 uri 为 null = 用户取消，什么都不做。
+     */
+    private val exportBackup =
+        registerForActivityResult(ActivityResultContracts.CreateDocument(BACKUP_MIME)) { uri ->
+            uri?.let { writeBackupTo(it) }
+        }
+
+    /**
+     * 从备份恢复：SAF `ACTION_OPEN_DOCUMENT`。
+     *
+     * MIME 刻意用通配类型（请求里就是「星号 + 斜杠 + 星号」这三个字符）：
+     * 备份是 `.json`，但不同文件管理器/网盘给出的 MIME 五花八门
+     * （`application/json` / `text/plain` / `application/octet-stream`，甚至空），
+     * 卡 MIME 只会让用户"看不到自己的备份文件"。内容合法性由 [BackupCodec.decode] 判定。
+     *
+     * 注意这行 KDoc **不能**把通配 MIME 原样写出来：那三个字符里的后两个正好是块注释的
+     * 结束标记，会把本段注释提前截断，后面的说明就变成代码（本版真的踩过一次，
+     * 由"本地 Kotlin 语法自检 + aapt2 预检"抓到）。
+     */
+    private val importBackup =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let { readBackupFrom(it) }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -83,6 +121,12 @@ class SettingsActivity : AppCompatActivity() {
         updatePreview()
 
         binding.btnReset.setOnClickListener { resetSettings() }
+
+        // v8.2.0：备份 / 换机迁移。导出名带时间戳，用户连点两次不会互相覆盖
+        binding.btnExportBackup.setOnClickListener {
+            exportBackup.launch(BackupCodec.suggestedFileName(System.currentTimeMillis()))
+        }
+        binding.btnImportBackup.setOnClickListener { importBackup.launch(arrayOf("*/*")) }
     }
 
     /** 消费系统栏 insets，避免内容被状态栏/导航栏遮挡（targetSdk 35 边到边必需） */
@@ -471,6 +515,113 @@ class SettingsActivity : AppCompatActivity() {
         updatePreview()
     }
 
+    // ---------- v8.2.0：备份 / 换机迁移 ----------
+
+    /** 导出：把当前设备上的正文 + 设置写进用户选定的文件 */
+    private fun writeBackupTo(uri: Uri) {
+        lifecycleScope.launch {
+            val json = withContext(Dispatchers.IO) {
+                runCatching {
+                    BackupCodec.encode(BackupStore.snapshot(this@SettingsActivity), System.currentTimeMillis())
+                }.getOrElse { e ->
+                    Log.w(TAG, "导出失败：生成备份内容时出错", e)
+                    null
+                }
+            }
+            if (json == null) {
+                toast(getString(R.string.backup_export_failed))
+                return@launch
+            }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    // "wt" = 截断后写入：用户选了已有文件时必须是覆盖，不能留下旧尾巴
+                    contentResolver.openOutputStream(uri, "wt")?.use {
+                        it.write(json.toByteArray(Charsets.UTF_8))
+                    } ?: error("openOutputStream 返回 null")
+                }.onFailure { e -> Log.w(TAG, "导出失败：写入所选文件出错", e) }.isSuccess
+            }
+            toast(getString(if (ok) R.string.backup_exported else R.string.backup_export_failed))
+        }
+    }
+
+    /** 读取用户选定的文件并解码；失败原因明确告诉用户（"不是备份"与"读不出来"是两回事） */
+    private fun readBackupFrom(uri: Uri) {
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.use {
+                        it.readBytes().toString(Charsets.UTF_8)
+                    } ?: error("openInputStream 返回 null")
+                }.onFailure { e -> Log.w(TAG, "恢复失败：无法读取所选文件", e) }.getOrNull()
+            }
+            if (text == null) {
+                toast(getString(R.string.backup_import_unreadable))
+                return@launch
+            }
+            when (val decoded = BackupCodec.decode(text)) {
+                is BackupCodec.Decoded.Bad ->
+                    toast(getString(R.string.backup_import_invalid, badReasonText(decoded.reason)))
+
+                is BackupCodec.Decoded.Ok -> confirmRestore(decoded)
+            }
+        }
+    }
+
+    /**
+     * 恢复前必须确认：这是**整机覆盖**（正文 + 外观 + WebDAV 设置），不可撤销。
+     * 弹窗里把"备份正文多少字"摆出来，用户能据此判断自己选的是不是那份想要的备份。
+     */
+    private fun confirmRestore(decoded: BackupCodec.Decoded.Ok) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.backup_import_confirm_title)
+            .setMessage(
+                getString(R.string.backup_import_confirm_message, decoded.backup.content.length)
+            )
+            .setPositiveButton(R.string.backup_import_confirm) { _, _ -> applyRestore(decoded) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun applyRestore(decoded: BackupCodec.Decoded.Ok) {
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                BackupStore.restore(this@SettingsActivity, decoded.backup)
+            }
+            if (!ok) {
+                toast(getString(R.string.backup_import_failed))
+                return@launch
+            }
+            toast(
+                getString(
+                    if (decoded.syncDropped) R.string.backup_imported_partial
+                    else R.string.backup_imported
+                )
+            )
+            // 编辑页里那份内容此刻已经过期：把恢复后的正文原样交回去，由它**同步**替换编辑器文本。
+            // 不这样做的话，用户从本页返回后随手退出，就会拿恢复前的旧内容覆盖刚恢复的内容。
+            setResult(
+                RESULT_OK,
+                Intent().putExtra(MainActivity.EXTRA_RESTORED_CONTENT, decoded.backup.content)
+            )
+            finish()
+        }
+    }
+
+    /** 与本应用其它页面同款的一句话提示（短、不打扰，只有真正需要用户知道结果时才弹） */
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun badReasonText(reason: BackupCodec.BadReason): String = getString(
+        when (reason) {
+            BackupCodec.BadReason.NOT_JSON -> R.string.backup_bad_not_json
+            BackupCodec.BadReason.FOREIGN_APP -> R.string.backup_bad_foreign_app
+            BackupCodec.BadReason.BAD_FORMAT -> R.string.backup_bad_format
+            BackupCodec.BadReason.NEWER_FORMAT -> R.string.backup_bad_newer_format
+            BackupCodec.BadReason.NO_CONTENT -> R.string.backup_bad_no_content
+        }
+    )
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     /**
@@ -500,4 +651,12 @@ class SettingsActivity : AppCompatActivity() {
         if ((resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
         ) Color.WHITE else Color.BLACK
+
+    companion object {
+        /** 日志 TAG：导出/恢复失败时 `adb logcat -s SettingsActivity` 能看到原因 */
+        private const val TAG = "SettingsActivity"
+
+        /** 备份文件的 MIME 类型（导出时用；导入时用通配类型，见 [importBackup]） */
+        private const val BACKUP_MIME = "application/json"
+    }
 }

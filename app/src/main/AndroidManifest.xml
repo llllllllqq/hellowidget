@@ -30,9 +30,20 @@
         networkSecurityConfig 从 API 24 起**始终生效**（本版 minSdk 已是 24），
         因此不再需要 tools:ignore="UnusedAttribute" 这类兼容性标注。
     -->
+    <!--
+        v8.2.0：备份策略从「一律不许离机」改成「允许用户备份 / 换机迁移」。
+
+        v7.x 的取舍是隐私优先（allowBackup=false + 全域名排除 + 两条规则文件），代价是
+        **换机等于从零开始**：用户唯一的那份文本只能靠手抄。用户明确要求把数据安全放在隐私之前，
+        因此这里改成：
+          - android:allowBackup="true"：Auto Backup 与厂商换机助手可以带上本应用的数据；
+          - backup_rules.xml（API ≤30）与 data_extraction_rules.xml（API 31+）改成
+            **显式 include**，规则本身就是"到底备份了哪两样东西"的可审计清单。
+        代价（刻意接受，并在同步设置页写明）：WebDAV 口令会随系统备份离开设备。
+    -->
     <application
         android:name=".HelloWidgetApp"
-        android:allowBackup="false"
+        android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

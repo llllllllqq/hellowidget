@@ -145,7 +145,7 @@ class MainActivityTopBarTest {
 
         assertTrue(activity.onOptionsItemSelected(RoboMenuItem(R.id.action_appearance)))
         assertEquals(
-            "「外观设置」必须打开小组件外观设置页",
+            "「设置」必须打开设置页（外观 + 备份）",
             SettingsActivity::class.java.name,
             shadowOf(activity).nextStartedActivity.component?.className
         )
@@ -211,7 +211,7 @@ class MainActivityTopBarTest {
         )
     }
 
-    // ------------------------------------------------------------ v7.8：打开应用只检测不上传
+    // ------------------------------------------------------------ v7.8 语义：打开应用只读盘、不上传
 
     private val uploadedAt = 1_735_689_600L
 
@@ -226,84 +226,33 @@ class MainActivityTopBarTest {
     private fun hashOf(text: String): String = SyncEngine.sha256Hex(text.toByteArray(Charsets.UTF_8))
 
     /**
-     * v7.8 需求 1：**打开应用只检测、不上传**。
+     * v7.8 语义中真正重要的那一条：**打开应用只读盘，绝不上传**。
      *
-     * 构造「磁盘内容 != 上次成功上传的内容」，然后进应用：
-     *  - 不得发起任何同步尝试（`lastServerContactAt` 必须仍是 0）——旧实现在这里走 `APP_OPEN` 上传；
-     *    注意 v8.1.0 换过锚点：旧字段 `lastAttemptAt` 是 1 分钟闸门的锚点，已经随闸门删除；
-     *    新字段只在**真的访问云端**时才写，因此它证明的正是"一次请求都没发"。
-     *  - 不得启动任何同步服务；
-     *  - 但必须点亮「立即上传」按钮上的橙点。
+     * v8.2.0 删掉了「待上传」橙点（连同它那条"进应用顺手检测一次哈希"的支路），
+     * 因此这里不再断言角标，只留下不会因为界面变化而失效的那部分：
+     * 构造「磁盘内容 ≠ 上次成功上传的内容」，进应用后
+     *  - 磁盘内容必须真的显示出来；
+     *  - 不得发起任何同步尝试（`lastServerContactAt` 必须仍是 0 —— 它只在**真的发过请求**时才写，
+     *    旧字段 `lastAttemptAt` 是 1 分钟闸门的锚点，已随闸门删除）；
+     *  - 不得启动任何同步服务。
      */
     @Test
-    fun openingTheApp_detectsPendingChanges_butNeverUploads() {
+    fun openingTheApp_onlyReadsTheDiskContent_andNeverUploads() {
         assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("磁盘上的最新内容") })
         configureSync()
+        // 「上次成功上传的是别的内容」→ 磁盘上确实存在"没传上去"的改动
         SyncSettings.recordSuccess(app, hashOf("上一次传上去的内容"), uploadedAt)
 
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         awaitEditorEnabled(activity)
-        awaitUploadPending(activity, expected = true)
 
+        assertEquals("打开应用必须把磁盘内容显示到编辑器里", "磁盘上的最新内容", editorText(activity))
         assertEquals(
             "打开应用不得发起任何同步尝试（一次请求都没发）",
             0L,
             SyncSettings.lastServerContactAt(app)
         )
         assertNull("打开应用不得启动任何同步服务", shadowOf(app).nextStartedService)
-    }
-
-    /** v7.8 需求 1 续：内容与上次成功上传的一致 → 打开应用后橙点不亮 */
-    @Test
-    fun openingTheApp_showsNoBadge_whenEverythingIsAlreadyUploaded() {
-        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("已上传的内容") })
-        configureSync()
-        SyncSettings.recordSuccess(app, hashOf("已上传的内容"), uploadedAt)
-
-        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        awaitEditorEnabled(activity)
-        // 给异步检测足够时间跑完，确保「橙点不亮」不是因为还没算出来
-        repeat(30) {
-            shadowOf(Looper.getMainLooper()).idle()
-            Thread.sleep(10)
-        }
-
-        assertFalse("没有待上传改动时橙点不得亮起", activity.uploadPending)
-    }
-
-    /** v7.8 需求 1 续：空内容 + 从未上传过（新用户）→ 不亮橙点 */
-    @Test
-    fun openingTheApp_showsNoBadge_forABrandNewEmptyNote() {
-        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("") })
-        configureSync()
-
-        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        awaitEditorEnabled(activity)
-        repeat(30) {
-            shadowOf(Looper.getMainLooper()).idle()
-            Thread.sleep(10)
-        }
-
-        assertFalse("刚装好、还没写东西时不宜亮橙点", activity.uploadPending)
-    }
-
-    /** v7.8：一次成功上传之后橙点必须熄灭（回到前台时重算） */
-    @Test
-    fun theBadgeGoesOff_afterTheContentIsUploaded() {
-        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("待上传的内容") })
-        configureSync()
-        SyncSettings.recordSuccess(app, hashOf("上一次传上去的内容"), uploadedAt)
-
-        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
-        val activity = controller.get()
-        awaitEditorEnabled(activity)
-        awaitUploadPending(activity, expected = true)
-
-        // 模拟一次成功上传：lastUploadedHash 变成当前内容
-        SyncSettings.recordSuccess(app, hashOf("待上传的内容"), uploadedAt + 1)
-        controller.pause().resume()
-
-        awaitUploadPending(activity, expected = false)
     }
 
     /**

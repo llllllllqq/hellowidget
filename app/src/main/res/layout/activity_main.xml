@@ -22,7 +22,7 @@
         android:background="?attr/colorPrimary" />
 
     <!--
-        顶部导航栏（v7.7）：外观设置 / WebDAV 同步 / 立即上传 / 撤回 四个常驻入口，
+        顶部导航栏（v7.7）：设置 / WebDAV 同步 / 立即上传 / 撤回 四个常驻入口，
         菜单定义在 res/menu/main_menu.xml，由 MainActivity.onCreateOptionsMenu 装载。
         原先占据屏幕底部的两个按钮已删除（用户要求全部上移）。
 

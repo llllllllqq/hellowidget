@@ -16,15 +16,13 @@
     <string name="save_failed">Save failed, please try again</string>
 
     <!-- Top navigation bar (editor screen) -->
-    <string name="menu_appearance">Appearance</string>
+    <string name="menu_appearance">Settings</string>
     <string name="menu_webdav">WebDAV sync</string>
     <string name="menu_upload_now">Upload to cloud now</string>
-    <!-- Screen-reader name of the same button while its orange badge is lit -->
-    <string name="menu_upload_now_pending">Upload to cloud now (there are unuploaded changes)</string>
     <string name="menu_undo">Undo last edit</string>
 
     <!-- Settings -->
-    <string name="settings_title">Widget appearance</string>
+    <string name="settings_title">Settings</string>
     <string name="settings_preview">Live preview</string>
     <string name="settings_preview_sample">Sample text: font, color and background follow your settings live.\nThe second line shows the line spacing.</string>
     <string name="settings_font_size">Font size (widget &amp; editor)</string>
@@ -63,6 +61,27 @@
     <string name="color_picker_title_editor_light_text">Custom light-mode editor text color</string>
     <string name="color_picker_title_editor_dark_bg">Custom dark-mode editor background</string>
     <string name="color_picker_title_editor_dark_text">Custom dark-mode editor text color</string>
+
+    <!-- ===== Backup & device migration (v8.2.0) ===== -->
+    <string name="settings_section_backup">Backup &amp; device migration</string>
+    <string name="backup_hint">Exports one backup file (your text, appearance colors and WebDAV settings); after switching phones or reinstalling, tap "Restore from backup" to bring everything back. Note: the WebDAV password inside is plain text, so keep the file safe. System cloud backup and the transfer tool from your phone maker are allowed to carry this data too.</string>
+    <string name="backup_export">Export backup file</string>
+    <string name="backup_import">Restore from backup</string>
+    <string name="backup_exported">Backup exported</string>
+    <string name="backup_export_failed">Export failed: cannot write to the chosen location</string>
+    <string name="backup_import_unreadable">Cannot read the chosen file</string>
+    <string name="backup_import_invalid">Not a valid HelloWidget backup: %1$s</string>
+    <string name="backup_bad_not_json">the file content is not JSON</string>
+    <string name="backup_bad_foreign_app">the file comes from another app</string>
+    <string name="backup_bad_format">the format version is missing</string>
+    <string name="backup_bad_newer_format">the backup was exported by a newer app version — update the app first</string>
+    <string name="backup_bad_no_content">the backup contains no text</string>
+    <string name="backup_import_confirm_title">Restore this backup?</string>
+    <string name="backup_import_confirm_message">Your current text will be replaced by the text in the backup (%1$d characters), and appearance plus WebDAV settings will be replaced too. This cannot be undone.</string>
+    <string name="backup_import_confirm">Restore</string>
+    <string name="backup_imported">Backup restored (text and settings)</string>
+    <string name="backup_imported_partial">Text and appearance restored; the WebDAV settings in the backup are invalid and were skipped</string>
+    <string name="backup_import_failed">Restore failed: the text could not be written, your existing content is untouched</string>
 
     <!-- ===== WebDAV sync (v7.2) ===== -->
     <string name="sync_title">WebDAV sync</string>

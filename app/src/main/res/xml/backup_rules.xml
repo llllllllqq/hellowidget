@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Android 11（API 30）及以下的备份排除规则。
-    Android 12+ 用 data_extraction_rules.xml；这里覆盖更老的系统，
-    配合 android:allowBackup="false" 确保任何版本都不会把用户文本带出设备。
+    Android 11（API 30）及以下的备份规则（Android 12+ 见 data_extraction_rules.xml）。
+
+    v8.2.0 起改为**显式 include**，而不是把全部域排除掉：
+      - file       → filesDir/user_content.dat（DataStore 里的正文）+ 最多 3 份 corrupt_*.dat 现场
+      - sharedpref → hello_prefs（外观 / 编辑器配色 / WebDAV 配置与运行时状态）
+
+    写 include 而不是"什么都不写"是有意的：full-backup-content 一旦出现 include，
+    就只有被列出的域会进备份，这份清单因此就是「到底备份了什么」的可审计答案 ——
+    将来新增目录时，忘了加进来只会漏备（用户能发现），不会悄悄多备（用户发现不了）。
 -->
 <full-backup-content>
-    <exclude domain="root" path="." />
-    <exclude domain="file" path="." />
-    <exclude domain="database" path="." />
-    <exclude domain="sharedpref" path="." />
-    <exclude domain="external" path="." />
+    <include domain="file" path="." />
+    <include domain="sharedpref" path="." />
 </full-backup-content>

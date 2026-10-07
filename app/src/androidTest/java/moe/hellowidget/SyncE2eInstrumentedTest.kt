@@ -482,7 +482,7 @@ class SyncE2eInstrumentedTest {
      *  - 服务器在整段时间里**一个请求都不许收到**（连 MKCOL 都不许）—— 旧实现在这里走 `APP_OPEN`；
      *  - 也不许写 `lastServerContactAt`（那是"真的访问过云端"的证据；v8.1.0 起它取代了
      *    1 分钟闸门的锚点 `lastAttemptAt`，证明的含义反而更强：一次请求都没发）；
-     *  - 橙点必须亮起 —— 真机像素级断言在 `MainActivityEntryInstrumentedTest`。
+     *  - 设置页的状态行必须能看到这次成功（真机断言见 SyncActivity 相关用例）。
      */
     @Test
     fun openingTheAppWithPendingChanges_onlyDetects_andNeverTouchesTheServer() {
@@ -514,8 +514,8 @@ class SyncE2eInstrumentedTest {
     /**
      * v7.9 的自愈通道，正对「保存了却没上传，只能清后台」那个报障：
      *
-     *  1. 上传失败之后，系统里**必须还留着一个待执行的重试任务** —— 否则用户又只剩橙点，
-     *     而橙点永远不会自己变绿；
+     *  1. 上传失败之后，系统里**必须还留着一个待执行的重试任务** —— 那是唯一会自己把
+     *     欠下的上传补上的通道；
      *  2. 那个任务真的能在网络恢复后把欠的内容补上去，成功之后自己撤销，不留常驻唤醒源。
      *
      * 场景：把地址指向一定拒绝连接的端口（`10.0.2.2:1`）→ 按返回键保存（用户报障的原路径）

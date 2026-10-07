@@ -7,7 +7,6 @@ import android.widget.EditText
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncLauncher
-import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncTrigger
 import moe.hellowidget.sync.WebDavError
@@ -159,69 +158,9 @@ class SyncSettingsTest {
         assertEquals("AB:CD", config.tlsPinSha256)
     }
 
-    // ------------------------------------------------------------ 打开应用时的「待上传」检测（v7.8）
-    //
-    // 这组用例固化 v7.8 的核心语义：**打开应用只检测、不上传**，检测结果只用来决定
-    // 「立即上传」按钮上那个橙点亮不亮。检测必须是纯函数式的：不建客户端、不发请求、
-    // 不写 lastServerContactAt（那是"真的碰过云端"的证据，检测一次网络都没碰）。
-
-    @Test
-    fun hasPendingUpload_falseWhenSyncIsDisabled() {
-        configure(enabled = false)
-        assertFalse(SyncManager.hasPendingUpload(context, "任意内容"))
-    }
-
-    @Test
-    fun hasPendingUpload_falseWhenNothingWasEverUploadedAndContentIsEmpty() {
-        configure(enabled = true)
-        assertFalse("刚装好、还没写东西时不该亮橙点", SyncManager.hasPendingUpload(context, ""))
-    }
-
-    @Test
-    fun hasPendingUpload_trueWhenNothingWasEverUploadedButContentExists() {
-        configure(enabled = true)
-        assertTrue("从未上传过且有内容 → 有待上传改动", SyncManager.hasPendingUpload(context, "内容"))
-    }
-
-    @Test
-    fun hasPendingUpload_tracksChangesSinceTheLastSuccessfulUpload() {
-        configure(enabled = true)
-        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("旧内容".toByteArray()), 1_735_689_600L)
-        assertTrue(SyncManager.hasPendingUpload(context, "新内容"))
-        assertFalse("内容与上次成功上传的一致 → 橙点必须熄灭", SyncManager.hasPendingUpload(context, "旧内容"))
-    }
-
-    @Test
-    fun hasPendingUpload_trueWhenThePreviousAttemptFailed() {
-        // 失败不写 lastUploadedHash，因此「没传上去」这件事天然被检测出来
-        configure(enabled = true)
-        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("上次成功的内容".toByteArray()), 1_735_689_600L)
-        SyncSettings.recordFailure(context, WebDavError.NETWORK)
-        assertTrue(SyncManager.hasPendingUpload(context, "新内容"))
-    }
-
-    @Test
-    fun hasPendingUpload_trueWhenUploadedContentWasDeletedToEmpty() {
-        // 把已上传过的内容删空也是一次真实的改动（云端应收到空内容）
-        configure(enabled = true)
-        SyncSettings.recordSuccess(context, SyncEngine.sha256Hex("旧内容".toByteArray()), 1_735_689_600L)
-        assertTrue(SyncManager.hasPendingUpload(context, ""))
-    }
-
-    @Test
-    fun hasPendingUpload_neverStartsAServiceNorRecordsAnAttempt() {
-        configure(enabled = true)
-        SyncSettings.resetRuntimeState(context)
-
-        assertTrue(SyncManager.hasPendingUpload(context, "内容"))
-
-        assertNull("检测绝不允许启动任何同步服务", shadowOf(app).nextStartedService)
-        assertEquals(
-            "检测不得写 lastServerContactAt（它只记录「真的访问过云端」的时刻）",
-            0L,
-            SyncSettings.lastServerContactAt(context)
-        )
-    }
+    // v8.2.0：v7.8 的「打开应用只做一次待上传检测」链路（`SyncManager.hasPendingUpload`
+    // 及其 7 条用例）已随「立即上传」橙点一起删除（用户要求精简功能）。
+    // "打开应用不上传"这条语义本身仍然由 MainActivityTopBarTest 守着（可见那条用例）。
 
     // ------------------------------------------------------------ 触发入口
 
