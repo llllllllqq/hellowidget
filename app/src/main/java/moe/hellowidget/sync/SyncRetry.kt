@@ -218,7 +218,7 @@ object SyncRetry {
     fun shouldReschedule(status: SyncStatus): Boolean = when (status) {
         is SyncStatus.Success -> false
         is SyncStatus.Skipped -> status.reason == SkipReason.THROTTLED
-        is SyncStatus.Failed -> isTransient(status.error)
+        is SyncStatus.Failed -> status.error.isTransient
         else -> false
     }
 
@@ -272,21 +272,9 @@ object SyncRetry {
     }
 
     /**
-     * 「暂时性失败」：再试一次真的可能成功。凭据/权限/证书/服务器不支持这类
-     * 必须由人先动手，自动重试只会无意义地唤醒进程（因此一次性失败就收工，
-     * 用户下次保存会重新排一个任务，橙点也一直亮着）。
+     * 「暂时性失败」的定义已提到 [isTransient]（v8.0.3）：窗口内快速重试与这里
+     * 必须用同一条判据，否则两处会悄悄分叉。
      */
-    private fun isTransient(error: WebDavError): Boolean = when (error) {
-        WebDavError.NETWORK,
-        WebDavError.TIMEOUT,
-        WebDavError.IO,
-        WebDavError.SERVER_ERROR,
-        WebDavError.NOT_FOUND,
-        WebDavError.PARENT_NOT_FOUND,
-        WebDavError.LOCKED,
-        WebDavError.INSUFFICIENT_STORAGE -> true
-        else -> false
-    }
 
     private fun scheduler(context: Context): JobScheduler? = try {
         context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler

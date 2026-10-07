@@ -119,6 +119,8 @@
     <string name="sync_notif_channel_description">同步进度与上传结果</string>
     <string name="sync_notif_progress_title">正在同步到 WebDAV</string>
     <string name="sync_notif_progress_text">正在上传最新内容…</string>
+    <!-- v8.0.3：窗口内快速重试时的进度正文（只在真的重试时出现） -->
+    <string name="sync_notif_retry_text">网络不稳，正在重试（%1$d/%2$d）…</string>
 
     <!-- WebDAV 同步：错误与校验 -->
     <string name="sync_error_not_configured">同步设置不完整，请检查服务器地址与文件名</string>

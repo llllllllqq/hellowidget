@@ -93,7 +93,12 @@ class SyncService : Service() {
 
         scope.launch {
             val status = try {
-                SyncManager.performSync(applicationContext, trigger)
+                // v8.0.3：把"这条通知归我们管"告诉 SyncManager —— 它据此允许在窗口内
+                // 对暂时性失败做有限次快速重试，并把阶段文案交回这里更新同一条前台通知。
+                // 传 null 的路径（系统兜底任务）没有前台窗口，因此不做窗口内重试。
+                SyncManager.performSync(applicationContext, trigger) { text ->
+                    SyncNotifier.postProgress(applicationContext, text)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

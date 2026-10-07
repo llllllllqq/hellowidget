@@ -123,6 +123,8 @@
     <string name="sync_notif_channel_description">Sync progress</string>
     <string name="sync_notif_progress_title">Syncing to WebDAV</string>
     <string name="sync_notif_progress_text">Uploading your latest content…</string>
+    <!-- v8.0.3: progress text used only while actually retrying inside the foreground window -->
+    <string name="sync_notif_retry_text">Network hiccup — retrying (%1$d/%2$d)…</string>
 
     <!-- WebDAV sync: errors and validation -->
     <string name="sync_error_not_configured">Sync settings are incomplete — check the server URL and file name</string>

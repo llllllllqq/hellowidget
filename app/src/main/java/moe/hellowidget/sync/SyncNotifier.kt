@@ -94,12 +94,26 @@ object SyncNotifier {
     /**
      * 进程内兜底路径的进度通知（没有前台服务，用普通通知顶上）。
      * 失败/成功的收尾与前台服务路径共用同一套回调。
+     *
+     * v8.0.3：也可用来**更新已有那条通知的正文** —— 前台服务路径用它显示
+     * 「网络不稳，正在重试（1/2）…」（同一个通知 id，`startForeground` 之后
+     * 用 `NotificationManager.notify` 更新前台通知正是官方做法，前台状态不受影响）。
      */
-    fun postProgress(context: Context) {
+    fun postProgress(context: Context, text: String? = null) {
         // 进程内兜底路径可能从没启动过 SyncService，渠道要在这里补齐（幂等）
         ensureChannel(context)
-        notifyCompat(context, ID_PROGRESS, progressNotification(context))
+        notifyCompat(context, ID_PROGRESS, progressNotification(context, text))
     }
+
+    /**
+     * 窗口内重试时的进度正文。
+     *
+     * 这条文案是"窗口内快速重试"对用户的全部可见代价：只在**真的在重试**时出现，
+     * 且明确说清"正在重试第几次"—— 而不是像"挂一条常驻通知"那样，
+     * 让用户在什么都没发生的时候也看到"正在上传"。
+     */
+    fun retryText(context: Context, attempt: Int, max: Int): String =
+        context.getString(R.string.sync_notif_retry_text, attempt, max)
 
     /**
      * 同步失败的 Toast（v7.8：与成功提示对称，不再往通知栏留东西）。

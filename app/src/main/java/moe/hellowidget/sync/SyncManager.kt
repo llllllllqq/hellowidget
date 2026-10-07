@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -70,6 +71,16 @@ object SyncManager {
     private val fallbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
+     * v8.0.3：窗口内重试的**时间基准**。
+     *
+     * 生产环境就是系统时钟（`System::currentTimeMillis`），留这个缝只是为了单测能模拟
+     * "第一次尝试很慢才失败"（[SyncWindowRetry.RETRY_DEADLINE_MS] 的边界），
+     * 否则那个用例得真等 20 秒。
+     */
+    @VisibleForTesting
+    internal var elapsedClock: () -> Long = System::currentTimeMillis
+
+    /**
      * 进程内执行一次同步（没有前台服务，因此这里自己维护进度通知）。
      * 只在 [SyncLauncher] 无法启动前台服务时使用。
      */
@@ -77,7 +88,14 @@ object SyncManager {
         val appContext = context.applicationContext
         fallbackScope.launch {
             try {
-                performSync(appContext, trigger, progress = true)
+                performSync(
+                    appContext,
+                    trigger,
+                    progress = true,
+                    // 这条路径同样处在"用户刚离开界面"的窗口里，值得享受窗口内快速重试；
+                    // 通知由本路径自己持有，所以阶段文案也由它更新
+                    onWindowPhase = { text -> SyncNotifier.postProgress(appContext, text) }
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -106,22 +124,32 @@ object SyncManager {
         return SyncEngine.hasLocalChanges(hash, lastUploadedHash)
     }
 
-    /** 前台服务路径（进度通知由服务的 `startForeground` 负责） */
-    suspend fun performSync(context: Context, trigger: SyncTrigger): SyncStatus =
-        performSync(context, trigger, progress = false)
+    /**
+     * 前台服务路径（进度通知由服务的 `startForeground` 负责）。
+     *
+     * [onWindowPhase] 非 null = 这条路径**拥有可见的前台通知**，因此允许窗口内快速重试
+     * （[SyncWindowRetry]），并把阶段文案（重试中 / 恢复默认）交给它显示；
+     * 传 null = 没有前台窗口（系统兜底任务），既不改通知也不做窗口内重试。
+     */
+    suspend fun performSync(
+        context: Context,
+        trigger: SyncTrigger,
+        onWindowPhase: ((String?) -> Unit)? = null
+    ): SyncStatus = performSync(context, trigger, progress = false, onWindowPhase = onWindowPhase)
 
     @VisibleForTesting
     internal suspend fun performSync(
         context: Context,
         trigger: SyncTrigger,
-        progress: Boolean
+        progress: Boolean,
+        onWindowPhase: ((String?) -> Unit)? = null
     ): SyncStatus {
         // v7.9：进锁前后各记一条日志。故障复发时「有『同步请求』却迟迟没有『获得同步锁』」
         // 就是「上一次同步卡住、一直占着锁」的决定性证据（用户只需要把 logcat 截下来）。
         Log.i(TAG, "同步请求：trigger=$trigger")
         return mutex.withLock {
             Log.i(TAG, "获得同步锁：trigger=$trigger")
-            doSync(context.applicationContext, trigger, progress)
+            doSync(context.applicationContext, trigger, progress, onWindowPhase)
         }
     }
 
@@ -130,7 +158,8 @@ object SyncManager {
     private suspend fun doSync(
         context: Context,
         trigger: SyncTrigger,
-        progress: Boolean
+        progress: Boolean,
+        onWindowPhase: ((String?) -> Unit)?
     ): SyncStatus {
         if (!SyncSettings.enabled(context)) return SyncStatus.Skipped(SkipReason.NOT_ENABLED)
 
@@ -164,7 +193,12 @@ object SyncManager {
                 SyncSettings.setPendingTlsPin(context, fingerprint)
             }
             client = created
-            val outcome = uploadOnce(context, created, config)
+            val outcome = attemptUploadWithWindowRetry(
+                context = context,
+                client = created,
+                config = config,
+                onWindowPhase = onWindowPhase
+            )
             uploaded = outcome is SyncStatus.Success && outcome.uploaded
             _status.value = outcome
             Log.i(TAG, "同步结束：$outcome（耗时 ${System.currentTimeMillis() - startedAt}ms）")
@@ -201,6 +235,64 @@ object SyncManager {
                 SyncNotifier.cancelProgress(context)
             }
             client?.close()
+        }
+    }
+
+    // ------------------------------------------------------------------ 前台窗口内的快速重试
+
+    /**
+     * v8.0.3：一次上传 + **窗口内快速重试**。
+     *
+     * 退出瞬间的网络抖动（刚切网 / 刚息屏 / DNS 抖动）会以[暂时性失败][isTransient]的形式
+     * 立刻返回；旧行为是当场放弃、交给 65 秒后的系统兜底任务，用户看到的是"没传上去"。
+     * 现在只要失败得足够早，就在**已经存在的**前台窗口里退避重试最多
+     * [SyncWindowRetry.MAX_RETRIES] 次 —— 通知本来就亮着，窗口长度由工作决定，
+     * 成功则用户直接看到「已上传到云端」。
+     *
+     * 与旧行为的其余部分**完全一致**：彻底失败时依旧把异常抛给 [doSync] 的 catch
+     * （统一落盘 `lastError` + 弹一次失败 Toast + 终态 Failed），
+     * 而兜底任务早在保存时就排好了，窗口里没救回来也不会丢。
+     *
+     * [onWindowPhase] 为 null（系统兜底任务路径）时直接单次尝试：那条路径没有前台服务、
+     * 不显示任何通知，也有自己的系统退避与预算，不该在这里放大请求次数。
+     */
+    private suspend fun attemptUploadWithWindowRetry(
+        context: Context,
+        client: WebDavClient,
+        config: SyncConfig,
+        onWindowPhase: ((String?) -> Unit)?
+    ): SyncStatus {
+        if (onWindowPhase == null) return uploadOnce(context, client, config)
+
+        val windowStartedAt = elapsedClock()
+        var retries = 0
+        while (true) {
+            val attemptStartedAt = elapsedClock()
+            try {
+                val outcome = uploadOnce(context, client, config)
+                // 重试成功后把通知文案恢复成默认的「正在上传最新内容…」：
+                // 上传其实已经成功，不该让最后 1.5 秒的最短可见期显示"正在重试"
+                if (retries > 0) onWindowPhase.invoke(null)
+                return outcome
+            } catch (e: CancellationException) {
+                // 协程被取消（服务销毁）不是"失败"：必须原样上抛，由 doSync 记终态
+                throw e
+            } catch (e: Throwable) {
+                val (error, detail) = classify(e)
+                val elapsed = elapsedClock() - windowStartedAt
+                if (!SyncWindowRetry.shouldRetry(retries, error, elapsed)) throw e
+                retries++
+                Log.i(
+                    TAG,
+                    "窗口内重试：第 $retries/${SyncWindowRetry.MAX_RETRIES} 次" +
+                        "（上次失败：$error ${sanitize(detail, config.password).take(120)}，" +
+                        "本次尝试 ${elapsedClock() - attemptStartedAt}ms，累计 ${elapsed}ms）"
+                )
+                onWindowPhase.invoke(
+                    SyncNotifier.retryText(context, retries, SyncWindowRetry.MAX_RETRIES)
+                )
+                delay(SyncWindowRetry.delayBeforeNext(retries - 1))
+            }
         }
     }
 

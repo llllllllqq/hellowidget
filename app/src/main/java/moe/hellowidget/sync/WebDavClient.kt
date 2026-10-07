@@ -25,6 +25,30 @@ enum class WebDavError {
     IO
 }
 
+/**
+ * 「暂时性失败」：再试一次真的可能成功。
+ *
+ * 凭据/权限/证书/服务器不支持写入这类必须由人先动手，自动重试只会无意义地唤醒进程；
+ * 而网络抖动、超时、5xx、目录缺失、锁定、配额都是典型的"过一会儿就好"。
+ *
+ * v8.0.3 起这个判断从 [SyncRetry] 私有实现提上来：**窗口内快速重试**（[SyncWindowRetry]）
+ * 与**系统兜底任务**（[SyncRetry.shouldReschedule]）必须用同一条定义 ——
+ * 两处各写一份的话，只会在某次维护后悄悄分叉：一个重试、另一个不重试，
+ * 而用户看到的现象却一模一样（"有时会补传、有时不会"）。
+ */
+val WebDavError.isTransient: Boolean
+    get() = when (this) {
+        WebDavError.NETWORK,
+        WebDavError.TIMEOUT,
+        WebDavError.IO,
+        WebDavError.SERVER_ERROR,
+        WebDavError.NOT_FOUND,
+        WebDavError.PARENT_NOT_FOUND,
+        WebDavError.LOCKED,
+        WebDavError.INSUFFICIENT_STORAGE -> true
+        else -> false
+    }
+
 class WebDavException(
     val error: WebDavError,
     val httpStatus: Int = 0,
