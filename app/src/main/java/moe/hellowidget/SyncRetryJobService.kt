@@ -2,6 +2,7 @@ package moe.hellowidget
 
 import android.app.job.JobParameters
 import android.app.job.JobService
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -9,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import moe.hellowidget.sync.SyncDiagnostics
 import moe.hellowidget.sync.SyncRetry
 import moe.hellowidget.sync.SyncSettings
 
@@ -30,7 +32,15 @@ class SyncRetryJobService : JobService() {
     private val scope = CoroutineScope(job + Dispatchers.IO)
 
     override fun onStartJob(params: JobParameters): Boolean {
-        Log.i(TAG, "系统重试任务开始执行（jobId=${params.jobId}）")
+        // v8.0.1：把「系统到底有没有把这条兜底任务跑起来、是不是以加急身份跑的」记进日志——
+        // 这正是排查「保存了却没传上去」时最容易缺的那一环证据。
+        val expedited = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            params.isExpeditedJob
+        } else {
+            null
+        }
+        Log.i(TAG, "系统重试任务开始执行（jobId=${params.jobId} expedited=$expedited）")
+        SyncDiagnostics.logSnapshot(this, "兜底任务开始")
         scope.launch {
             val again = try {
                 SyncRetry.runOnce(applicationContext)
@@ -55,11 +65,19 @@ class SyncRetryJobService : JobService() {
      */
     override fun onStopJob(params: JobParameters): Boolean {
         val withinBudget = SyncSettings.retryAttempts(this) < SyncRetry.MAX_ATTEMPTS
+        // v8.0.1：stopReason（API 31+）能区分「超时 / 约束不再满足 / 系统抢占」，
+        // 是判断"这条腿到底是被什么掐住的"的关键证据。
+        val stopReason = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            params.stopReason
+        } else {
+            -1
+        }
         Log.i(
             TAG,
-            "系统重试任务被系统停止（jobId=${params.jobId}），" +
+            "系统重试任务被系统停止（jobId=${params.jobId} stopReason=$stopReason），" +
                 if (withinBudget) "按退避重排" else "重试预算已用完，不再重排"
         )
+        SyncDiagnostics.logSnapshot(this, "兜底任务被停止")
         return withinBudget
     }
 

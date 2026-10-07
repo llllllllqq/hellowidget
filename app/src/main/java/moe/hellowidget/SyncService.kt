@@ -16,6 +16,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncNotifier
+import moe.hellowidget.sync.SyncSettings
 import moe.hellowidget.sync.SyncStatus
 import moe.hellowidget.sync.SyncTrigger
 import moe.hellowidget.sync.WebDavError
@@ -37,8 +38,13 @@ import moe.hellowidget.sync.WebDavError
  * 不产生无意义的闪烁。
  *
  * 启动点全部在用户可见的转换处（返回键退出、失焦、打开应用、手动按钮），
- * 因此不违反 Android 12+ 对后台启动前台服务的限制；万一仍被拒绝，
- * [moe.hellowidget.sync.SyncLauncher] 会降级为进程内同步（通知由 SyncManager 自己发）。
+ * 因此落在 Android 12+ 后台启动限制的豁免条款「app transitions from a user-visible state」里。
+ * 但那个豁免**随时间关闭**，所以 v8.0.1 起调用方（[moe.hellowidget.MainActivity.saveContent]）
+ * 把 `startForegroundService` 排在写盘之后、**主线程跳转之前** ——
+ * 豁免窗口应该花在启动前台服务上，而不是花在一次线程跳转上。
+ * 万一仍被拒绝，[moe.hellowidget.sync.SyncLauncher] 会降级为进程内同步
+ * （通知由 SyncManager 自己发），并且把异常类型落盘到
+ * [moe.hellowidget.sync.SyncSettings.launchNote]，让"为什么这次没传上去"有据可查。
  */
 class SyncService : Service() {
 
@@ -55,13 +61,7 @@ class SyncService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 必须在 startForegroundService 后的 5 秒内进入前台，否则系统直接 ANR/崩溃
         SyncNotifier.ensureChannel(this)
-        // dataSync 类型是 API 29+ 的概念；ServiceCompat 在更低版本会忽略该参数
-        // （显式分支而不是直接引用常量，既避免 InlinedApi 警告，也让意图一目了然）
-        val foregroundServiceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        } else {
-            0
-        }
+        val foregroundServiceType = foregroundServiceType()
         val startedAt = System.currentTimeMillis()
         val trigger = parseTrigger(intent)
         val foreground = try {
@@ -73,11 +73,14 @@ class SyncService : Service() {
             )
             true
         } catch (e: Exception) {
-            // v7.9：系统可能拒绝前台服务（后台启动限制 / dataSync 额度用尽 / 类型不允许）。
+            // v7.9：系统可能拒绝前台服务（后台启动限制 / 额度用尽 / 类型不允许）。
             // 这里**必须**接住 —— 让它冒泡就是未捕获异常，系统会直接杀掉进程
             // （RemoteServiceException），而用户只会看到「保存了却没上传」。
             // 降级为进程内同步：上传照做，进度通知与结果提示由 SyncManager 自己发。
-            Log.w(TAG, "前台服务启动被系统拒绝，降级为进程内同步：trigger=$trigger", e)
+            // v8.0.1：异常**类型**进消息与落盘记录，见 SyncLauncher 的同款说明。
+            val kind = e.javaClass.simpleName
+            Log.w(TAG, "前台服务启动被系统拒绝（$kind: ${e.message}），降级为进程内同步：trigger=$trigger", e)
+            SyncSettings.setLaunchNote(applicationContext, "fgs-refused:$kind")
             false
         }
         if (!foreground) {
@@ -85,7 +88,8 @@ class SyncService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        Log.i(TAG, "同步服务启动：trigger=$trigger")
+        SyncSettings.setLaunchNote(applicationContext, "fgs-foreground:${typeToken(foregroundServiceType)}")
+        Log.i(TAG, "同步服务启动：trigger=$trigger type=${typeToken(foregroundServiceType)}")
 
         scope.launch {
             val status = try {
@@ -112,13 +116,64 @@ class SyncService : Service() {
     }
 
     /**
-     * v7.9：Android 15 起 `dataSync` 前台服务有「24 小时内累计最多 6 小时」的系统上限，
-     * 到点系统会回调它，并要求服务在几秒内 `stopSelf()`；不照做系统会生成 failure（崩溃）。
-     * 本应用的每一次同步都被网络客户端的 `callTimeout` 封顶，正常永远走不到这里 ——
-     * 实现它才算真的符合官方对 `dataSync` 的要求。
+     * v8.0.1：前台服务类型从 `dataSync` 换成 **`shortService`**（API 34+）。
+     *
+     * 依据是官方《Background Data Transfer Options》里对本场景的原文定义：
+     * 「**shortService**：用户发起一个动作（*例如把数据同步到服务器*），
+     * 而你希望**即使用户立刻把应用切到后台，这个操作也能完成**」—— 这正是本服务的形态：
+     * 由保存/退出触发、几百毫秒到几十秒结束、必须跑完。
+     *
+     * 而 `dataSync` 恰好是官方建议「改用别的 API」的那一类，还额外背着两件事：
+     *  1. Android 15 起 `dataSync` 有「24 小时内累计最多 6 小时」的系统上限，
+     *     到点回调 [onTimeout] 并要求几秒内 `stopSelf()`，否则 RemoteServiceException 崩溃；
+     *  2. 它需要 `FOREGROUND_SERVICE_DATA_SYNC` 权限，并且是 OEM（小米/MIUI 系）后台策略
+     *     重点关照的类型。
+     *
+     * `shortService` 的代价我们都能接受：约 3 分钟上限（本服务的网络调用被
+     * `callTimeout 60s` 封顶，够）、不能启动别的前台服务（我们不启动）。
+     *
+     * 版本分支保留 `dataSync` 给 API 29~33：那个区间没有 `shortService` 类型，
+     * 而 `dataSync` 是当时唯一贴切的类型，换掉会带来无谓的回归风险。
+     * Manifest 里两种类型都声明了，所以每一条分支传的类型都是"已声明"的。
+     */
+    private fun foregroundServiceType(): Int = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        else -> 0
+    }
+
+    /** 类型对应的 ASCII token（与 [SyncSettings.launchNote] / logcat 共用） */
+    @Suppress("InlinedApi")
+    private fun typeToken(type: Int): String = when (type) {
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE -> "shortService"
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC -> "dataSync"
+        else -> "legacy"
+    }
+
+    /**
+     * API 34 起：`shortService` 到达约 3 分钟上限时系统回调**单参数**版本
+     * （`Service.onTimeout(int)`，API 34；双参数的 `onTimeout(int, int)` 是 API 35 起
+     * 给 `dataSync` / `mediaProcessing` 用的）。
+     *
+     * 官方 troubleshooting 明确：`shortService` 超时不 `stopSelf()` 会直接 ANR
+     * （"A foreground service of type FOREGROUND_SERVICE_TYPE_SHORT_SERVICE did not
+     * stop within its timeout"），而**实现 `onTimeout()` 是最佳实践**。
+     * 本服务的同步被 `callTimeout` 封顶，正常永远走不到这里 —— 实现它才算真的合规。
+     */
+    override fun onTimeout(startId: Int) {
+        Log.e(TAG, "shortService 前台服务到达系统时限（约 3 分钟），立即停止（startId=$startId）")
+        stopSelf(startId)
+    }
+
+    /**
+     * API 35 起：`dataSync` / `mediaProcessing` 到达「24 小时内 6 小时」上限时的回调。
+     * v8.0.1 之后 API 35+ 已改用 `shortService`（走上面那个单参数版本），
+     * 这个重载保留为兜底：万一系统按 dataSync 语义回调，也必须立刻停。
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
-        Log.e(TAG, "dataSync 前台服务到达系统时限，立即停止（startId=$startId, type=$fgsType）")
+        Log.e(TAG, "前台服务到达系统时限，立即停止（startId=$startId, type=$fgsType）")
         stopSelf(startId)
     }
 

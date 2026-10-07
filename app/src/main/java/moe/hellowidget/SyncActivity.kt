@@ -22,6 +22,7 @@ import moe.hellowidget.databinding.ActivitySyncBinding
 import moe.hellowidget.sync.ConfigError
 import moe.hellowidget.sync.ConfigValidation
 import moe.hellowidget.sync.SyncConfigValidator
+import moe.hellowidget.sync.SyncDiagnostics
 import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncErrorText
 import moe.hellowidget.sync.SyncLauncher
@@ -186,6 +187,8 @@ class SyncActivity : AppCompatActivity() {
         builder.append('\n').append(lastResultLine())
         attemptLine()?.let { builder.append('\n').append(it) }
         retryLine()?.let { builder.append('\n').append(it) }
+        launchLine()?.let { builder.append('\n').append(it) }
+        diagnosticsLine()?.let { builder.append('\n').append(it) }
         SyncManager.status.value.let { live ->
             when (live) {
                 is SyncStatus.Running -> builder.append('\n')
@@ -246,6 +249,37 @@ class SyncActivity : AppCompatActivity() {
                 getString(R.string.sync_retry_exhausted, SyncRetry.MAX_ATTEMPTS)
             else -> getString(R.string.sync_retry_none)
         }
+    }
+
+    /**
+     * v8.0.1：上一次自动上传**是怎么启动的**（或者为什么没能启动）。
+     *
+     * 值是一段与 logcat 完全一致的 ASCII token，例如：
+     *  - `fgs-foreground:shortService` —— 前台服务正常进了前台；
+     *  - `fgs-rejected:ForegroundServiceStartNotAllowedException` —— 系统拒绝了后台启动；
+     *  - `fgs-refused:ForegroundServiceTypeNotAllowedException` —— 类型不被允许；
+     *  - `skipped:not-ready` —— 未启用或配置不完整。
+     *
+     * 这一行的意义：把「保存了却没传上去」拆成**可区分的几种**，
+     * 用户不用抓 logcat，拍一张截图就能定位。
+     */
+    private fun launchLine(): String? {
+        val note = SyncSettings.launchNote(this)
+        if (note.isEmpty()) return null
+        return getString(R.string.sync_last_launch, note, formatTime(SyncSettings.launchNoteAt(this)))
+    }
+
+    /**
+     * v8.0.1：系统侧诊断（只读、零网络、零落盘）。
+     *
+     * `bucket=RARE` 配上 `pendingJobReason=APP_STANDBY`，
+     * 就是「系统把兜底任务压在低优先级待机桶里（而 Rare 桶下后台网络是 Disabled）」的直接证据；
+     * `pendingJobExpedited=true` 则说明 v8.0.1 的加急改造生效了。
+     * 只在同步已启用时显示，未启用时不给用户看一堆无意义的 n/a。
+     */
+    private fun diagnosticsLine(): String? {
+        if (!SyncSettings.enabled(this) || SyncSettings.config(this) == null) return null
+        return getString(R.string.sync_diagnostics, SyncDiagnostics.snapshot(this))
     }
 
     private fun skipText(reason: moe.hellowidget.sync.SkipReason): Int = when (reason) {

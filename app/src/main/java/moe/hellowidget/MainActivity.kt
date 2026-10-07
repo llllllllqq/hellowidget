@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.InputFilter
 import android.text.TextWatcher
+import android.util.Log
 import android.util.TypedValue
 import android.view.Menu
 import android.view.MenuItem
@@ -31,6 +32,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import moe.hellowidget.databinding.ActivityMainBinding
+import moe.hellowidget.sync.SyncDiagnostics
 import moe.hellowidget.sync.SyncLauncher
 import moe.hellowidget.sync.SyncManager
 import moe.hellowidget.sync.SyncRetry
@@ -202,6 +204,14 @@ class MainActivity : AppCompatActivity() {
             requestImeShow()
             // v7.8：打开应用**只检测、不上传** —— 「上次成功上传后本地又有改动」就点亮橙点
             detectPendingUpload(savedText)
+            // v8.0.1：打开应用是唯一"人一定在看"的时刻，顺手把系统侧的证据记一行：
+            // 当前待机分桶 / 兜底任务是否待执行 / 系统说它为什么还没跑 / 上次自动上传是怎么启动的。
+            // 排查「保存了却没传上去」时，这一行往往就够了。
+            SyncDiagnostics.logSnapshot(applicationContext, "打开应用")
+            Log.i(
+                TAG,
+                "上次自动上传通道：${SyncSettings.launchNote(applicationContext).ifEmpty { "无记录" }}"
+            )
         }
 
         // v7.8：每次同步结束（成功 / 失败 / 被节流跳过）后重算橙点：
@@ -298,7 +308,8 @@ class MainActivity : AppCompatActivity() {
                 if (shouldPersist()) {
                     saveContent(
                         notifyFailure = true,
-                        syncTrigger = SyncTrigger.CLOSE_EDITOR
+                        syncTrigger = SyncTrigger.CLOSE_EDITOR,
+                        reason = SaveReason.BACK
                     ) { finish() }
                 } else {
                     // 尚未加载出任何内容且用户没输入过：磁盘上已有完整数据，无需保存，
@@ -377,7 +388,11 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.sync_upload_not_ready, Toast.LENGTH_SHORT).show()
             return
         }
-        saveContent(notifyFailure = true, syncTrigger = SyncTrigger.MANUAL)
+        saveContent(
+            notifyFailure = true,
+            syncTrigger = SyncTrigger.MANUAL,
+            reason = SaveReason.MANUAL
+        )
     }
 
     /**
@@ -402,7 +417,7 @@ class MainActivity : AppCompatActivity() {
         if (hasFocus) {
             savedOnLeave = false
         } else if (shouldSaveOnLeave()) {
-            saveOnLeave()
+            saveOnLeave(SaveReason.LEAVE_FOCUS)
         }
     }
 
@@ -413,7 +428,7 @@ class MainActivity : AppCompatActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (shouldSaveOnLeave()) {
-            saveOnLeave()
+            saveOnLeave(SaveReason.LEAVE_HINT)
         }
     }
 
@@ -423,10 +438,17 @@ class MainActivity : AppCompatActivity() {
     /**
      * 失焦保存。写盘走应用级作用域（[ContentStore.saveScope]），**不阻塞主线程**
      * ——旧实现在此用 `runBlocking` 同步写盘，内容大时会把 UI 线程按住几百毫秒以上。
+     *
+     * [reason] 只用于日志：Home 键走 [onUserLeaveHint]（比 [onWindowFocusChanged] 更早），
+     * 两者时序不同，出问题时要能分清是哪一条先到的。
      */
-    private fun saveOnLeave() {
+    private fun saveOnLeave(reason: SaveReason) {
         savedOnLeave = true
-        saveContent(notifyFailure = true, syncTrigger = SyncTrigger.CLOSE_EDITOR)
+        saveContent(
+            notifyFailure = true,
+            syncTrigger = SyncTrigger.CLOSE_EDITOR,
+            reason = reason
+        )
     }
 
     /**
@@ -446,7 +468,8 @@ class MainActivity : AppCompatActivity() {
             val leavingApp = !openingSettings && !isChangingConfigurations
             saveContent(
                 notifyFailure = leavingApp,
-                syncTrigger = SyncTrigger.CLOSE_EDITOR
+                syncTrigger = SyncTrigger.CLOSE_EDITOR,
+                reason = SaveReason.STOP
             )
         }
     }
@@ -605,7 +628,8 @@ class MainActivity : AppCompatActivity() {
             savedOnLeave = true // 重建过程中的 onStop 不再重复保存
             saveContent(
                 notifyFailure = false,
-                syncTrigger = SyncTrigger.CLOSE_EDITOR
+                syncTrigger = SyncTrigger.CLOSE_EDITOR,
+                reason = SaveReason.NIGHT_MODE
             ) {
                 nightSwitchSaving = false
                 if (!isFinishing && !isDestroyed) {
@@ -615,6 +639,23 @@ class MainActivity : AppCompatActivity() {
         } else {
             recreate()
         }
+    }
+
+    /**
+     * v8.0.1：这次保存是**哪条退出路径**触发的。
+     *
+     * 只用于日志与落盘诊断 —— 之前所有路径都打同一句话，
+     * 「偶尔保存了却没传上去」在用户手机上到底是哪一路（返回键 / Home / 多任务 /
+     * 最近任务滑掉 / 息屏）根本分不出来，而这几条的时序差别恰恰是问题的核心。
+     */
+    private enum class SaveReason(val token: String) {
+        BACK("back"),
+        LEAVE_FOCUS("leave-focus"),
+        LEAVE_HINT("leave-hint"),
+        STOP("onStop"),
+        NIGHT_MODE("night-mode"),
+        MANUAL("manual"),
+        OTHER("other")
     }
 
     /**
@@ -630,10 +671,12 @@ class MainActivity : AppCompatActivity() {
      *   v7.8：**每一条保存路径都传 [SyncTrigger.CLOSE_EDITOR]**（旋转 / 深色模式 / 跳设置页
      *   这些静默保存也一样）——「任何保存操作都触发自动上传」，密集保存由 1 分钟闸门合并。
      *   MANUAL 只用于顶部「立即上传」按钮（不受闸门限制）。
+     * @param reason 只用于日志/诊断的路径标记，见 [SaveReason]。
      */
     private fun saveContent(
         notifyFailure: Boolean,
         syncTrigger: SyncTrigger? = null,
+        reason: SaveReason = SaveReason.OTHER,
         onDone: () -> Unit = {}
     ) {
         val text = binding.editor.text.toString()
@@ -646,6 +689,29 @@ class MainActivity : AppCompatActivity() {
             // 而那种情况下如果没有这一步，就没有任何东西记得"还欠一次上传"。
             // 上传成功后 SyncManager 会撤销它；内容没变时它醒来也一个请求都不发。
             if (ok && syncTrigger != null) SyncRetry.schedule(appContext)
+
+            // ------------------------------------------------------------------
+            // v8.0.1（第 1 步③）：启动前台服务必须留在这段 IO 代码里，**不要跨主线程跳转**。
+            //
+            // Android 对「后台启动前台服务」的限制有一条豁免：应用从**用户可见状态**
+            // （Activity）转入后台。这条豁免**是有时间窗的**，而窗口从离开可见状态就开始流逝。
+            // 旧实现把 request() 放在 `withContext(Dispatchers.Main)` **之后**，
+            // 等于把豁免窗口先花在"排队等主线程"上 —— 退出瞬间主线程正在忙着销毁界面，
+            // 这个队可能排得很久，等真正去 startForegroundService 时窗口已经关了。
+            //
+            // 现在：写盘 → 排兜底任务 → **立刻**请求前台服务，全部在 IO 线程上顺序完成；
+            // 真正需要主线程的东西（小组件、橙点、Toast、finish()）留在下面的 withContext 里。
+            // ------------------------------------------------------------------
+            val startedSync = if (ok && syncTrigger != null) {
+                SyncLauncher.request(appContext, syncTrigger)
+            } else {
+                false
+            }
+            Log.i(
+                TAG,
+                "保存完成：reason=${reason.token} 写盘=$ok trigger=$syncTrigger 已启动同步=$startedSync"
+            )
+
             withContext(Dispatchers.Main) {
                 if (!ok) {
                     // 写盘失败：允许后续离开时机重试，避免只剩内存里这一份
@@ -654,13 +720,9 @@ class MainActivity : AppCompatActivity() {
                 // 无论成功与否都刷新小组件（失败时小组件继续显示磁盘上的旧内容，保持一致）
                 TextWidgetProvider.updateWidgets(appContext)
 
-                // 只在写盘成功后才上传：否则会把磁盘上的旧内容推到云端
-                if (ok && syncTrigger != null) {
-                    val started = SyncLauncher.request(appContext, syncTrigger)
-                    // 没能启动同步（未启用/未配置，或前台服务被系统拒绝且降级也失败）：
-                    // 不会再有同步终态回调，直接重算橙点，让用户看到「还有东西没传上去」
-                    if (!started) detectPendingUpload(text)
-                }
+                // 没能启动同步（未启用/未配置，或前台服务被系统拒绝且降级也失败）：
+                // 不会再有同步终态回调，直接重算橙点，让用户看到「还有东西没传上去」
+                if (ok && syncTrigger != null && !startedSync) detectPendingUpload(text)
 
                 if (notifyFailure && !ok) {
                     Toast.makeText(appContext, R.string.save_failed, Toast.LENGTH_SHORT).show()
@@ -689,6 +751,9 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val PREFS_NAME = "hello_prefs"
         const val KEY_SAVED_TEXT = "saved_text"
+
+        /** v8.0.1：保存路径埋点与诊断日志的 TAG（`adb logcat -s MainActivity` 即可看全部退出路径） */
+        private const val TAG = "MainActivity"
 
         /** 编辑器内容上限（字符），见 [maxLengthFilter] 的说明 */
         const val MAX_CONTENT_CHARS = 100_000

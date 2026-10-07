@@ -32,17 +32,32 @@ object SyncLauncher {
         val appContext = context.applicationContext
         if (!isReady(appContext)) {
             Log.i(TAG, "同步条件不满足（未启用或配置不完整），本次触发忽略：trigger=$trigger")
+            SyncSettings.setLaunchNote(appContext, "skipped:not-ready")
             return false
         }
         return try {
+            // 这一步必须在应用仍处于"可见 → 后台"的转换窗口内完成：
+            // 官方对后台启动前台服务的限制有豁免条款「app transitions from a user-visible state」，
+            // 而豁免窗口会随时间流逝关闭 —— 所以调用方把它排在写盘之后、主线程跳转**之前**。
             ContextCompat.startForegroundService(
                 appContext,
                 SyncService.intent(appContext, trigger)
             )
             Log.i(TAG, "已请求系统启动同步前台服务：trigger=$trigger")
+            SyncSettings.setLaunchNote(appContext, "fgs-requested:$trigger")
             true
         } catch (e: Exception) {
-            Log.w(TAG, "无法启动同步前台服务，降级为进程内同步（通知由 SyncManager 补上）：trigger=$trigger", e)
+            // v8.0.1：把异常**类型**写进消息与落盘记录。
+            // ForegroundServiceStartNotAllowedException（后台启动被拒）与
+            // ForegroundServiceTypeNotAllowedException（类型不被允许）需要完全不同的对策，
+            // 只看堆栈的 Log.w(..., e) 在用户转述时会被丢掉。
+            val kind = e.javaClass.simpleName
+            Log.w(
+                TAG,
+                "无法启动同步前台服务（$kind: ${e.message}），降级为进程内同步（通知由 SyncManager 补上）：trigger=$trigger",
+                e
+            )
+            SyncSettings.setLaunchNote(appContext, "fgs-rejected:$kind")
             SyncManager.requestInProcess(appContext, trigger)
             false
         }

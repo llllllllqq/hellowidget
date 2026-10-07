@@ -37,6 +37,16 @@ object SyncSettings {
     const val KEY_LAST_UPLOADED_TS = "sync_last_uploaded_ts"
     const val KEY_RETRY_ATTEMPTS = "sync_retry_attempts"
 
+    /**
+     * v8.0.1：「最后一次自动上传是怎么启动的」的原始证据。
+     *
+     * 存成一段 ASCII token（例如 `fgs-rejected:ForegroundServiceStartNotAllowedException`
+     * 或 `fgs-foreground:shortService`），与 logcat 里的措辞完全一致 ——
+     * 这样用户不用抓日志，在同步设置页拍一张截图就能说清"是没启动、还是启动了没传上去"。
+     */
+    const val KEY_LAUNCH_NOTE = "sync_last_launch_note"
+    const val KEY_LAUNCH_NOTE_AT = "sync_last_launch_note_at"
+
     const val DEFAULT_FILE_NAME = "note.txt"
 
     // ------------------------------------------------------------ 基本配置
@@ -131,6 +141,24 @@ object SyncSettings {
     }
 
     /**
+     * 上一次自动上传**是怎么启动的**（或为什么没能启动）。
+     *
+     * 每次同步启动时覆盖写，空串 = 还没有过记录。
+     * 只在启动通道上调用，不参与任何业务判断 —— 它纯粹是给人看的证据。
+     */
+    fun launchNote(context: Context): String =
+        context.prefs.getString(KEY_LAUNCH_NOTE, "") ?: ""
+
+    fun launchNoteAt(context: Context): Long = context.prefs.getLong(KEY_LAUNCH_NOTE_AT, 0L)
+
+    fun setLaunchNote(context: Context, note: String) {
+        context.prefs.edit()
+            .putString(KEY_LAUNCH_NOTE, note)
+            .putLong(KEY_LAUNCH_NOTE_AT, System.currentTimeMillis())
+            .apply()
+    }
+
+    /**
      * 记录一次成功。`uploadedHash` 是本次同步结束时本地内容的哈希 ——
      * 它既是下一次「本地有没有变」的基准，也是「确认无需上传」时的基准；
      * `uploadedTs` 是这次实际上传用的 unix 秒时间戳（没有上传时传上一次的值）。
@@ -162,6 +190,8 @@ object SyncSettings {
             .remove(KEY_LAST_UPLOADED_HASH)
             .remove(KEY_LAST_UPLOADED_TS)
             .remove(KEY_RETRY_ATTEMPTS)
+            .remove(KEY_LAUNCH_NOTE)
+            .remove(KEY_LAUNCH_NOTE_AT)
             .apply()
     }
 }

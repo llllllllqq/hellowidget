@@ -5,7 +5,9 @@
         WebDAV 同步（v7.2）。
         INTERNET：唯一的网络权限（普通权限，安装即授予，无需运行时申请）。
         FOREGROUND_SERVICE / FOREGROUND_SERVICE_DATA_SYNC：同步期间用前台服务承载
-        （通知栏进度条 + 进程不被回收），dataSync 类型是 Android 14+ 的强制要求。
+        （通知栏进度条 + 进程不被回收）。v8.0.1 起前台服务在 API 34+ 用 `shortService`、
+        API 29~33 用 `dataSync`，两种类型都在下面的 <service> 里声明，
+        所以 dataSync 的专属权限也一并保留（normal 级，安装即授予）。
         POST_NOTIFICATIONS：Android 13+ 显示进度条需要（用户拒绝时同步照跑，只是没有通知栏反馈）。
         RECEIVE_BOOT_COMPLETED：v7.9 起的系统重试任务用 setPersisted(true)，这是它的前置权限
         （只声明权限，不注册任何开机广播接收器 —— 我们不需要在开机时做任何事）。
@@ -75,13 +77,21 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!--
-            同步前台服务：dataSync 类型 → 需要 FOREGROUND_SERVICE_DATA_SYNC 权限（API 34+）。
-            只在真正同步时启动，同步结束立即 stopSelf，不做任何常驻/周期任务。
+            同步前台服务。只在真正同步时启动，同步结束立即 stopSelf，不做任何常驻/周期任务。
+
+            v8.0.1：类型从 `dataSync` 改为**按版本二选一**，两种都在这里声明，
+            保证每一条分支传给 startForeground 的类型都是"已声明"的：
+              - API 34+ → `shortService`（官方对本场景的原文定义：用户发起一个动作、
+                希望即使用户立刻切到后台也能完成；无需专属权限，也没有 dataSync 那条
+                「24 小时内累计 6 小时」的上限；代价是约 3 分钟上限，由 SyncService.onTimeout(int) 兜住）
+              - API 29~33 → `dataSync`（那个区间没有 shortService 类型）
+            因此 `FOREGROUND_SERVICE_DATA_SYNC` 权限仍然保留：它是 29~33 那条分支必需的，
+            也是声明 dataSync 类型所需的权限（多一个 normal 级权限，无运行时弹窗）。
         -->
         <service
             android:name=".SyncService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|shortService" />
 
         <!--
             v7.9：保存后没能上传成功时的系统级兜底 —— JobScheduler 的一次性持久化任务。
