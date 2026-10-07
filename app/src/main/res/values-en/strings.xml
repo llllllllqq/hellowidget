@@ -106,6 +106,10 @@
     <!-- v8.0.1 diagnostics: the value is an ASCII token identical to logcat, so it can be copied as-is -->
     <string name="sync_last_launch">Last auto-upload channel: %1$s (%2$s)</string>
     <string name="sync_diagnostics">System diagnostics: %1$s</string>
+    <!-- v8.0.2: the whole status/diagnostics block is copyable (long-press to select, or "Copy all") -->
+    <string name="sync_copy_hint">Long-press the text above to select and copy</string>
+    <string name="sync_copy_all">Copy all</string>
+    <string name="sync_copied">Copied to clipboard</string>
     <string name="sync_cleartext_warning">⚠ Plain http is in use: your password and notes travel unencrypted and can be read by others on the same network. Use https when possible (self-signed certificates can be pinned below).</string>
     <string name="sync_tls_pending">Server certificate fingerprint (not trusted yet): %1$s</string>
     <string name="sync_tls_trusted">Trusted certificate fingerprint: %1$s</string>

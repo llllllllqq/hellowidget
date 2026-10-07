@@ -176,14 +176,60 @@
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/sync_status"
+            <!--
+                v8.0.2：状态 / 诊断整块可复制。
+
+                这里原来是一个裸 TextView。加诊断行之后用户要把这一整段交给开发者排查，
+                截图和手抄都容易出错，因此改成一块「报告面板」：
+                  * sync_status 设 textIsSelectable —— 长按出系统选择手柄与「复制/全选」；
+                  * 右下「复制全部」按钮 —— 一次把整块文字放进剪贴板，给不熟悉选择手柄的用户兜底。
+                复制出来的内容与屏幕上**逐字一致**（所见即所得），不额外拼接版本号/设备名，
+                否则用户会怀疑「我复制的和看到的不一样」。
+            -->
+            <LinearLayout
+                android:id="@+id/sync_status_panel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="@string/sync_status_never"
-                android:textColor="@color/settings_text"
-                android:textSize="14sp" />
+                android:background="@drawable/settings_panel_bg"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/sync_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sync_status_never"
+                    android:textColor="@color/settings_text"
+                    android:textIsSelectable="true"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sync_copy_hint"
+                        android:textColor="@color/settings_secondary"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/sync_copy"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="40dp"
+                        android:text="@string/sync_copy_all"
+                        android:textColor="@color/settings_secondary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/sync_warning"
@@ -196,12 +242,17 @@
                 tools:text="⚠ 当前使用明文 http，口令与内容可能被网络中的他人读取"
                 tools:visibility="visible" />
 
+            <!--
+                证书指纹同样是要交给别人核对/粘贴的字符串，顺手也设成可选中的
+                （用户反馈过指纹只能靠手抄）。
+            -->
             <TextView
                 android:id="@+id/sync_tls_info"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:textColor="@color/settings_secondary"
+                android:textIsSelectable="true"
                 android:textSize="12sp"
                 android:visibility="gone"
                 tools:text="服务器证书指纹：AB:CD:…"

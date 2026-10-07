@@ -7,4 +7,9 @@
     <color name="settings_divider">#333333</color>
     <!-- 深色模式下用更亮的红，保证在深色背景上依然清晰 -->
     <color name="settings_warning">#FF8A80</color>
+    <!--
+        v8.0.2：同步页状态/诊断面板底色。
+        比页面底色 #121212 略亮：深色模式下不能靠加深来分块（会糊成一片），要靠明度差。
+    -->
+    <color name="settings_panel">#1E1E1E</color>
 </resources>

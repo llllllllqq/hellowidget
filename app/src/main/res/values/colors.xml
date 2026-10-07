@@ -10,6 +10,12 @@
     <color name="settings_divider">#DDDDDD</color>
     <!-- 风险提示（WebDAV 同步页的明文 http 警告），浅色模式 -->
     <color name="settings_warning">#D32F2F</color>
+    <!--
+        v8.0.2：WebDAV 同步页「状态 / 诊断」面板底色。
+        这块文字要能被长按选中复制，给它一个浅色圆角底，用户一眼就看得出「这是一整块可以复制的报告」，
+        而不是把它当成普通说明文字划过去。
+    -->
+    <color name="settings_panel">#F0F0F0</color>
 
     <!--
         v7.8「立即上传」按钮右上角橙点：小米橙 #FF6900。

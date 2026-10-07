@@ -1,6 +1,8 @@
 package moe.hellowidget
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -43,7 +45,9 @@ import java.util.Date
  *  - 同步是**纯单向上传**：本机内容一变就整份覆盖云端，不读取、不比对云端状态，
  *    因此这个页面没有也不需要冲突处理；
  *  - 自签名证书必须由用户在看到指纹后确认，确认结果按指纹固定（TOFU），
- *    指纹变化会再次要求确认 —— 不是「无条件信任所有证书」。
+ *    指纹变化会再次要求确认 —— 不是「无条件信任所有证书」；
+ *  - 状态区（含 v8.0.1 起的诊断行）是**可复制的报告块**：长按选中，或点「复制全部」，
+ *    见 [copyStatusToClipboard]。
  */
 class SyncActivity : AppCompatActivity() {
 
@@ -72,6 +76,8 @@ class SyncActivity : AppCompatActivity() {
             }
         }
         binding.syncTrust.setOnClickListener { confirmPendingFingerprint() }
+        // v8.0.2：「复制全部」—— 与 sync_status 的长按选中复制等价，只是不需要用户去拖选择手柄
+        binding.syncCopy.setOnClickListener { copyStatusToClipboard() }
         // 监听必须在 loadIntoFields() 之后挂上，否则恢复开关状态时会误触发权限申请
         binding.syncEnable.setOnCheckedChangeListener { _, checked ->
             if (checked) requestNotificationPermission()
@@ -349,6 +355,31 @@ class SyncActivity : AppCompatActivity() {
     private fun formatTime(at: Long): String =
         if (at <= 0) getString(R.string.sync_time_never)
         else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(at))
+
+    /**
+     * v8.0.2：把状态区（含诊断行）整块放进剪贴板。
+     *
+     * 起因：v8.0.1 加的诊断行只能靠截图转述，而排查「退出时没上传」恰恰要看
+     * `bucket=… pendingJobReason=… scheduled=…` 这些 ASCII token —— 截图会糊、手抄会错。
+     * 因此这块文字现在**有两条件路**：
+     *  - 布局里 [ActivitySyncBinding.syncStatus] 设了 `textIsSelectable`，长按即出系统
+     *    选择手柄与「复制 / 全选」（部分国产 ROM 是长按菜单）；
+     *  - 「复制全部」按钮走这个方法，一次拿全，不需要用户会拖手柄。
+     *
+     * 复制内容与屏幕上**逐字一致**（所见即所得），不拼接版本号 / 设备名 ——
+     * 否则用户会怀疑「我复制的和看到的不一样」。空文本时直接返回，宁可什么都不做，
+     * 也不要把剪贴板里原有的内容清掉。
+     *
+     * 反馈遵循官方 Copy and paste 指引：Android 13（API 33）起系统自带到剪贴板的
+     * 标准浮层，此时**不再自弹 Toast**（否则同一个动作会出现两条提示）；API 32 及以下才自己弹。
+     */
+    private fun copyStatusToClipboard() {
+        val text = binding.syncStatus.text?.toString().orEmpty()
+        if (text.isBlank()) return
+        val clipboard = getSystemService(ClipboardManager::class.java) ?: return
+        clipboard.setPrimaryClip(ClipData.newPlainText(title, text))
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) toast(getString(R.string.sync_copied))
+    }
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()

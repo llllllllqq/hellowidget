@@ -102,6 +102,10 @@
     <!-- v8.0.1 诊断：值与 logcat 完全一致（ASCII token），方便直接抄给开发者 -->
     <string name="sync_last_launch">上次自动上传通道：%1$s（%2$s）</string>
     <string name="sync_diagnostics">系统诊断：%1$s</string>
+    <!-- v8.0.2：状态/诊断整块可复制（长按选中，或点「复制全部」） -->
+    <string name="sync_copy_hint">长按上方文字可选中复制</string>
+    <string name="sync_copy_all">复制全部</string>
+    <string name="sync_copied">已复制到剪贴板</string>
     <string name="sync_cleartext_warning">⚠ 当前使用明文 http：口令与笔记内容会以未加密方式经过网络，同一网络中的他人可能读取。条件允许时请改用 https（自建证书可在下方信任指纹）。</string>
     <string name="sync_tls_pending">服务器证书指纹（尚未信任）：%1$s</string>
     <string name="sync_tls_trusted">已信任证书指纹：%1$s</string>

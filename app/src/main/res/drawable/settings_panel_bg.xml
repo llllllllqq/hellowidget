@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    v8.0.2：WebDAV 同步页「状态 / 诊断」面板的底。
+
+    为什么值得单独加一个 drawable：这块文字要长按复制，但纯文字块在视觉上没有任何「可操作」的暗示，
+    用户（尤其是被拉来测试的人）不会想到去长按它。给一个圆角浅底之后它才像一个「报告块」，
+    配合下面的「长按可复制」提示，不需要额外解释。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/settings_panel" />
+    <corners android:radius="8dp" />
+</shape>
