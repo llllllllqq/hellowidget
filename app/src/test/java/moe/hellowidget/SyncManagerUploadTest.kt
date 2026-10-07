@@ -145,7 +145,7 @@ class SyncManagerUploadTest {
         assertTrue(
             "同一批请求里必须真的发生合并（实际并入 ${SyncManager.coalescedRequests - coalescedBefore} 个）；" +
                 "阈值为 3 而不是 7，是因为 CI 的 Default 线程池可能只有 2~4 条线程，" +
-                "后到的请求会等前一趟跑完才登记 —— 那正是「最多两趟」的另一条路径",
+                "后到的请求会等前一趟跑完才登记 —— 那正是「合并粒度是一趟」的另一条路径",
             SyncManager.coalescedRequests - coalescedBefore >= 3
         )
     }
@@ -180,7 +180,7 @@ class SyncManagerUploadTest {
             listOf("v1", "v2"),
             client.puts
         )
-        assertEquals("一次突发只允许两趟 PUT（在飞的一趟 + 尾部一趟）", 2, client.putAttempts)
+        assertEquals("这两批保存只允许两趟 PUT（在飞的一趟 + 尾部一趟）", 2, client.putAttempts)
         assertEquals("串行执行：任何时刻都只有一个 PUT 在飞", 1, client.maxInFlight)
     }
 

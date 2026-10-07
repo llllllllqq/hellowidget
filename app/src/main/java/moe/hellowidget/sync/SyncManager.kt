@@ -48,8 +48,9 @@ enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED }
  * 156 秒的"退出没上传"就是这么来的。现在：
  *  - **没有任何成功节流**：每次保存都立刻尝试；要不要发请求只由内容哈希决定；
  *  - **同一时刻只有一个上传**：[mutex] 是硬保证（日志里 `开始同步` 与 `同步结束` 必然成对不交错）；
- *  - **一次突发最多两趟**：保存比上传快时，后来者**并入**正在执行的那一趟（拿它的结果），
- *    只有"领跑者读完内容之后才到的"那一个请求会再补一趟（见 [performSync] 的注释）。
+ *  - **合并的粒度是"一趟"**：领跑者开始之后登记的请求会并入它，因此 PUT 次数由**上传批次**决定
+ *    （一趟上传吸收它开始前积累的所有保存），而不是由保存次数决定；持续保存时，每一趟跑完
+ *    只会再有一趟代表最新内容 —— 详见 [performSync] 的注释。
  *
  * 线程模型：全部网络与磁盘操作跑在调用方的 IO 协程里；
  * [requestSeq] 在进锁前登记、[claimedSeq] / [lastResult] 只在锁内读写。
@@ -174,10 +175,14 @@ object SyncManager {
      * 等锁的写法天然没有这个问题：并入者是在领跑者结束之后才做自己的收尾。
      *
      * ## 为什么领跑者认领的是 `requestSeq.get()` 而不是自己的序号
-     * 这一行决定"一次突发最多两趟"。领跑者在**读取内容之前**认领"此刻已登记的全部请求"，
-     * 于是所有在它期间排队的请求（序号 ≤ 认领值）在拿到锁时都会发现自己是"已被覆盖"；
-     * 只有"领跑者读完内容之后才登记"的那个请求会成为第二趟——它代表最新内容，必须自己跑。
+     * 这一行决定**合并的粒度**。领跑者在**读取内容之前**认领"此刻已登记的全部请求"，
+     * 于是所有在它开始前登记的请求（序号 ≤ 认领值）在拿到锁时都会发现自己是"已被覆盖"，
+     * 直接复用它的结果；只有"领跑者开始之后才登记"的请求会成为下一趟 —— 它代表更新的内容，
+     * 必须自己跑。
+     *
      * 若只认领自己的序号，N 个排队者就会依次各跑一趟（旧行为）。
+     * 注意这不是"任何情况下都只有两趟"：持续保存时，每一趟跑完都会再有一趟代表最新内容
+     * （仍然串行、仍然绝不并发），所以**上传次数由"上传批次"决定，而不是由保存次数决定**。
      *
      * ## 用户按下的按钮不合并
      * [SyncTrigger.MANUAL] 永远自己走一趟（等锁），这是"当下意图"该有的语义；
@@ -209,8 +214,19 @@ object SyncManager {
             }
             claimedSeq = requestSeq.get()
             Log.i(TAG, "获得同步锁：trigger=$trigger（认领 #$claimedSeq）")
-            doSync(context.applicationContext, trigger, progress, onWindowPhase)
-                .also { lastResult = it }
+            val result = try {
+                doSync(context.applicationContext, trigger, progress, onWindowPhase)
+            } catch (e: CancellationException) {
+                // 领跑者被取消（例如前台服务被销毁）时，下面的赋值不会执行 —— 若不在这里补一个
+                // 终态，并入者会拿到**上一次的旧结果**（可能是一次 Success），于是兜底任务会
+                // 误以为内容已经传完而结束。明确落一个"被取消"的失败终态（IO 属暂时性，会重试）。
+                lastResult = SyncStatus.Failed(
+                    System.currentTimeMillis(), WebDavError.IO, "同步被取消"
+                )
+                throw e
+            }
+            lastResult = result
+            result
         }
     }
 

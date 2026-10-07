@@ -309,7 +309,8 @@ class MainActivityTopBarTest {
     /**
      * v7.8 需求 2：**任何保存操作都触发自动上传** —— 包括「应用内跳设置页」这种
      * 以前明确不上传的静默保存（旧实现传 `syncTrigger = null`）。
-     * 密集触发由 1 分钟闸门在 SyncManager 里合并（见 SyncManagerTest 的闸门用例）。
+     * 密集触发由 SyncManager 的单飞合并吸收（v8.1.0 起没有任何节流，
+     * 见 SyncManagerUploadTest 的"同一时刻最多一次上传"用例）。
      */
     @Test
     fun everySave_startsTheAutomaticUpload_includingSilentSaves() {

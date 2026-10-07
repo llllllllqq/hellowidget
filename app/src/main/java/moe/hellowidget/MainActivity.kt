@@ -462,7 +462,7 @@ class MainActivity : AppCompatActivity() {
      * v7.8：**只要是保存，就一定触发一次自动上传**（[SyncTrigger.CLOSE_EDITOR]）——
      * 包括应用内跳设置页与旋转这两种「静默保存」。v8.1.0 起不再有任何节流：
      * 每次保存都立刻尝试，「要不要真的发请求」只由内容哈希决定；
-     * 反复保存（例如旋转 + onStop）由 SyncManager 的单飞合并成最多两趟，绝不并发 PUT。
+     * 反复保存（例如旋转 + onStop）由 SyncManager 的单飞合并进正在执行的那一趟，绝不并发 PUT。
      */
     override fun onStop() {
         super.onStop()
@@ -672,7 +672,7 @@ class MainActivity : AppCompatActivity() {
      * @param syncTrigger 写盘成功后要触发的一次 WebDAV 同步，null = 不触发。
      *   v7.8：**每一条保存路径都传 [SyncTrigger.CLOSE_EDITOR]**（旋转 / 深色模式 / 跳设置页
      *   这些静默保存也一样）——「任何保存操作都触发自动上传」，密集保存由 SyncManager
-     *   的单飞合并（一次突发最多两趟）。
+     *   的单飞合并（一趟上传吸收它开始前登记的所有保存）。
      *   MANUAL 只用于顶部「立即上传」按钮（永不参与合并）。
      * @param reason 只用于日志/诊断的路径标记，见 [SaveReason]。
      */

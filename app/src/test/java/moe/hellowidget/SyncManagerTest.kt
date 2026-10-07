@@ -275,7 +275,9 @@ class SyncManagerTest {
     @Test
     fun closeEditorTrigger_isNeverThrottled_twiceInARowMeansTwoUploads() {
         assertTrue(sync(SyncTrigger.CLOSE_EDITOR) is SyncStatus.Success)
-        assertEquals("第一次：真的传上去", 1, lastClient!!.puts.size)
+        // 注意：每次同步都会**新建**一个客户端（clientFactory 每次调用都造一个 FakeClient），
+        // 所以"有没有 PUT"只能按 clients[i] 分别看，不能只看最后那个。
+        assertEquals("第一次：真的传上去", 1, clients[0].puts.size)
         assertTrue("真的发过请求 ⇒ 访问锚点必须被更新", SyncSettings.lastServerContactAt(context) > 1L)
 
         // 同一秒内改内容再保存一次。旧实现这里会返回 Skipped(THROTTLED)（1 分钟闸门），
@@ -285,8 +287,8 @@ class SyncManagerTest {
 
         assertTrue("自动触发不再有任何节流，实际：$second", second is SyncStatus.Success)
         assertTrue((second as SyncStatus.Success).uploaded)
-        assertEquals("两次保存 = 两次 PUT", 2, lastClient!!.puts.size)
-        assertEquals("内容 B", lastClient!!.puts[1].second)
+        assertEquals("两次保存 = 两次 PUT", 2, clients.sumOf { it.puts.size })
+        assertEquals("内容 B", clients[1].puts[0].second)
     }
 
     /**
@@ -297,7 +299,7 @@ class SyncManagerTest {
     @Test
     fun unchangedContent_stillTriesButSendsNothing_andDoesNotTouchTheContactAnchor() {
         assertTrue(sync(SyncTrigger.CLOSE_EDITOR) is SyncStatus.Success)
-        assertEquals(1, lastClient!!.puts.size)
+        assertEquals(1, clients[0].puts.size)
         // 哨兵值：1970 年，任何真实时间戳都不可能等于它 —— 只有"真的碰了云端"才会覆盖它
         SyncSettings.setLastServerContactAt(context, 1L)
 
@@ -305,7 +307,8 @@ class SyncManagerTest {
 
         assertTrue("没变化也是一次成功的同步，实际：$again", again is SyncStatus.Success)
         assertFalse("没有改动 ⇒ 不该真的上传", (again as SyncStatus.Success).uploaded)
-        assertEquals("第二次不得再 PUT", 1, lastClient!!.puts.size)
+        assertEquals("第二次那个客户端一个 PUT 都没有", 0, clients[1].puts.size)
+        assertEquals("总共只允许一次 PUT", 1, clients.sumOf { it.puts.size })
         assertEquals(
             "零请求的空跑不该更新访问锚点",
             1L,
