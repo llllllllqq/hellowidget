@@ -22,6 +22,16 @@ import android.util.Log
  *  2. 我那条待执行任务查得到吗？
  *  3. 系统说它为什么还没跑？（API 34+ 的 `getPendingJobReason`）
  *
+ * ## 首份真机取证的结论（HyperOS 3 / Android 16）
+ * 用户设备实际返回 **`bucket=EXEMPTED`（值 5，AOSP 的 `STANDBY_BUCKET_EXEMPTED`，
+ * 不在公开 SDK 里）**、`pendingJobReason=CONSTRAINT_MINIMUM_LATENCY`、`scheduled=true`、
+ * `retryAttempts=0`。也就是说：
+ *  - 该机应用**在 Doze 豁免名单上、不受待机分桶限制** ——
+ *    上面那条「厂商把兜底任务压在低优先级桶里 / 后台断网」的假设**在这台设备上不成立**；
+ *  - 唯一拦着兜底任务的，是**我们自己设的 90 秒 `setMinimumLatency`**。
+ * 因此排查方向要从"系统压制"转向"那次上传本身为什么没成功"（看同步结果行的失败原因），
+ * 以及"我们自己愿不愿意等这 90 秒"。
+ *
  * ## 设计约束
  *  - **只读、零网络、零落盘**：不写任何状态，不申请任何权限
  *    （`getAppStandbyBucket()` 查自己的分桶不需要 `PACKAGE_USAGE_STATS`）；
@@ -52,18 +62,34 @@ object SyncDiagnostics {
         }
     }
 
-    /** 分桶的 ASCII 名称（日志与设置页共用同一 token） */
+    /**
+     * 分桶的 ASCII 名称（日志与设置页共用同一 token）。
+     *
+     * 取值来自 AOSP `UsageStatsManager`：`EXEMPTED=5` / `ACTIVE=10` / `WORKING_SET=20` /
+     * `FREQUENT=30` / `RARE=40` / `RESTRICTED=45` / `NEVER=50`。
+     *
+     * 其中 **`EXEMPTED=5` 与 `NEVER=50` 不在公开 SDK 里**（`@SystemApi` / hidden，
+     * 公开 android.jar 里根本不存在这两个字段），所以只能写字面量。
+     * 这不是理论问题：实测用户设备（HyperOS 3 / Android 16）上真的返回了 **5**，
+     * 而 v8.0.1 第一版把它显示成 `UNKNOWN(5)`，让人误以为"状态未知、可能异常" ——
+     * 它恰恰是**最好**的状态：官方明确「在 Doze 豁免名单上的应用不受待机分桶限制」。
+     */
     @Suppress("InlinedApi")
     fun bucketName(bucket: Int?): String = when (bucket) {
         null -> "n/a"
+        STANDBY_BUCKET_EXEMPTED -> "EXEMPTED"
         UsageStatsManager.STANDBY_BUCKET_ACTIVE -> "ACTIVE"
         UsageStatsManager.STANDBY_BUCKET_WORKING_SET -> "WORKING_SET"
         UsageStatsManager.STANDBY_BUCKET_FREQUENT -> "FREQUENT"
         UsageStatsManager.STANDBY_BUCKET_RARE -> "RARE"
         UsageStatsManager.STANDBY_BUCKET_RESTRICTED -> "RESTRICTED"
-        50 -> "NEVER"
+        STANDBY_BUCKET_NEVER -> "NEVER"
         else -> "UNKNOWN($bucket)"
     }
+
+    /** AOSP 里 `@SystemApi`/hidden 的两个分桶常量，公开 SDK 中不存在，只能写字面量 */
+    private const val STANDBY_BUCKET_EXEMPTED = 5
+    private const val STANDBY_BUCKET_NEVER = 50
 
     /**
      * 系统说我们那条兜底任务为什么还没执行；API 34 以下或查不到时返回 `null`。
