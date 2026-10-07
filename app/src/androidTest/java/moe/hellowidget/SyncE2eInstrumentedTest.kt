@@ -15,7 +15,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
-import moe.hellowidget.sync.SkipReason
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncLauncher
@@ -205,30 +204,53 @@ class SyncE2eInstrumentedTest {
         assertEquals("旧文件必须原样保留", "旧的历史内容", cloud("legacy-note.txt"))
     }
 
-    // ------------------------------------------------------------ 节流
+    // ------------------------------------------------------------ 没有节流（v8.1.0）
 
+    /**
+     * v8.1.0：**两次自动触发之间没有任何节流** —— 这条用例就是旧行为的反证。
+     *
+     * 旧实现（v7.7.2 ~ v8.0.3）在这里会返回 `Skipped(THROTTLED)`、一个请求都不发，
+     * 真机日志里"退出后 156 秒才上传"正是它造成的（10:13:23 那次零请求的空跑把闸门
+     * 关到 10:14:23，于是 10:13:26 那次有内容的退出被静默跳过）。
+     * 现在第二次保存（内容已变）必须**立刻**写出第二个文件，且旧文件原样保留。
+     */
     @Test
-    fun throttle_blocksAutomaticSyncButNotTheManualButton() {
+    fun noThrottle_secondSaveWithChangedContentUploadsImmediately() {
         assertTrue(runBlocking { ContentStore.write("v1") })
-        runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
+        runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
         val first = uploadedName()
         val countAfterFirst = requestCount()
+        assertEquals("v1", cloud(first))
 
-        // 内容又变了，但距上次同步不足 1 分钟：自动触发必须被跳过，且**不发任何请求**
+        // 紧接着（同一秒内）内容又变了：必须立刻再传一次，不能再被"距上次不足 1 分钟"挡下
         assertTrue(runBlocking { ContentStore.write("v2") })
-        val throttled = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
-        assertEquals(SyncStatus.Skipped(SkipReason.THROTTLED), throttled)
-        assertEquals("被节流时不能访问服务器", countAfterFirst, requestCount())
-        assertEquals("被节流时不会产生新文件", "v1", cloud(first))
+        val second = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
 
-        // 手动按钮不受限
-        val manual = runBlocking { SyncManager.performSync(context, SyncTrigger.MANUAL) }
-        assertTrue("手动同步应成功，实际：$manual", manual is SyncStatus.Success)
-        assertTrue("手动同步应真的发出请求", requestCount() > countAfterFirst)
-        val second = uploadedName()
-        assertTrue("必须写成另一个新文件：$first / $second", first != second)
-        assertEquals("v2", cloud(second))
+        assertTrue("自动触发不再有任何节流，实际：$second", second is SyncStatus.Success)
+        assertTrue("内容变了就必须真的传上去", (second as SyncStatus.Success).uploaded)
+        assertTrue("必须真的发出了请求", requestCount() > countAfterFirst)
+        val secondName = uploadedName()
+        assertTrue("必须写成另一个新文件：$first / $secondName", first != secondName)
+        assertEquals("v2", cloud(secondName))
         assertEquals("v1 的那份仍在", "v1", cloud(first))
+    }
+
+    /**
+     * 没有节流之后，"内容没变就一个请求都不发"这条不变量反而更重要了 ——
+     * 它现在是**防重复上传的唯一机制**（旧版还叠加了 1 分钟闸门）。
+     */
+    @Test
+    fun unchangedContent_sendsNoRequest_evenRightAfterAnUpload() {
+        assertTrue(runBlocking { ContentStore.write("没有变化的内容") })
+        runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
+        val countAfterFirst = requestCount()
+        assertTrue("第一次必须真的传上去", countAfterFirst > 0)
+
+        val again = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
+
+        assertTrue("没变化也算同步成功，实际：$again", again is SyncStatus.Success)
+        assertFalse("没变化 ⇒ 不该真的上传", (again as SyncStatus.Success).uploaded)
+        assertEquals("内容没变时一个请求都不许发（防重复靠哈希，不靠节流）", countAfterFirst, requestCount())
     }
 
     // ------------------------------------------------------------ 前台服务与通知
@@ -243,7 +265,6 @@ class SyncE2eInstrumentedTest {
         // 真实产品里同步也正是由用户可见的操作触发的
         ActivityScenario.launch(MainActivity::class.java).use {
             SyncSettings.setEnabled(context, true)
-            SyncSettings.setLastAttemptAt(context, 0)
 
             SyncNotifier.ensureChannel(context)
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -297,9 +318,8 @@ class SyncE2eInstrumentedTest {
 
         ActivityScenario.launch(MainActivity::class.java).use {
             SyncSettings.setEnabled(context, true)
-            // 闸门置为「刚刚尝试过」：任何自动触发都会被跳过，这样下面那次上传只可能来自显式请求
-            SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
-
+            // v8.1.0：没有闸门可设，也不需要设 —— 打开应用本身不触发任何上传（v7.8），
+            // 因此下面这次上传只可能来自那次显式请求
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             assertTrue("应启动前台服务", SyncLauncher.request(context, SyncTrigger.MANUAL))
 
@@ -348,7 +368,6 @@ class SyncE2eInstrumentedTest {
             notificationQueryReliable
         )
         assertTrue(runBlocking { ContentStore.write("进程内兜底验证") })
-        SyncSettings.setLastAttemptAt(context, 0)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         SyncManager.requestInProcess(context, SyncTrigger.MANUAL)
@@ -383,13 +402,14 @@ class SyncE2eInstrumentedTest {
 
     /**
      * v7.7 需求：编辑页顶部导航栏的「立即上传」按钮 —— 真的点它一下，编辑器里的**当前**内容
-     * 必须立刻出现在云端，而且**不受 1 分钟节流限制**。
+     * 必须立刻出现在云端。
      *
      * 为什么必须在真机上验证：
      *  - 菜单项由 AppCompat 装到 Toolbar 上，只有真实 AppCompat 环境才拿得到它；
-     *  - 上传走前台服务，JVM/Robolectric 不记录 `startForegroundService`，那里断言不了；
-     *  - 「绕过节流」的证明方式：把 `lastAttemptAt` 设成「刚刚尝试过」——若按钮走的是
-     *    自动触发（CLOSE_EDITOR），这次同步会被跳过，云端不会出现新文件。
+     *  - 上传走前台服务，JVM/Robolectric 不记录 `startForegroundService`，那里断言不了。
+     *
+     * v8.1.0：这条用例原本还兼着"证明按钮绕过了 1 分钟节流"，闸门删除后那半边没了 ——
+     * 现在它的职责只剩"点按钮确实把**编辑器里的当前内容**先落盘再传上去"（落盘顺序）。
      */
     @Test
     fun topBarUploadButton_uploadsTheCurrentEditorContent_ignoringThrottle() {
@@ -406,9 +426,9 @@ class SyncE2eInstrumentedTest {
                 activity.findViewById<EditText>(R.id.editor).setText(typed)
             }
 
-            // 打开同步，并把 1 分钟闸门置为「刚刚尝试过」：自动触发一定会被跳过
+            // 打开同步。v8.1.0：这里不再需要"把闸门置为刚刚尝试过"——
+            // 没有闸门，而打开应用本身不触发上传，因此下面这次上传只可能来自点按钮。
             SyncSettings.setEnabled(context, true)
-            SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
 
             // 动作菜单在首次布局时装载，给它一点时间（不能在 onActivity 里 sleep：那是主线程）
             var found: MenuItem? = null
@@ -441,7 +461,7 @@ class SyncE2eInstrumentedTest {
 
             val name = uploadedName()
             assertEquals(
-                "云端文件必须就是编辑器里的当前内容（证明先落盘，且这次同步绕过了 1 分钟节流）",
+                "云端文件必须就是编辑器里的当前内容（证明先落盘、再上传）",
                 typed,
                 cloud(name)
             )
@@ -460,7 +480,8 @@ class SyncE2eInstrumentedTest {
      *
      * 构造「磁盘内容 != 上次成功上传的内容」（= 有待上传改动），然后进编辑页：
      *  - 服务器在整段时间里**一个请求都不许收到**（连 MKCOL 都不许）—— 旧实现在这里走 `APP_OPEN`；
-     *  - 也不许写 `lastAttemptAt`（那会把接下来真正的保存上传平白节流掉）；
+     *  - 也不许写 `lastServerContactAt`（那是"真的访问过云端"的证据；v8.1.0 起它取代了
+     *    1 分钟闸门的锚点 `lastAttemptAt`，证明的含义反而更强：一次请求都没发）；
      *  - 橙点必须亮起 —— 真机像素级断言在 `MainActivityEntryInstrumentedTest`。
      */
     @Test
@@ -481,9 +502,9 @@ class SyncE2eInstrumentedTest {
 
             assertEquals("打开应用不得访问服务器", countBefore, requestCount())
             assertEquals(
-                "打开应用不得记录同步尝试（否则会节流掉下一次保存上传）",
+                "打开应用不得记录任何「访问过云端」的痕迹",
                 0L,
-                SyncSettings.lastAttemptAt(context)
+                SyncSettings.lastServerContactAt(context)
             )
         }
     }
@@ -499,7 +520,7 @@ class SyncE2eInstrumentedTest {
      *
      * 场景：把地址指向一定拒绝连接的端口（`10.0.2.2:1`）→ 按返回键保存（用户报障的原路径）
      * → 同步快速失败；随后把地址改回 CI 上的 WebDAV 桩服务器，并直接执行一次重试任务
-     * （真机上那一步由系统在有网络时完成，测试里等不了 90 秒的最短延迟）。
+     * （真机上那一步由系统在有网络时完成，测试里等不了 30 秒的最短延迟）。
      */
     @Test
     fun failedUpload_leavesASystemRetryQueued_andThatRetryFinishesTheUpload() {
@@ -544,9 +565,8 @@ class SyncE2eInstrumentedTest {
             statusAfterFailure = SyncManager.status.value.toString()
         }
 
-        // 网络恢复：模拟系统在合适时机拉起那个任务（真机上还要过 90 秒最短延迟与 1 分钟闸门）
+        // 网络恢复：模拟系统在合适时机拉起那个任务（真机上还要过 30 秒最短延迟）
         SyncSettings.saveConfig(context, goodConfig)
-        SyncSettings.setLastAttemptAt(context, System.currentTimeMillis() - 120_000)
         val needsAnotherRetry = runBlocking { SyncRetry.runOnce(context) }
         val recovered = cloud(uploadedName())
 

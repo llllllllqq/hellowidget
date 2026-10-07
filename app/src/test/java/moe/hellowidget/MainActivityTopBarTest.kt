@@ -204,7 +204,11 @@ class MainActivityTopBarTest {
             activity.getString(R.string.sync_upload_not_ready),
             ShadowToast.getTextOfLatestToast()
         )
-        assertEquals("未配置时不得发起任何同步尝试", 0L, SyncSettings.lastAttemptAt(app))
+        assertEquals(
+            "未配置时不得发起任何同步尝试（一次请求都没发）",
+            0L,
+            SyncSettings.lastServerContactAt(app)
+        )
     }
 
     // ------------------------------------------------------------ v7.8：打开应用只检测不上传
@@ -225,7 +229,9 @@ class MainActivityTopBarTest {
      * v7.8 需求 1：**打开应用只检测、不上传**。
      *
      * 构造「磁盘内容 != 上次成功上传的内容」，然后进应用：
-     *  - 不得发起任何同步尝试（`lastAttemptAt` 必须仍是 0）——旧实现在这里走 `APP_OPEN` 上传；
+     *  - 不得发起任何同步尝试（`lastServerContactAt` 必须仍是 0）——旧实现在这里走 `APP_OPEN` 上传；
+     *    注意 v8.1.0 换过锚点：旧字段 `lastAttemptAt` 是 1 分钟闸门的锚点，已经随闸门删除；
+     *    新字段只在**真的访问云端**时才写，因此它证明的正是"一次请求都没发"。
      *  - 不得启动任何同步服务；
      *  - 但必须点亮「立即上传」按钮上的橙点。
      */
@@ -239,7 +245,11 @@ class MainActivityTopBarTest {
         awaitEditorEnabled(activity)
         awaitUploadPending(activity, expected = true)
 
-        assertEquals("打开应用不得发起任何同步尝试", 0L, SyncSettings.lastAttemptAt(app))
+        assertEquals(
+            "打开应用不得发起任何同步尝试（一次请求都没发）",
+            0L,
+            SyncSettings.lastServerContactAt(app)
+        )
         assertNull("打开应用不得启动任何同步服务", shadowOf(app).nextStartedService)
     }
 

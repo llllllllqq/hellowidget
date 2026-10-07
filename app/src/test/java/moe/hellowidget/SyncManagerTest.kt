@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Looper
 import kotlinx.coroutines.runBlocking
-import moe.hellowidget.sync.SkipReason
 import moe.hellowidget.sync.SyncConfig
 import moe.hellowidget.sync.SyncEngine
 import moe.hellowidget.sync.SyncErrorText
@@ -271,26 +270,47 @@ class SyncManagerTest {
         assertEquals("内容 A", client.puts[0].second)
     }
 
-    // ------------------------------------------------------------ 闸门
+    // ------------------------------------------------------------ 没有节流（v8.1.0）
 
     @Test
-    fun throttled_autoTrigger_doesNotEvenBuildAClient() {
-        SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
+    fun closeEditorTrigger_isNeverThrottled_twiceInARowMeansTwoUploads() {
+        assertTrue(sync(SyncTrigger.CLOSE_EDITOR) is SyncStatus.Success)
+        assertEquals("第一次：真的传上去", 1, lastClient!!.puts.size)
+        assertTrue("真的发过请求 ⇒ 访问锚点必须被更新", SyncSettings.lastServerContactAt(context) > 1L)
 
-        val status = sync(SyncTrigger.CLOSE_EDITOR)
+        // 同一秒内改内容再保存一次。旧实现这里会返回 Skipped(THROTTLED)（1 分钟闸门），
+        // 正是真机日志里「退出后 156 秒才上传」的成因。
+        content = "内容 B"
+        val second = sync(SyncTrigger.CLOSE_EDITOR)
 
-        assertEquals(SyncStatus.Skipped(SkipReason.THROTTLED), status)
-        assertEquals("被节流时不得触碰网络", 0, clientBuilds)
+        assertTrue("自动触发不再有任何节流，实际：$second", second is SyncStatus.Success)
+        assertTrue((second as SyncStatus.Success).uploaded)
+        assertEquals("两次保存 = 两次 PUT", 2, lastClient!!.puts.size)
+        assertEquals("内容 B", lastClient!!.puts[1].second)
     }
 
+    /**
+     * 没有节流之后，**防重复上传靠的是内容哈希**，不是闸门 —— 这条用例把两件事一起钉住：
+     * 第二次保存仍然"尝试"（不再被静默跳过），但内容没变时一个请求都不发，
+     * 而且**不更新访问锚点**（旧实现会把闸门锚点写下去，于是把下一次真实上传挡在门外 60 秒）。
+     */
     @Test
-    fun manualTrigger_bypassesTheThrottle() {
-        SyncSettings.setLastAttemptAt(context, System.currentTimeMillis())
-
-        val status = sync(SyncTrigger.MANUAL)
-
-        assertTrue("手动同步不受 1 分钟限制，实际：$status", status is SyncStatus.Success)
+    fun unchangedContent_stillTriesButSendsNothing_andDoesNotTouchTheContactAnchor() {
+        assertTrue(sync(SyncTrigger.CLOSE_EDITOR) is SyncStatus.Success)
         assertEquals(1, lastClient!!.puts.size)
+        // 哨兵值：1970 年，任何真实时间戳都不可能等于它 —— 只有"真的碰了云端"才会覆盖它
+        SyncSettings.setLastServerContactAt(context, 1L)
+
+        val again = sync(SyncTrigger.CLOSE_EDITOR)
+
+        assertTrue("没变化也是一次成功的同步，实际：$again", again is SyncStatus.Success)
+        assertFalse("没有改动 ⇒ 不该真的上传", (again as SyncStatus.Success).uploaded)
+        assertEquals("第二次不得再 PUT", 1, lastClient!!.puts.size)
+        assertEquals(
+            "零请求的空跑不该更新访问锚点",
+            1L,
+            SyncSettings.lastServerContactAt(context)
+        )
     }
 
     // ------------------------------------------------------------ 失败路径

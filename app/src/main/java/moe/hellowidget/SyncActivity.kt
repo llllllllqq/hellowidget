@@ -191,7 +191,7 @@ class SyncActivity : AppCompatActivity() {
             builder.append('\n').append(getString(R.string.sync_history_note))
         }
         builder.append('\n').append(lastResultLine())
-        attemptLine()?.let { builder.append('\n').append(it) }
+        serverContactLine()?.let { builder.append('\n').append(it) }
         retryLine()?.let { builder.append('\n').append(it) }
         launchLine()?.let { builder.append('\n').append(it) }
         diagnosticsLine()?.let { builder.append('\n').append(it) }
@@ -215,7 +215,7 @@ class SyncActivity : AppCompatActivity() {
 
     private fun lastResultLine(): String {
         val successAt = SyncSettings.lastSuccessAt(this)
-        val attemptAt = SyncSettings.lastAttemptAt(this)
+        val contactAt = SyncSettings.lastServerContactAt(this)
         return when (SyncSettings.lastResult(this)) {
             SyncEngine.RESULT_SUCCESS -> {
                 // v8.0.1（D3）：区分「真的传上去了」与「本地无改动、一个请求都没发」——
@@ -230,9 +230,11 @@ class SyncActivity : AppCompatActivity() {
                 getString(text, formatTime(successAt))
             }
             SyncEngine.RESULT_FAILED ->
+                // v8.1.0：失败时间取"上次访问云端"（失败一定更新它）；升级瞬间可能还没写过，
+                // 这时退回上次成功时间，宁可显示一个真实的旧时间，也不要显示「从未」。
                 getString(
                     R.string.sync_status_failed,
-                    formatTime(attemptAt),
+                    formatTime(if (contactAt > 0) contactAt else successAt),
                     SyncErrorText.ofName(this, SyncSettings.lastError(this)) ?: ""
                 )
             else -> getString(R.string.sync_status_never)
@@ -240,27 +242,42 @@ class SyncActivity : AppCompatActivity() {
     }
 
     /**
-     * v7.9：最后一次**尝试**（无论成败）的时间。
+     * v7.9：最后一次**真的访问云端**的时刻；v8.1.0 起语义收紧了。
      *
      * 状态行原本只说「上次结果」，而排查「保存了却没上传」时最需要的恰恰是
-     * 「最后一次尝试发生在什么时候」—— 配上 [retryLine] 用户拍一张截图就够了。
+     * 「最后一次真的发请求发生在什么时候」—— 配上 [retryLine] 用户拍一张截图就够了。
+     *
+     * **"本地没改动、一个请求都没发"的空跑不再更新它**（旧字段 `lastAttemptAt` 会更新，
+     * 因为它是 1 分钟闸门的锚点；闸门已删除）。这样这一行才真的能回答
+     * "是没变化、还是发了请求但没成功"，而不是把两者混成同一个时间戳。
      */
-    private fun attemptLine(): String? {
-        val attemptAt = SyncSettings.lastAttemptAt(this)
-        if (attemptAt <= 0) return null
-        return getString(R.string.sync_last_attempt, formatTime(attemptAt))
+    private fun serverContactLine(): String? {
+        val contactAt = SyncSettings.lastServerContactAt(this)
+        if (contactAt <= 0) return null
+        return getString(R.string.sync_last_server_contact, formatTime(contactAt))
     }
 
     /**
-     * v7.9：系统级重试任务的状态。
+     * v7.9：系统级重试任务的状态；v8.1.0 起补上**预计补传时刻**。
      * 「已排队」= 本地还有没传上去的改动，系统会在有网络时自动重试；
      * 「已用完」= 自动重试用满 [SyncRetry.MAX_ATTEMPTS] 次后停下（不做长期后台驻留），
      * 需要用户点「立即同步」或再次保存才会重新排队 —— 这条提示必须说清楚，不能让用户以为已经传上去了。
+     *
+     * 时刻取自排任务时自己记下的 [SyncSettings.nextRetryAt]：`JobInfo` 不暴露绝对截止时刻，
+     * 而"任务为什么还没跑"恰恰要拿这个时间与当前时间比（真机日志里就出现过任务比
+     * 最短延迟晚了 20 多秒才被执行的情况）。升级瞬间可能还没记过，则退回不带时刻的旧文案。
      */
     private fun retryLine(): String? {
         if (!SyncSettings.enabled(this) || SyncSettings.config(this) == null) return null
         return when {
-            SyncRetry.isScheduled(this) -> getString(R.string.sync_retry_queued)
+            SyncRetry.isScheduled(this) -> {
+                val nextAt = SyncSettings.nextRetryAt(this)
+                if (nextAt > 0) {
+                    getString(R.string.sync_retry_queued_at, formatTime(nextAt))
+                } else {
+                    getString(R.string.sync_retry_queued)
+                }
+            }
             SyncSettings.retryAttempts(this) >= SyncRetry.MAX_ATTEMPTS ->
                 getString(R.string.sync_retry_exhausted, SyncRetry.MAX_ATTEMPTS)
             else -> getString(R.string.sync_retry_none)
@@ -291,7 +308,7 @@ class SyncActivity : AppCompatActivity() {
      * `bucket=RARE` 配上 `pendingJobReason=APP_STANDBY`，
      * 就是「系统把兜底任务压在低优先级待机桶里（而 Rare 桶下后台网络是 Disabled）」的直接证据。
      * `pendingJobExpedited` 正常应为 `false`：本版的兜底任务**刻意**是常规 + 延迟
-     * （加急不允许延迟，而立刻执行会抢走前台服务的可见上传，见 `SyncRetry.MIN_LATENCY_MS` 的记录）；
+     * （加急不允许延迟，而立刻执行会抢走前台服务的可见上传，见 `SyncRetry.FIRST_RETRY_DELAY_MS` 的记录）；
      * 若它显示 `true`，说明系统改动了我们排出去的任务。
      * 只在同步已启用时显示，未启用时不给用户看一堆无意义的 n/a。
      */
@@ -303,7 +320,6 @@ class SyncActivity : AppCompatActivity() {
     private fun skipText(reason: moe.hellowidget.sync.SkipReason): Int = when (reason) {
         moe.hellowidget.sync.SkipReason.NOT_ENABLED -> R.string.sync_skip_disabled
         moe.hellowidget.sync.SkipReason.NOT_CONFIGURED -> R.string.sync_skip_not_configured
-        moe.hellowidget.sync.SkipReason.THROTTLED -> R.string.sync_skip_throttled
     }
 
     private fun renderTlsState() {
@@ -348,8 +364,8 @@ class SyncActivity : AppCompatActivity() {
      * v8.0.1（D4）：时间戳**精确到秒**（原来的 SHORT/SHORT 只有分钟）。
      *
      * 原因是一次真实排查卡在这里：页面显示「上次尝试 08:55」+「上次自动上传通道 08:56」，
-     * 而 1 分钟闸门恰好是 60 秒 —— 真实间隔是 1 秒还是 119 秒，决定了这次同步是
-     * 「被闸门跳过」还是「压根没跑起来」，而分钟精度把这两种情况的截图变得一模一样。
+     * 而两者相差 1 秒还是 119 秒，决定了这次同步是"跑了但没事可做"还是"压根没跑起来"，
+     * 而分钟精度把这两种情况的截图变得一模一样。
      * MEDIUM 时间格式自带秒，且仍是本地化格式。
      */
     private fun formatTime(at: Long): String =

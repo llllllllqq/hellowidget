@@ -3,6 +3,7 @@ package moe.hellowidget.sync
 import android.content.Context
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,10 +27,10 @@ sealed interface SyncStatus {
     data class Skipped(val reason: SkipReason) : SyncStatus
 }
 
-enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED, THROTTLED }
+enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED }
 
 /**
- * 同步编排：闸门（1 分钟节流）→ 「本地变了没有」→ 强制覆盖上传 → 记录状态。
+ * 同步编排：「本地变了没有」→ 强制覆盖上传 → 记录状态。
  *
  * ## v7.5 的单向语义
  * 这里**从不读取云端**：不 HEAD、不 PROPFIND、不 GET，因此也没有冲突、没有合并、
@@ -39,11 +40,19 @@ enum class SkipReason { NOT_ENABLED, NOT_CONFIGURED, THROTTLED }
  * ## v7.8：自动上传只由「保存」驱动
  * 打开应用（含旋转 / 深色模式重建）**不再**发起任何同步，只调用 [hasPendingUpload]
  * 做一次纯检测，结果交给界面在「立即上传」按钮上显示橙点。
- * 自动上传只发生在「保存内容」之后（返回键 / 失焦 / 切后台 / 旋转 / 深色模式等所有保存路径），
- * 且统一受 1 分钟闸门约束；手动按钮走 [SyncTrigger.MANUAL]，不受闸门限制。
+ * 自动上传只发生在「保存内容」之后（返回键 / 失焦 / 切后台 / 旋转 / 深色模式等所有保存路径）。
  *
- * 线程模型：全部网络与磁盘操作跑在调用方的 IO 协程里；[mutex] 保证同一时刻只有一次同步，
- * 重复请求会排队，且自动触发会被刚更新过的 `lastAttemptAt` 直接节流掉。
+ * ## v8.1.0：删掉 1 分钟闸门，换成「单飞 + 合并」
+ * 旧实现过闸门后无条件写 `lastAttemptAt`，于是**一次零请求的空跑**（本地没改动、
+ * 一个请求都没发）也会把闸门关上 60 秒，把紧随其后的真实上传静默跳过 —— 真机日志里
+ * 156 秒的"退出没上传"就是这么来的。现在：
+ *  - **没有任何成功节流**：每次保存都立刻尝试；要不要发请求只由内容哈希决定；
+ *  - **同一时刻只有一个上传**：[mutex] 是硬保证（日志里 `开始同步` 与 `同步结束` 必然成对不交错）；
+ *  - **一次突发最多两趟**：保存比上传快时，后来者**并入**正在执行的那一趟（拿它的结果），
+ *    只有"领跑者读完内容之后才到的"那一个请求会再补一趟（见 [performSync] 的注释）。
+ *
+ * 线程模型：全部网络与磁盘操作跑在调用方的 IO 协程里；
+ * [requestSeq] 在进锁前登记、[claimedSeq] / [lastResult] 只在锁内读写。
  */
 object SyncManager {
 
@@ -51,6 +60,25 @@ object SyncManager {
 
     private val mutex = Mutex()
     private val _status = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
+
+    /** 请求登记序号：**进锁之前**递增，代表"此刻内容已经在盘上" */
+    private val requestSeq = AtomicLong(0L)
+
+    /** 已被某一趟同步"认领"到的最大序号。只在 [mutex] 内访问 */
+    private var claimedSeq = 0L
+
+    /** 最近一趟同步的终态，给并入者复用。只在 [mutex] 内访问 */
+    private var lastResult: SyncStatus = SyncStatus.Idle
+
+    /**
+     * 被并入（因此没有重复上传）的请求次数。
+     *
+     * 只用于测试与日志：一条"突发 6 次保存"的用例据此断言**确实发生了合并**，
+     * 而不是靠"`put` 次数没变多"间接推断（内容恰好相同也会让 put 次数不变）。
+     */
+    @VisibleForTesting
+    internal var coalescedRequests: Int = 0
+        private set
 
     /** 同步状态（界面订阅它渲染状态行；用 getter 暴露不可变视图，避免多引一个扩展函数） */
     val status: StateFlow<SyncStatus> get() = _status
@@ -137,6 +165,28 @@ object SyncManager {
         onWindowPhase: ((String?) -> Unit)? = null
     ): SyncStatus = performSync(context, trigger, progress = false, onWindowPhase = onWindowPhase)
 
+    /**
+     * 单飞 + 合并（v8.1.0）。
+     *
+     * ## 为什么是"等它跑完再返回"，而不是"提前返回"
+     * 前台通知是 **service 级**的（所有请求共用同一个 `ID_PROGRESS`）。如果被并入的请求
+     * 提前返回，它的那一次 `stopForeground(REMOVE)` 会把**正在上传**的那条通知撤掉。
+     * 等锁的写法天然没有这个问题：并入者是在领跑者结束之后才做自己的收尾。
+     *
+     * ## 为什么领跑者认领的是 `requestSeq.get()` 而不是自己的序号
+     * 这一行决定"一次突发最多两趟"。领跑者在**读取内容之前**认领"此刻已登记的全部请求"，
+     * 于是所有在它期间排队的请求（序号 ≤ 认领值）在拿到锁时都会发现自己是"已被覆盖"；
+     * 只有"领跑者读完内容之后才登记"的那个请求会成为第二趟——它代表最新内容，必须自己跑。
+     * 若只认领自己的序号，N 个排队者就会依次各跑一趟（旧行为）。
+     *
+     * ## 用户按下的按钮不合并
+     * [SyncTrigger.MANUAL] 永远自己走一趟（等锁），这是"当下意图"该有的语义；
+     * 代价最多是一次零请求的哈希比较（内容没变时）。
+     *
+     * ## 内容一定不会漏
+     * 调用方**先写盘、后触发**，所以一个请求序号被登记时，它的内容已经在盘上；
+     * 领跑者在认领之后才读内容，读到的必然不旧于任何一个被它覆盖的请求。
+     */
     @VisibleForTesting
     internal suspend fun performSync(
         context: Context,
@@ -144,16 +194,27 @@ object SyncManager {
         progress: Boolean,
         onWindowPhase: ((String?) -> Unit)? = null
     ): SyncStatus {
+        val mine = requestSeq.incrementAndGet()
         // v7.9：进锁前后各记一条日志。故障复发时「有『同步请求』却迟迟没有『获得同步锁』」
         // 就是「上一次同步卡住、一直占着锁」的决定性证据（用户只需要把 logcat 截下来）。
-        Log.i(TAG, "同步请求：trigger=$trigger")
+        Log.i(TAG, "同步请求：trigger=$trigger（#$mine）")
         return mutex.withLock {
-            Log.i(TAG, "获得同步锁：trigger=$trigger")
+            if (trigger != SyncTrigger.MANUAL && claimedSeq >= mine) {
+                coalescedRequests++
+                Log.i(
+                    TAG,
+                    "并入正在执行的那一趟同步：请求 #$mine 已被第 #$claimedSeq 趟覆盖，不重复上传"
+                )
+                return@withLock lastResult
+            }
+            claimedSeq = requestSeq.get()
+            Log.i(TAG, "获得同步锁：trigger=$trigger（认领 #$claimedSeq）")
             doSync(context.applicationContext, trigger, progress, onWindowPhase)
+                .also { lastResult = it }
         }
     }
 
-    // ------------------------------------------------------------------ 闸门
+    // ------------------------------------------------------------------ 一次同步
 
     private suspend fun doSync(
         context: Context,
@@ -170,17 +231,10 @@ object SyncManager {
             )
         }
 
-        val now = System.currentTimeMillis()
-        if (SyncEngine.gate(trigger, now, SyncSettings.lastAttemptAt(context)) == GateResult.SKIP_THROTTLED) {
-            Log.i(TAG, "距上次同步不足 ${SyncEngine.MIN_SYNC_INTERVAL_MS / 60_000} 分钟，本次跳过")
-            return SyncStatus.Skipped(SkipReason.THROTTLED)
-        }
-
-        SyncSettings.setLastAttemptAt(context, now)
         val startedAt = System.currentTimeMillis()
         _status.value = SyncStatus.Running(trigger, startedAt)
         Log.i(TAG, "开始同步：trigger=$trigger")
-        // 进程内路径没有前台服务，通知得自己发（放在闸门之后：被跳过时不打扰用户）
+        // 进程内路径没有前台服务，通知得自己发
         if (progress) SyncNotifier.postProgress(context)
 
         var uploaded = false
@@ -224,6 +278,10 @@ object SyncManager {
                 "同步失败：$error ${safeDetail.take(200)}（耗时 ${System.currentTimeMillis() - startedAt}ms）"
             )
             if (error == WebDavError.TLS_UNTRUSTED) SyncSettings.setPendingTlsPin(context, detail)
+            // v8.1.0：既然以失败告终，这一次至少**尝试过**访问云端（握手 / 超时 / 4xx-5xx）——
+            // 记下锚点。它是诊断数据，不参与任何判断；唯一会略微高估的场合是"纯本地失败"
+            // （例如读盘或构造客户端就抛了），而那种失败远比网络失败罕见。
+            SyncSettings.setLastServerContactAt(context, System.currentTimeMillis())
             SyncSettings.recordFailure(context, error)
             SyncNotifier.showUploadFailedToast(context, error, safeDetail)
             SyncStatus.Failed(System.currentTimeMillis(), error, safeDetail).also { _status.value = it }
@@ -244,7 +302,8 @@ object SyncManager {
      * v8.0.3：一次上传 + **窗口内快速重试**。
      *
      * 退出瞬间的网络抖动（刚切网 / 刚息屏 / DNS 抖动）会以[暂时性失败][isTransient]的形式
-     * 立刻返回；旧行为是当场放弃、交给 65 秒后的系统兜底任务，用户看到的是"没传上去"。
+     * 立刻返回；旧行为是当场放弃、交给系统兜底任务（当时 65 秒后，v8.1.0 起 30 秒），
+     * 用户看到的是"没传上去"。
      * 现在只要失败得足够早，就在**已经存在的**前台窗口里退避重试最多
      * [SyncWindowRetry.MAX_RETRIES] 次 —— 通知本来就亮着，窗口长度由工作决定，
      * 成功则用户直接看到「已上传到云端」。
@@ -306,6 +365,8 @@ object SyncManager {
         if (!SyncEngine.hasLocalChanges(localHash, SyncSettings.lastUploadedHash(context))) {
             // 本地自上次成功上传后没有任何改动：一个请求都不发（省流量、省服务器配额）
             // D3：显式记 uploaded=false —— 否则设置页会把这次"什么都没做"显示成"上次同步成功"
+            // v8.1.0：**刻意不更新** lastServerContactAt —— 这一趟根本没碰云端，
+            // 而"上次访问云端"这一行必须能诚实地反映"最后一次真的发过请求是什么时候"。
             SyncSettings.recordSuccess(
                 context,
                 localHash,
@@ -320,6 +381,9 @@ object SyncManager {
             nowSec = System.currentTimeMillis(),
             lastUploadedSec = SyncSettings.lastUploadedTs(context)
         )
+        // v8.1.0：从这一刻起"真的要去碰服务器了"。这个锚点不参与任何跳过判断，
+        // 它只是给排查用的一个事实：上一次真的发请求是什么时候。
+        SyncSettings.setLastServerContactAt(context, System.currentTimeMillis())
         putNewFile(client, config, bytes, timestampSec)
         SyncSettings.recordSuccess(context, localHash, timestampSec, uploaded = true)
         return SyncStatus.Success(System.currentTimeMillis(), uploaded = true)

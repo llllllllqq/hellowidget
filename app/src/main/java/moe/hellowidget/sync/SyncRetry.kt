@@ -28,8 +28,12 @@ import moe.hellowidget.SyncRetryJobService
  *
  * ## 只对"看起来是暂时性"的失败重试
  * 凭据错误、证书不受信、服务器不支持写入这类需要人介入的失败，自动重试一万次也没用，
- * 只会白白唤醒进程（这正是旧版把 `lastAttemptAt` 记成"尝试时间"要避免的重试风暴）。
- * 判断集中在 [shouldReschedule]，是可单测的纯函数。
+ * 只会白白唤醒进程。判断集中在 [shouldReschedule]，是可单测的纯函数。
+ *
+ * ## v8.1.0：这条任务现在是**唯一**的"时间间隔"来源
+ * 1 分钟闸门删除后，应用里只剩两处退避：前台窗口内的 [SyncWindowRetry]（1s / 3s）
+ * 与本任务的系统退避。**成功（含"本地没改动、一个请求都没发"）永远不产生任何冷却**：
+ * 它会立刻 [cancel] 掉刚排下的任务（见 `SyncManager.doSync`），所以正常路径一次多余唤醒都没有。
  */
 object SyncRetry {
 
@@ -39,10 +43,17 @@ object SyncRetry {
     const val JOB_ID = 0x5A17
 
     /**
-     * 首次重试的最短延迟。必须大于 1 分钟闸门（[SyncEngine.MIN_SYNC_INTERVAL_MS]），
-     * 否则重试会正好撞进刚才那次尝试留下的节流窗口被静默跳过 —— 那正是本次要修掉的形态。
+     * 首次重试的最短延迟（v8.1.0：**30 秒**）。
      *
-     * ## v8.0.1：为什么这条任务**故意保持常规、且故意带延迟**
+     * ## 为什么不再是 65 秒
+     * 65 秒当初存在的唯一理由是"必须大于 1 分钟闸门"，否则任务醒来会正好撞进刚才那次
+     * 尝试留下的节流窗口、被自己的闸门静默跳过、白烧一次重试预算。
+     * v8.1.0 把闸门整个删掉，这条约束随之消失 —— 剩下的下界只有一条：
+     * **不要和前台窗口抢同一把互斥锁**。前台路径最坏占用 = 窗口内重试的
+     * [SyncWindowRetry.RETRY_DEADLINE_MS]（20 秒）+ 两次退避（1 + 3 秒）≈ 24 秒，
+     * 取 30 秒留 6 秒余量。
+     *
+     * ## 为什么这条任务**故意保持常规、且故意带延迟**
      *
      * 为了让它在低优先级待机桶下也能跑，v8.0.1 试过 `setExpedited(true)`（官方承诺加急任务
      * 「Bypass Doze, app standby, and battery saver network restrictions」）。**被平台直接否决**，
@@ -60,22 +71,13 @@ object SyncRetry {
      * 一旦任务先拿到锁，上传就从唯一**用户可见**的路径（进度条 + 「已上传到云端」Toast）
      * 被夺走，用户只看到"什么都没发生"。
      *
-     * 因此这里保持常规 + 90 秒延迟：兜底任务只负责"补上没传成的那些"，
-     * 立即上传的所有权始终留给前台服务。[MIN_LATENCY_MS] 保证任务醒来时那一次尝试
-     * 已经结束、节流窗口也已过期。
+     * 因此这里保持常规 + 延迟：兜底任务只负责"补上没传成的那些"，
+     * 立即上传的所有权始终留给前台服务。
      *
      * 想拿加急的收益又不抢所有权，需要**两个任务 id**（延迟的持久网 + 仅在
      * 「前台服务确实没起来」时启用的即时加急升级），那是独立一轮的改动，不混进本次修复。
-     *
-     * ## v8.0.1（D6）：为什么是 65 秒
-     * 这个值是**我们自己**的选择，只为满足一件事：兜底任务醒来时，那一次尝试留下的
-     * 节流窗口已经过期（闸门是 [SyncEngine.MIN_SYNC_INTERVAL_MS] = 60 秒）——
-     * 否则它会被自己的闸门静默跳过、白烧一次重试预算。
-     * 原先取 90 秒留了 30 秒余量，实测（用户设备）表现为"退出后要等一分半才补传"，
-     * 而真正的故障窗口只有那次尝试是否过了闸门 —— 65 秒足够、又少等 25 秒。
-     * 再配合 D1（已排着就不重排），反复保存也不会把这个截止时间往后推。
      */
-    const val MIN_LATENCY_MS = 65 * 1000L
+    const val FIRST_RETRY_DELAY_MS = 30 * 1000L
 
     /** 退避起点；JobScheduler 会按指数放大（系统上限 5 小时） */
     const val BACKOFF_MS = 60 * 1000L
@@ -118,7 +120,7 @@ object SyncRetry {
      * 算起**。
      *
      * 于是旧实现有个会让"兜底"在最需要它时恰好失效的缺陷：每次保存都重排 → 同 id 被替换 →
-     * **截止时间被一次次推后 [MIN_LATENCY_MS]**。只要用户保存得比这个间隔更勤
+     * **截止时间被一次次推后 [FIRST_RETRY_DELAY_MS]**。只要用户保存得比这个间隔更勤
      * （"编辑 → 退出 → 回来 → 再编辑 → 再退出"），兜底任务就**永远轮不到执行**。
      * 现在只要系统里已经有待执行任务，就保留它更早的截止时间，只把重试预算重置。
      *
@@ -150,7 +152,7 @@ object SyncRetry {
                 // （真机实测："ACCESS_NETWORK_STATE required for jobs with a connectivity constraint"）。
                 // Manifest 里已经声明了它 —— 少了这个权限，整个自愈通道会静默失效。
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setMinimumLatency(MIN_LATENCY_MS)
+                .setMinimumLatency(FIRST_RETRY_DELAY_MS)
                 // 注意参数顺序：官方签名是 (long initialBackoffMillis, @BackoffPolicy int backoffPolicy)
                 // —— 毫秒在前、策略在后（与直觉相反，写反了 build() 会抛 IllegalArgumentException）。
                 // 不设的话系统默认是 {30 秒, 指数退避}，这里显式写出来是为了"60 秒起步"可读可测
@@ -160,7 +162,11 @@ object SyncRetry {
                 .build()
             val result = scheduler.schedule(job)
             if (result == JobScheduler.RESULT_SUCCESS) {
-                Log.i(TAG, "已排入系统重试任务（jobId=$JOB_ID，最短延迟 ${MIN_LATENCY_MS / 1000}s）")
+                // v8.1.0：记下"预计什么时候补传"，同步设置页据此显示。
+                // JobInfo 不暴露绝对截止时刻（只有 getMinLatencyMillis() 这种相对量），
+                // 所以只能排任务时自己算一份 —— 排查"任务为什么还没跑"时它比日志更直接。
+                SyncSettings.setNextRetryAt(appContext, System.currentTimeMillis() + FIRST_RETRY_DELAY_MS)
+                Log.i(TAG, "已排入系统重试任务（jobId=$JOB_ID，最短延迟 ${FIRST_RETRY_DELAY_MS / 1000}s）")
                 true
             } else {
                 // 系统可以"收下但不排"（返回 RESULT_FAILURE，不抛异常）：绝不能把它当成功
@@ -178,6 +184,8 @@ object SyncRetry {
         val appContext = context.applicationContext
         // 内容已经安全抵达云端：本次的重试预算归零
         SyncSettings.setRetryAttempts(appContext, 0)
+        // 没有待执行的任务了：诊断行里的"预计补传时刻"一并清掉
+        SyncSettings.setNextRetryAt(appContext, 0L)
         if (running) {
             // 正在执行的这一趟自己会收尾，见 [running] 的说明（直接 cancel 会把它重排回来）
             Log.i(TAG, "重试任务正在执行，撤销请求忽略（它自己会用 jobFinished 结束）")
@@ -212,12 +220,14 @@ object SyncRetry {
      * 这次同步结果还需不需要系统再试一次。
      *
      * - 成功（含"本地没改动、一个请求都没发"）→ 不需要，任务结束；
-     * - 被 1 分钟闸门跳过 → 需要（内容还在，只是这次撞上了节流窗口）；
+     * - 跳过（未启用 / 配置不完整）→ 不需要：再唤醒进程也没有意义；
      * - 失败 → 只有[暂时性][isTransient]的才重试。
+     *
+     * v8.1.0 起闸门已删除，因此"被节流跳过"这一种结果不再存在 —— 这里只剩"只有失败才重试"。
      */
     fun shouldReschedule(status: SyncStatus): Boolean = when (status) {
         is SyncStatus.Success -> false
-        is SyncStatus.Skipped -> status.reason == SkipReason.THROTTLED
+        is SyncStatus.Skipped -> false
         is SyncStatus.Failed -> status.error.isTransient
         else -> false
     }
@@ -227,7 +237,7 @@ object SyncRetry {
      * [SyncStatus] 是同步的终态（[SyncManager] 保证不会停在 Running）。
      *
      * 正常由系统通过 [moe.hellowidget.SyncRetryJobService] 调用；公开出来也让
-     * 仪器化测试可以在"网络恢复"的那一刻直接触发一次，而不必等 90 秒最短延迟。
+     * 仪器化测试可以在"网络恢复"的那一刻直接触发一次，而不必等 30 秒最短延迟。
      */
     suspend fun runOnce(context: Context): Boolean {
         val appContext = context.applicationContext

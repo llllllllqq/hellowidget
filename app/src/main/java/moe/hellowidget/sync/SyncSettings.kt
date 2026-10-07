@@ -31,11 +31,12 @@ object SyncSettings {
 
     const val KEY_LAST_RESULT = "sync_last_result"
     const val KEY_LAST_ERROR = "sync_last_error"
-    const val KEY_LAST_ATTEMPT_AT = "sync_last_attempt_at"
+    const val KEY_LAST_SERVER_CONTACT_AT = "sync_last_server_contact_at"
     const val KEY_LAST_SUCCESS_AT = "sync_last_success_at"
     const val KEY_LAST_UPLOADED_HASH = "sync_last_uploaded_hash"
     const val KEY_LAST_UPLOADED_TS = "sync_last_uploaded_ts"
     const val KEY_RETRY_ATTEMPTS = "sync_retry_attempts"
+    const val KEY_NEXT_RETRY_AT = "sync_next_retry_at"
 
     /**
      * v8.0.1（D3）：上一次「成功」到底是**真的传上去了**，还是「本地没改动、一个请求都没发」。
@@ -124,7 +125,19 @@ object SyncSettings {
 
     fun lastError(context: Context): String = context.prefs.getString(KEY_LAST_ERROR, "") ?: ""
 
-    fun lastAttemptAt(context: Context): Long = context.prefs.getLong(KEY_LAST_ATTEMPT_AT, 0L)
+    /**
+     * v8.1.0：**最后一次真的访问云端**的时刻（发出过 PUT / MKCOL，或那次尝试以失败告终）。
+     *
+     * 语义与旧字段（`lastAttemptAt`，已随 1 分钟闸门一起删除）有一处关键区别：
+     * **"本地没改动、一个请求都没发"的那次空跑不更新它**。旧字段是闸门的锚点，
+     * 每次过闸门就写一次，于是"零请求的空跑"会把下一次真正的上传挡在门外 60 秒 ——
+     * 这正是真机日志里那条 156 秒静默期的成因之一。
+     *
+     * 现在它**不参与任何跳过判断**，纯粹是给人看的证据：把「上次访问云端」与
+     * 「上次成功上传」并排看，就能区分"没上传是因为没变化"还是"因为一直失败"。
+     */
+    fun lastServerContactAt(context: Context): Long =
+        context.prefs.getLong(KEY_LAST_SERVER_CONTACT_AT, 0L)
 
     fun lastSuccessAt(context: Context): Long = context.prefs.getLong(KEY_LAST_SUCCESS_AT, 0L)
 
@@ -135,8 +148,21 @@ object SyncSettings {
     fun lastUploadedHash(context: Context): String? =
         context.prefs.getString(KEY_LAST_UPLOADED_HASH, null)?.takeIf { it.isNotBlank() }
 
-    fun setLastAttemptAt(context: Context, at: Long) {
-        context.prefs.edit().putLong(KEY_LAST_ATTEMPT_AT, at).apply()
+    fun setLastServerContactAt(context: Context, at: Long) {
+        context.prefs.edit().putLong(KEY_LAST_SERVER_CONTACT_AT, at).apply()
+    }
+
+    /**
+     * v8.1.0：本以为下一次自动补传会在什么时候发生（0 = 没有排队中的重试）。
+     *
+     * `JobInfo` 不暴露绝对截止时刻（只有 `getMinLatencyMillis()` 这种相对量），
+     * 所以排任务时自己记一份，同步设置页据此显示「预计 HH:MM:SS 补传」——
+     * 排查"任务为什么还没跑"时，这一行比任何日志都直接。
+     */
+    fun nextRetryAt(context: Context): Long = context.prefs.getLong(KEY_NEXT_RETRY_AT, 0L)
+
+    fun setNextRetryAt(context: Context, at: Long) {
+        context.prefs.edit().putLong(KEY_NEXT_RETRY_AT, at).apply()
     }
 
     /**
@@ -212,11 +238,12 @@ object SyncSettings {
         context.prefs.edit()
             .remove(KEY_LAST_RESULT)
             .remove(KEY_LAST_ERROR)
-            .remove(KEY_LAST_ATTEMPT_AT)
+            .remove(KEY_LAST_SERVER_CONTACT_AT)
             .remove(KEY_LAST_SUCCESS_AT)
             .remove(KEY_LAST_UPLOADED_HASH)
             .remove(KEY_LAST_UPLOADED_TS)
             .remove(KEY_RETRY_ATTEMPTS)
+            .remove(KEY_NEXT_RETRY_AT)
             .remove(KEY_LAST_SUCCESS_UPLOADED)
             .remove(KEY_LAUNCH_NOTE)
             .remove(KEY_LAUNCH_NOTE_AT)

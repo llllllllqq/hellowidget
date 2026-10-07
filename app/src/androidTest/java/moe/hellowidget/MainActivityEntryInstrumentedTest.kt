@@ -300,9 +300,9 @@ class MainActivityEntryInstrumentedTest {
                 pixels.white >= 30
             )
             assertEquals(
-                "打开应用只检测不上传：不得记录任何同步尝试",
+                "打开应用只检测不上传：不得留下任何「访问过云端」的痕迹",
                 0L,
-                SyncSettings.lastAttemptAt(context)
+                SyncSettings.lastServerContactAt(context)
             )
             // 实测数字写进 stdout：会被 AGP 收进 TEST-*.xml，随 CI 的 instrumented-reports 归档
             println(

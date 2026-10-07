@@ -1,8 +1,6 @@
 package moe.hellowidget
 
-import moe.hellowidget.sync.GateResult
 import moe.hellowidget.sync.SyncEngine
-import moe.hellowidget.sync.SyncTrigger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -84,61 +82,8 @@ class SyncEngineTest {
         assertEquals(1_735_689_600L, SyncEngine.nextUploadTimestamp(1_735_689_600L, 0L))
     }
 
-    // ------------------------------------------------------------ 节流闸门
-
-    private val now = 1_000_000_000_000L
-
-    @Test
-    fun gate_manualAlwaysRuns() {
-        assertEquals(
-            GateResult.RUN,
-            SyncEngine.gate(SyncTrigger.MANUAL, now, lastAttemptAt = now - 1000)
-        )
-    }
-
-    @Test
-    fun gate_firstEverAttemptRuns() {
-        assertEquals(GateResult.RUN, SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, 0L))
-    }
-
-    @Test
-    fun gate_autoTriggerWithinIntervalIsThrottled() {
-        assertEquals(
-            GateResult.SKIP_THROTTLED,
-            SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now - SyncEngine.MIN_SYNC_INTERVAL_MS + 1)
-        )
-        assertEquals(
-            GateResult.SKIP_THROTTLED,
-            SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now - 1)
-        )
-    }
-
-    @Test
-    fun gate_autoTriggerAtExactlyTheIntervalRuns() {
-        assertEquals(
-            GateResult.RUN,
-            SyncEngine.gate(
-                SyncTrigger.CLOSE_EDITOR, now,
-                lastAttemptAt = now - SyncEngine.MIN_SYNC_INTERVAL_MS
-            )
-        )
-        // 自定义间隔也遵守同一条边界
-        assertEquals(
-            GateResult.RUN,
-            SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now - 5_000, intervalMs = 5_000)
-        )
-    }
-
-    /** v7.7.2 需求：自动同步的节流间隔是 **1 分钟**（v7.7.1 及以前是 30 分钟） */
-    @Test
-    fun throttleInterval_isOneMinute() {
-        assertEquals("自动同步节流间隔必须正好是 1 分钟", 60_000L, SyncEngine.MIN_SYNC_INTERVAL_MS)
-    }
-
-    @Test
-    fun gate_clockRolledBack_doesNotBlockForever() {
-        // 系统时钟被回拨：delta < 0，应放行而不是长时间卡死
-        assertEquals(GateResult.RUN, SyncEngine.gate(SyncTrigger.CLOSE_EDITOR, now, lastAttemptAt = now + 999_999))
-    }
-
+    // v7.7.2 ~ v8.0.3 这里曾有 8 条「1 分钟节流闸门」用例（gate_* / throttleInterval_isOneMinute）。
+    // v8.1.0 把闸门整个删除，它们随之失去意义 —— 取而代之的不变量（"成功不产生任何冷却"、
+    // "同一时刻只有一个上传"、"一次突发最多两趟"、"零请求的空跑不更新访问锚点"）
+    // 都无法用纯函数表达，全部由 SyncManagerUploadTest 在编排层钉住。
 }
