@@ -69,16 +69,19 @@ class ContentStoreBehaviourTest {
     }
 
     @Test
-    fun savesAreSerialized_lastSnapshotWins() {
-        // 故意从同一个线程连续 launch 20 次：如果保存作用域不是单线程，线程池调度可能让
-        // 靠前的快照最后落盘；单线程串行化后，最终内容必须是最后一次 launch 的快照。
+    fun savesDoNotLandOutOfOrder_olderSnapshotsNeverOverwriteNewerOnes() {
+        // 模拟生产路径：在主线程按顺序取号（就像 saveContent 那样），再把写盘丢进
+        // 并发的 IO 线程池。无论协程怎么被调度，最终落盘的必须是**序号最大**的快照。
+        // （第一版实现只用了 `limitedParallelism(1)`，被这条用例在 CI 上证伪：
+        //   协程挂起时会释放调度许可，20 次并发保存的最终内容会漂移成 v18。）
         val jobs = (0 until 20).map { index ->
-            ContentStore.saveScope.launch { ContentStore.write("v$index") }
+            val sequence = ContentStore.nextSaveSequence()
+            ContentStore.saveScope.launch { ContentStore.write("v$index", sequence) }
         }
         runBlocking { jobs.forEach { it.join() } }
 
         assertEquals(
-            "最后启动的保存快照必须是最终落盘内容（旧快照不能覆盖新快照）",
+            "最后取号的保存快照必须是最终落盘内容（旧快照不能覆盖新快照）",
             "v19",
             runBlocking { ContentStore.read() }
         )

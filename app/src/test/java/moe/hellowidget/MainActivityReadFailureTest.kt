@@ -74,6 +74,9 @@ class MainActivityReadFailureTest {
         activity.onBackPressedDispatcher.onBackPressed()
         idleMain()
 
+        // 断言磁盘内容前先撤掉"模拟读失败"，否则读到的是注入的 Failed（read() 会映射成空串），
+        // 变成"用失败的读去证明磁盘没变"的循环论证
+        ContentStore.readOverride = null
         assertEquals(
             "读失败后磁盘内容一个字都不能变",
             "不可被覆盖的内容",

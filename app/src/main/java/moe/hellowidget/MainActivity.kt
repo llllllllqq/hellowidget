@@ -740,8 +740,11 @@ class MainActivity : AppCompatActivity() {
         }
         val text = binding.editor.text.toString()
         val appContext = applicationContext
+        // 在主线程按用户操作发生的顺序取号：即使两次保存的协程乱序执行，
+        // 磁盘上也只会保留序号最大的那份快照（见 ContentStore.write 的 sequence 参数）
+        val sequence = ContentStore.nextSaveSequence()
         ContentStore.saveScope.launch {
-            val ok = ContentStore.write(text)
+            val ok = ContentStore.write(text, sequence)
             // v7.9：写盘成功就**先**把「这次改动还没传上去」记到系统里（一次性持久化重试任务）。
             // 放在触发上传之前是有意的：接下来的触发有可能根本没跑起来 —— 前台服务被系统
             // 静默拒绝、进程立刻被冻结/回收 —— 那种情况下如果没有这一步，就没有任何东西

@@ -16,10 +16,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.CRC32
 
 /**
@@ -66,12 +69,23 @@ object ContentStore {
      * 保存专用作用域（独立于 Activity 生命周期）。
      * 用于退出/切后台等场景：即使 Activity 紧接着被销毁，写盘也一定执行完成。
      *
-     * v8.4.0：**单线程**（`limitedParallelism(1)`）。之前这里是共享的 `Dispatchers.IO`，
-     * 两次并发保存（例如「立即上传」与切后台的 `onStop` 保存重叠）谁先到达 DataStore
-     * 由线程池调度决定 —— DataStore 只保证"写是串行的"，不保证"按调用方意图排序"，
-     * 于是旧快照可能最后落盘、覆盖掉新快照。限制并行度后，保存按 `launch` 顺序执行。
+     * v8.4.0：**并发保存不会乱序落盘**。第一版尝试用 `limitedParallelism(1)` 串行化，
+     * 被 CI 用例当场证伪：协程在 `data.first()` / `updateData` 处挂起时会**释放**调度器的
+     * 执行许可，下一趟保存因此可以插进来，续体恢复顺序由 IO 线程决定 —— 20 次并发保存的
+     * 最终内容会在 v18 / v19 之间漂移。真正的顺序保证来自 [writeMutex] +
+     * [nextSaveSequence] 的单调序号：序号小的快照在锁内发现"已经有更新的快照落盘"时直接跳过，
+     * 因此无论线程怎么调度，磁盘上永远是**序号最大**的那份快照。
      */
-    val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 串行化「读-比较-写」临界区（`updateData` 只保证写是串行的，不保证按意图排序） */
+    private val writeMutex = Mutex()
+
+    /** 保存序号来源：在**主线程**按用户操作顺序取号，见 [nextSaveSequence] */
+    private val sequenceSource = AtomicLong(0L)
+
+    /** 已经落盘的最大序号。只在 [writeMutex] 内读写 */
+    private var lastAppliedSeq = 0L
 
     private lateinit var store: DataStore<String>
 
@@ -139,24 +153,45 @@ object ContentStore {
     }
 
     /**
+     * 取一个保存序号。**调用方应在主线程按用户操作发生的顺序取号**（见
+     * [moe.hellowidget.MainActivity.saveContent]），再把它传给 [write]，
+     * 这样即使两次保存的协程乱序执行，磁盘上也只会保留序号最大的快照。
+     */
+    internal fun nextSaveSequence(): Long = sequenceSource.incrementAndGet()
+
+    /**
      * 原子写入：updateData 挂起直到内容真正写盘（fsync + 原子重命名）成功后返回。
      *
-     * v8.4.0：**内容没变就不写盘**。每次失焦/切后台都会走一次保存，而真正需要落盘的
-     * 只有"内容变了"的那一次；内容没变时从 DataStore 的内存缓存里取当前值比较即可。
-     * 注意这不减少上传触发（保存路径仍然调用 [moe.hellowidget.sync.SyncLauncher]，
-     * 同步层自己按内容哈希短路），因此"保存即上传"的语义不变。
+     * v8.4.0（用户选定）：
+     *  - **内容没变就不写盘**：每次失焦/切后台都会走一次保存，而真正需要落盘的只有
+     *    "内容变了"的那一次；内容没变时从 DataStore 的内存缓存里取当前值比较即可。
+     *    这不减少上传触发（保存路径仍然调用 [moe.hellowidget.sync.SyncLauncher]，
+     *    同步层自己按内容哈希短路），因此"保存即上传"的语义不变。
+     *  - **旧快照不会覆盖新快照**：见 [saveScope] 的说明。`sequence` 默认在当前线程取号，
+     *    生产路径由调用方在主线程取号后传入。
      *
-     * @return true = 已持久化（或本来就已经是这份内容）；false = 写入失败（旧内容保持不变）
+     * @param sequence 本次保存的快照序号（单调递增；越新越大）
+     * @return true = 已持久化（或本来就已经是这份内容 / 已有更新的快照落盘）；
+     *   false = 写入失败（旧内容保持不变）
      */
-    suspend fun write(text: String): Boolean {
+    suspend fun write(text: String, sequence: Long = nextSaveSequence()): Boolean {
         writeOverride?.let { return it.invoke(text) }
         return try {
-            if (store.data.first() == text) {
-                Log.i(TAG, "内容未变化，跳过写盘（${text.length} 字）")
-                true
-            } else {
-                store.updateData { text }
-                diskWriteCount++
+            writeMutex.withLock {
+                if (sequence <= lastAppliedSeq) {
+                    Log.i(
+                        TAG,
+                        "已有更新的保存快照落盘（#$lastAppliedSeq > #$sequence），跳过这次写盘"
+                    )
+                    return@withLock true
+                }
+                if (store.data.first() == text) {
+                    Log.i(TAG, "内容未变化，跳过写盘（${text.length} 字）")
+                } else {
+                    store.updateData { text }
+                    diskWriteCount++
+                }
+                lastAppliedSeq = sequence
                 true
             }
         } catch (e: CancellationException) {
