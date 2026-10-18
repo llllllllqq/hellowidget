@@ -17,6 +17,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.TimeZone
 
 /**
  * WebDAV 客户端的请求级测试。
@@ -130,9 +131,14 @@ class OkHttpWebDavClientTest {
                 password = "test"
             )
             OkHttpWebDavClient(config, userAgent = "HelloWidgetTest")
-                .put(config.historyFileUrl(1_735_689_600L), "x".toByteArray(Charsets.UTF_8))
+                // v8.4.0：文件名是本地时间 yyyyMMdd_HHmmss_SSS；固定时区保证断言可重复
+                .put(
+                    config.historyFileUrl(1_735_689_600_000L, TimeZone.getTimeZone("Asia/Shanghai")),
+                    "x".toByteArray(Charsets.UTF_8)
+                )
             assertEquals(
-                "PUT /dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0" + "1735689600.txt",
+                // 1735689600000ms = 上海时间 2025-01-01 08:00:00.000
+                "PUT /dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0" + "20250101_080000_000.txt",
                 server.targets()[0]
             )
         }

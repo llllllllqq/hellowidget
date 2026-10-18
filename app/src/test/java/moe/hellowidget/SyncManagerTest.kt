@@ -113,13 +113,13 @@ class SyncManagerTest {
         )
         SyncSettings.resetRuntimeState(context)
         clients.clear()
-        SyncManager.contentReader = { content }
+        SyncManager.contentReader = { ContentRead.Success(content) }
         installClient()
     }
 
     @After
     fun tearDown() {
-        SyncManager.contentReader = { moe.hellowidget.ContentStore.read() }
+        SyncManager.contentReader = { ContentRead.Success(moe.hellowidget.ContentStore.read()) }
         SyncManager.clientFactory = { config, onUntrusted ->
             moe.hellowidget.sync.OkHttpWebDavClient(config, onUntrusted)
         }
@@ -156,13 +156,21 @@ class SyncManagerTest {
         assertEquals("只应有一次 PUT（没有任何读取/条件请求）", 1, client.puts.size)
         assertEquals("内容 A", client.puts[0].second)
         assertTrue("目录存在时不应该多发 MKCOL：${client.mkcols}", client.mkcols.isEmpty())
-        // 文件名必须是「前缀 + unix 秒时间戳 + 扩展名」：每次上传一个新文件，历史不会被覆盖
+        // v8.4.0：文件名必须是「前缀 + 本地时间 yyyyMMdd_HHmmss_SSS + 扩展名」，
+        // 每次上传一个新文件，历史不会被覆盖
         val name = client.puts[0].first.removePrefix("http://127.0.0.1:1/dav/")
-        assertTrue("文件名应形如 note<unix 毫秒>.txt，实际：$name", Regex("""note\d{13}\.txt""").matches(name))
-        val stamp = name.removePrefix("note").removeSuffix(".txt").toLong()
+        assertTrue(
+            "文件名应形如 note<yyyyMMdd_HHmmss_SSS>.txt，实际：$name",
+            Regex("""note\d{8}_\d{6}_\d{3}\.txt""").matches(name)
+        )
+        val stamp = SyncSettings.lastUploadedTs(context)
         val nowMs = System.currentTimeMillis()
         assertTrue("时间戳应是当下（±120s），实际：$stamp", Math.abs(stamp - nowMs) < 120_000)
-        assertEquals("时间戳要落盘，供下次保证文件名单调递增", stamp, SyncSettings.lastUploadedTs(context))
+        assertEquals(
+            "文件名必须由落盘的毫秒时间戳格式化而来（保证下次上传单调递增）",
+            "note${moe.hellowidget.sync.SyncEngine.formatUploadTimestamp(stamp)}.txt",
+            name
+        )
 
         // 报障点 1：上传很快也必须真的有通知栏进度
         assertTrue(
@@ -240,20 +248,64 @@ class SyncManagerTest {
         content = "第一版"
         assertTrue(sync() is SyncStatus.Success)
         val firstUrl = clients[0].puts[0].first
+        val firstStamp = SyncSettings.lastUploadedTs(context)
 
-        // 同一秒内立刻再传一次：文件名必须递增，绝不能复用上一个名字（否则会覆盖历史）
+        // 同一毫秒/同一秒内立刻再传一次：文件名必须不同，绝不能复用上一个名字（否则会覆盖历史）
         content = "第二版"
         assertTrue(sync() is SyncStatus.Success)
         val secondUrl = clients[1].puts[0].first
 
         assertTrue("两次上传必须是两个不同的文件：$firstUrl / $secondUrl", firstUrl != secondUrl)
         assertEquals("第二次的正文应是新内容", "第二版", clients[1].puts[0].second)
-        val firstStamp = firstUrl.removePrefix("http://127.0.0.1:1/dav/note").removeSuffix(".txt").toLong()
-        val secondStamp = secondUrl.removePrefix("http://127.0.0.1:1/dav/note").removeSuffix(".txt").toLong()
-        // 唯一必须成立的保证是**单调递增**（否则新上传会盖掉上一份历史）。
-        // 恰好同秒时严格 +1（这条边界由 SyncEngineTest.nextUploadTimestamp_sameSecondStillAdvances 固定）；
-        // 这里不能用 == firstStamp + 1：两次上传本身可能跨过秒边界，那是同样正确的行为。
-        assertTrue("时间戳必须递增：$firstStamp -> $secondStamp", secondStamp > firstStamp)
+        // v8.4.0：文件名带可读时间，无法再从名字里 parse 出时间戳（本地时区/时区变更都可能变）；
+        // 单调性改由落盘的毫秒时间戳证明，并用同一个格式化函数核对名字
+        val stamp = SyncSettings.lastUploadedTs(context)
+        assertEquals(
+            "第二次上传的文件名必须由新的时间戳格式化而来",
+            "note${moe.hellowidget.sync.SyncEngine.formatUploadTimestamp(stamp)}.txt",
+            secondUrl.removePrefix("http://127.0.0.1:1/dav/")
+        )
+        // 第二次上传的时间戳必须严格大于第一次（否则新上传会盖掉上一份历史）。
+        // 同一毫秒内连续上传时严格 +1（由 SyncEngineTest.nextUploadTimestamp_sameMsStillAdvances 固化）。
+        assertTrue("时间戳必须递增：$firstStamp -> $stamp", stamp > firstStamp)
+    }
+
+    /**
+     * v8.4.0（审计 P1-3）：**读盘失败时绝不能上传空内容**。
+     *
+     * 之前 `ContentStore.read()` 把失败压成 `""`，同步会把它当成"用户的新内容"，
+     * 于是云端多出一个空文件、并记录"上次上传哈希 = 空串哈希"。
+     * 现在读失败以 `ContentRead.Failed` 显式传入同步层：不上传、不写成功状态、
+     * 失败原因走既有的"上传失败"通道（用户能看到这次没传上去）。
+     */
+    @Test
+    fun readFailure_abortsTheUploadInsteadOfSendingEmptyContent() {
+        // 先用正常内容建立「本机曾上传过」的基准
+        val first = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR, progress = true) }
+        assertTrue("前置条件：正常内容应上传成功", first is SyncStatus.Success)
+        val hashBefore = SyncSettings.lastUploadedHash(context)
+        assertNotNull("前置条件：应记下上次成功上传的哈希", hashBefore)
+        val putsBefore = clients.sumOf { it.puts.size }
+
+        SyncManager.contentReader = { ContentRead.Failed(java.io.IOException("模拟读盘失败")) }
+        val failed = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR, progress = true) }
+
+        assertTrue("读盘失败必须报失败，而不是成功，实际：$failed", failed is SyncStatus.Failed)
+        assertEquals(
+            "失败分类必须是 IO（暂时性，可重试）",
+            WebDavError.IO,
+            (failed as SyncStatus.Failed).error
+        )
+        assertEquals(
+            "读盘失败时一个 PUT 都不能发（不能把空内容传上去）",
+            putsBefore,
+            clients.sumOf { it.puts.size }
+        )
+        assertEquals(
+            "读盘失败不能把「已上传」状态写坏（上次成功哈希应保留）",
+            hashBefore,
+            SyncSettings.lastUploadedHash(context)
+        )
     }
 
     @Test

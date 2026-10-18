@@ -76,7 +76,7 @@ class SyncNutstoreQuirkE2eInstrumentedTest {
         assertTrue("应确实上传了内容", (status as SyncStatus.Success).uploaded)
 
         val name = uploadedName()
-        assertTrue("文件名必须是 note<unix 秒>.txt，实际：$name", NAME_PATTERN.matches(name))
+        assertTrue("文件名必须是 note<yyyyMMdd_HHmmss_SSS>.txt，实际：$name", NAME_PATTERN.matches(name))
         assertEquals("服务器端字节必须与编辑器内容一致", content, cloud(name))
 
         val log = control("log")
@@ -185,7 +185,7 @@ class SyncNutstoreQuirkE2eInstrumentedTest {
     }
 
     private companion object {
-        /** `note1735689600123.txt`：前缀 + unix 毫秒时间戳 + 扩展名 */
-        val NAME_PATTERN = Regex("""note\d{13}\.txt""")
+        /** `note20261018_192437_123.txt`：前缀 + 本地时间 yyyyMMdd_HHmmss_SSS + 扩展名（v8.4.0 起） */
+        val NAME_PATTERN = Regex("""note\d{8}_\d{6}_\d{3}\.txt""")
     }
 }

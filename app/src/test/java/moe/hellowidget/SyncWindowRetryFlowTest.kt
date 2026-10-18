@@ -97,7 +97,7 @@ class SyncWindowRetryFlowTest {
             )
         )
         SyncSettings.resetRuntimeState(context)
-        SyncManager.contentReader = { content }
+        SyncManager.contentReader = { ContentRead.Success(content) }
         SyncManager.elapsedClock = System::currentTimeMillis
         phases.clear()
         notificationTexts.clear()
@@ -105,7 +105,7 @@ class SyncWindowRetryFlowTest {
 
     @After
     fun tearDown() {
-        SyncManager.contentReader = { ContentStore.read() }
+        SyncManager.contentReader = { ContentRead.Success(ContentStore.read()) }
         SyncManager.clientFactory = { config, onUntrusted -> OkHttpWebDavClient(config, onUntrusted) }
         SyncManager.elapsedClock = System::currentTimeMillis
         SyncSettings.resetRuntimeState(context)

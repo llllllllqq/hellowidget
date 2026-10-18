@@ -50,9 +50,18 @@ class TextWidgetService : RemoteViewsService() {
             reload()
         }
 
+        /**
+         * 重新读取要展示的内容。
+         *
+         * v8.4.0：读盘失败不再当成"空便签"——那会让用户以为内容没了。现在失败时
+         * 明确显示「内容读取失败」提示，等下次数据变化（应用里保存成功后
+         * `notifyAppWidgetViewDataChanged`）再重试。
+         */
         private fun reload() {
-            val savedText = runBlocking { ContentStore.read() }
-            content = savedText.ifBlank { context.getString(R.string.widget_empty_hint) }
+            content = when (val read = runBlocking { ContentStore.readResult() }) {
+                is ContentRead.Success -> read.text.ifBlank { context.getString(R.string.widget_empty_hint) }
+                is ContentRead.Failed -> context.getString(R.string.widget_read_failed)
+            }
             widgetHeightPx = computeWidgetHeightPx()
         }
 

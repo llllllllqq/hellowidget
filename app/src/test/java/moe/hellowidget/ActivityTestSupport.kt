@@ -25,3 +25,28 @@ internal fun awaitEditorEnabled(activity: MainActivity, timeoutMs: Long = 10_000
     }
     fail("等待异步加载完成超时（编辑器始终处于禁用状态）")
 }
+
+/**
+ * 推进主线程消息队列，直到 [condition] 成立或超时。
+ *
+ * 用于"等待读盘/写盘协程在主线程上的收尾"这类场景（例如读失败后的 Toast、
+ * 写失败后返回键流程的终态）。注意它只 idle 不 sleep 主线程以外的调度。
+ */
+internal fun awaitMainIdle(timeoutMs: Long = 5_000, condition: () -> Boolean) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        shadowOf(Looper.getMainLooper()).idle()
+        if (condition()) return
+        Thread.sleep(10)
+    }
+    fail("等待主线程异步结果超时")
+}
+
+/** 只是把主线程队列推进若干次（用于"确认某个异步动作没有发生"） */
+internal fun idleMain(times: Int = 20) {
+    repeat(times) {
+        shadowOf(Looper.getMainLooper()).idle()
+        Thread.sleep(10)
+    }
+}
+

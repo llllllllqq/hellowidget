@@ -56,8 +56,16 @@ class MainActivity : AppCompatActivity() {
     @VisibleForTesting
     internal val undoDepth: Int get() = undoHistory.size
 
-    /** 异步加载内容是否已完成（用于判断编辑器可否编辑） */
+    /** 异步加载内容是否已完成（true = 磁盘内容已成功读入/确认可以保存） */
     private var loadCompleted = false
+
+    /**
+     * v8.4.0：读盘是否**失败过**（`ContentRead.Failed`）。
+     *
+     * 读失败和"便签是空的"必须分开处理：读失败时编辑器保持禁用、且**任何保存路径都拒绝写盘**
+     * （见 [saveContent] / [shouldPersist]），否则会把磁盘上唯一那份内容覆盖成空。
+     */
+    private var loadFailed = false
 
     /**
      * 本次是否为「全新进入应用」（false = 系统重建：旋转 / 深色模式切换 / 进程恢复）。
@@ -99,21 +107,25 @@ class MainActivity : AppCompatActivity() {
     /**
      * 内容长度上限（字符）。
      *
-     * 存在两个目的：
-     *  1. 防止粘贴超大文本导致 OOM —— 旧版本没有任何上限，10MB 级文本会在
-     *     序列化（同时持有 3 份副本）时直接 OutOfMemoryError 崩溃；
-     *  2. 顺带把单次 DataStore 读写耗时限制在毫秒级，磁盘 IO 不再可能长时间拖住任何线程。
+     * v8.4.0：100,000 → **10,000**（用户决定）。理由是"以桌面小部件显示为主"：
+     * 10,000 字 ≈ 约 30KB UTF-8（中文），比小部件能展示的量高两个数量级；
+     * 同时把单次写盘、内存峰值、旋转时的实例状态都压到很小。
+     * 撤回次数仍然**不设上限**（用户要求），这里只限制正文本身。
      *
-     * 100,000 字符 ≈ 约 300KB UTF-8（中文），对「桌面便签」场景远远够用。
+     * 注意这个上限是**输入层**约束（InputFilter）：磁盘上历史遗留的超长内容仍会
+     * 完整加载（见 [installLoadedContent]），只是"只能删不能加"。
      */
     private val maxLengthFilter = InputFilter { source, start, end, dest, dstart, dend ->
+        val inserted = end - start
         val keep = MAX_CONTENT_CHARS - (dest.length - (dend - dstart))
         when {
+            // 纯删除永远放行（也不提示）：超限内容的唯一出路就是删减
+            inserted == 0 -> null
             keep <= 0 -> {
                 notifyTooLong()
                 ""
             }
-            keep >= end - start -> null // 未超限，放行
+            keep >= inserted -> null // 未超限，放行
             else -> {
                 notifyTooLong()
                 source.subSequence(start, start + keep)
@@ -158,46 +170,110 @@ class MainActivity : AppCompatActivity() {
 
         // 异步恢复上次保存的内容
         lifecycleScope.launch {
-            val savedText = withContext(Dispatchers.IO) { ContentStore.read() }
-            loadCompleted = true
-            if (!editorTouched) {
-                binding.editor.setText(savedText)
+            // v8.4.0：读盘结果分成「读到内容（空便签也是合法内容）」与「读失败」两种，
+            // 不再把失败压成空串。失败时进入"禁止保存"的降级状态（见 onContentLoadFailed）。
+            when (val read = withContext(Dispatchers.IO) { ContentStore.readResult() }) {
+                is ContentRead.Failed -> onContentLoadFailed(read.cause)
+                is ContentRead.Success -> onContentLoaded(read.text)
             }
-            // 撤回历史的记录器必须在「初始内容就位」之后才挂上：
-            // 否则「读盘写入」或「系统重建恢复文本」会被当成一次用户编辑，
-            // 撤回就会一路退成空文本，而不是回到刚打开时的内容。
-            binding.editor.addTextChangedListener(undoHistory)
-            // 顺序很重要：先解禁编辑（disabled 的 View 拿不到焦点），再聚焦，最后才定位光标
-            binding.editor.isEnabled = true
-            binding.editor.requestFocus()
-            // 光标定位必须放在 requestFocus() **之后**：EditText 获得焦点时框架会按
-            // 「获得焦点默认行为」把光标带到文末（Editor.onFocusChanged → MovementMethod.onTakeFocus），
-            // 聚焦前设的选区会被这次行为覆盖（已由 MainActivityEntryTest 固化）。
-            // 只在全新进入应用时置 0；系统重建（旋转/深色模式/进程恢复）不动选区，
-            // 保留框架恢复出来的光标位置。
-            if (freshEntry) {
-                binding.editor.setSelection(0)
-            }
-            requestImeShow()
-            // v8.2.0：打开应用**只读盘**，不检测、不上传。v7.8 起这里会算一次内容哈希并点亮
-            // 「立即上传」按钮上的橙点，那条链路现已随橙点一起删除（用户要求精简功能）——
-            // 现在打开应用只做一件事：把磁盘上的内容显示出来。
-            // v8.0.1：打开应用是唯一"人一定在看"的时刻，顺手把系统侧的证据记一行：
-            // 当前待机分桶 / 兜底任务是否待执行 / 系统说它为什么还没跑 / 上次自动上传是怎么启动的。
-            // 排查「保存了却没传上去」时，这一行往往就够了。
-            SyncDiagnostics.logSnapshot(applicationContext, "打开应用")
-            Log.i(
-                TAG,
-                "上次自动上传通道：${SyncSettings.launchNote(applicationContext).ifEmpty { "无记录" }}"
-            )
         }
 
         installBackHandler()
     }
 
     /**
-     * 返回键退出：异步原子写盘 → 写盘结果确认后收尾 → 最后才 finish()。
-     * Activity 在写盘期间保持可见，写盘不会再被界面销毁打断。
+     * 磁盘内容读取成功后的收尾：装内容、挂撤回监听、解禁编辑、聚焦、按需提示。
+     *
+     * v8.4.0 起「损坏提示」也在这里：损坏可能发生在小组件/后台进程的首次读取里，
+     * 用户当时不在编辑页；[ContentStore.takeCorruptionNotice] 把那个事件留到这一刻，
+     * 提示一次即清除（同一个损坏事件不会反复打扰）。
+     */
+    private fun onContentLoaded(savedText: String) {
+        loadCompleted = true
+        loadFailed = false
+        if (!editorTouched) {
+            installLoadedContent(savedText)
+        }
+        // 撤回历史的记录器必须在「初始内容就位」之后才挂上：
+        // 否则「读盘写入」或「系统重建恢复文本」会被当成一次用户编辑，
+        // 撤回就会一路退成空文本，而不是回到刚打开时的内容。
+        binding.editor.addTextChangedListener(undoHistory)
+        // 顺序很重要：先解禁编辑（disabled 的 View 拿不到焦点），再聚焦，最后才定位光标
+        binding.editor.isEnabled = true
+        binding.editor.requestFocus()
+        // 光标定位必须放在 requestFocus() **之后**：EditText 获得焦点时框架会按
+        // 「获得焦点默认行为」把光标带到文末（Editor.onFocusChanged → MovementMethod.onTakeFocus），
+        // 聚焦前设的选区会被这次行为覆盖（已由 MainActivityEntryTest 固化）。
+        // 只在全新进入应用时置 0；系统重建（旋转/深色模式/进程恢复）不动选区，
+        // 保留框架恢复出来的光标位置。
+        if (freshEntry) {
+            binding.editor.setSelection(0)
+        }
+        requestImeShow()
+        // 上次运行期间是否检测到内容文件损坏（CRC 校验失败 → 已保留现场并重建为空）
+        ContentStore.takeCorruptionNotice(applicationContext)?.let { backupFile ->
+            Log.w(TAG, "上次检测到内容文件损坏，现场=${backupFile.ifEmpty { "未留下" }}")
+            toast(getString(R.string.content_corrupted_rebuilt, backupFile.ifEmpty { "—" }))
+        }
+        // v8.2.0：打开应用**只读盘**，不检测、不上传。v7.8 起这里会算一次内容哈希并点亮
+        // 「立即上传」按钮上的橙点，那条链路现已随橙点一起删除（用户要求精简功能）——
+        // 现在打开应用只做一件事：把磁盘上的内容显示出来。
+        // v8.0.1：打开应用是唯一"人一定在看"的时刻，顺手把系统侧的证据记一行：
+        // 当前待机分桶 / 兜底任务是否待执行 / 系统说它为什么还没跑 / 上次自动上传是怎么启动的。
+        // 排查「保存了却没传上去」时，这一行往往就够了。
+        SyncDiagnostics.logSnapshot(applicationContext, "打开应用")
+        Log.i(
+            TAG,
+            "上次自动上传通道：${SyncSettings.launchNote(applicationContext).ifEmpty { "无记录" }}"
+        )
+    }
+
+    /**
+     * v8.4.0：把磁盘内容放进编辑器。
+     *
+     * 为什么**临时摘掉长度过滤器**：上限从 100,000 降到 10,000 之后，磁盘上可能还躺着
+     * 更长历史内容。`TextView.setText` 是否套用 `InputFilter` 属于框架细节，与其依赖它，
+     * 不如显式摘掉过滤器再写入 —— 保证**一个字都不丢**。装回过滤器后，[maxLengthFilter]
+     * 的"只能删不能加"生效：用户可以删减到上限以下，但无法再增加。
+     * 超限时给一次明确提示，否则用户只会看到"打不进字"。
+     */
+    private fun installLoadedContent(text: String) {
+        val filters = binding.editor.filters
+        binding.editor.filters = emptyArray()
+        try {
+            binding.editor.setText(text)
+        } finally {
+            binding.editor.filters = filters
+        }
+        if (text.length > MAX_CONTENT_CHARS) {
+            Log.w(TAG, "正文 ${text.length} 字超过新上限 $MAX_CONTENT_CHARS：完整加载，只能删减")
+            toast(getString(R.string.editor_over_limit_after_upgrade, text.length, MAX_CONTENT_CHARS))
+        }
+    }
+
+    /**
+     * v8.4.0：读盘失败时的降级状态。
+     *
+     * 关键决定：**禁止一切保存**（[shouldPersist] 为 false、[saveContent] 直接拒绝），
+     * 编辑器保持禁用。宁可让用户看到"读取失败、本次无法编辑"，也绝不能用空内容
+     * 覆盖磁盘上唯一那份内容 —— 那是审计里最严重的静默数据丢失路径。
+     */
+    private fun onContentLoadFailed(cause: Throwable) {
+        loadFailed = true
+        loadCompleted = false
+        binding.editor.isEnabled = false
+        binding.editor.setText("")
+        Log.e(TAG, "读取磁盘内容失败：本次禁止保存，避免覆盖磁盘内容", cause)
+        toast(getString(R.string.editor_load_failed))
+    }
+
+    /**
+     * 返回键退出：异步原子写盘 → 写盘结果确认后收尾 → **成功才** finish()。
+     *
+     * v8.4.0：写盘失败时**不再关窗**（审计 P0-3）。之前无论成败都 `finish()`，
+     * 于是磁盘写满这类失败会把用户正在编辑的内容随 Activity 一起销毁；
+     * 现在失败时留在编辑页（提示已由 saveContent 弹出），内容还在屏幕上，
+     * 用户可以再按一次返回重试，或先把内容复制出去。
      */
     private fun installBackHandler() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -209,7 +285,14 @@ class MainActivity : AppCompatActivity() {
                         notifyFailure = true,
                         syncTrigger = SyncTrigger.CLOSE_EDITOR,
                         reason = SaveReason.BACK
-                    ) { finish() }
+                    ) { ok ->
+                        if (ok) {
+                            finish()
+                        } else {
+                            exitingByBack = false
+                            Log.w(TAG, "返回键保存失败：留在编辑页，内容未销毁（可再次按返回重试）")
+                        }
+                    }
                 } else {
                     // 尚未加载出任何内容且用户没输入过：磁盘上已有完整数据，无需保存，
                     // 因此也**不触发上传**（v7.8：上传只跟在「保存」后面）
@@ -302,8 +385,11 @@ class MainActivity : AppCompatActivity() {
      * 现在只要用户输入过（`editorTouched`）就一定会保存；
      * 而「编辑器在加载完成前禁用」保证了此时编辑器里的内容就是完整的（要么是刚读到的
      * 旧内容，要么是系统恢复的实例状态），不会用残缺内容覆盖磁盘。
+     *
+     * v8.4.0：**读盘失败时一律不保存**（`loadFailed`）—— 读失败意味着编辑器里的内容
+     * 不代表磁盘内容，此时任何保存都可能把磁盘上唯一那份内容覆盖成空。
      */
-    private fun shouldPersist(): Boolean = loadCompleted || editorTouched
+    private fun shouldPersist(): Boolean = !loadFailed && (loadCompleted || editorTouched)
 
     /**
      * 窗口失去焦点（Home / 多任务键 / 切到其他应用 / 下拉通知栏等）即保存。
@@ -570,6 +656,9 @@ class MainActivity : AppCompatActivity() {
      *
      * v7.8：这也是一次「保存」，因此同样触发自动上传（v8.1.0 起无节流，
      * 紧接着的旋转 / onStop 保存会被单飞合并掉）。
+     *
+     * v8.4.0：**保存失败时不重建**（审计）—— 重建会让新 Activity 从磁盘读到旧内容，
+     * 等于把用户刚才的编辑丢掉；失败时留在当前界面（提示已弹），下次保存成功后再切换主题。
      */
     private fun handleNightModeSwitch() {
         if (nightSwitchSaving) return
@@ -577,13 +666,17 @@ class MainActivity : AppCompatActivity() {
             nightSwitchSaving = true
             savedOnLeave = true // 重建过程中的 onStop 不再重复保存
             saveContent(
-                notifyFailure = false,
+                notifyFailure = true,
                 syncTrigger = SyncTrigger.CLOSE_EDITOR,
                 reason = SaveReason.NIGHT_MODE
-            ) {
+            ) { ok ->
                 nightSwitchSaving = false
-                if (!isFinishing && !isDestroyed) {
-                    recreate()
+                if (ok) {
+                    if (!isFinishing && !isDestroyed) {
+                        recreate()
+                    }
+                } else {
+                    Log.w(TAG, "深色模式切换前的保存失败：取消重建，内容留在编辑页")
                 }
             }
         } else {
@@ -615,6 +708,13 @@ class MainActivity : AppCompatActivity() {
      * 3. 写盘结果确认后，才刷新桌面小组件、按需提示失败、按需触发同步
      * 4. 失败时清除 savedOnLeave，让后续 onStop 有机会重试（旧实现失败后不再重试）
      *
+     * v8.4.0（审计）：
+     *  - 读盘失败（[loadFailed]）时**直接拒绝保存**——这是"不用空内容覆盖磁盘"的最后一道闸门，
+     *    覆盖所有保存入口（包括顶部的「立即上传」，它不经过 [shouldPersist]）；
+     *  - 写盘失败不再一律收尾：`onDone(ok)` 把结果交给调用方，返回键/深色模式据此决定
+     *    是否销毁或重建界面（失败时保留用户内容）；
+     *  - 保存作用域是单线程的（见 [ContentStore.saveScope]），两次并发保存不会乱序落盘。
+     *
      * @param notifyFailure 写盘**失败**时是否提示。v7.7 起保存成功不再弹「已保存」toast
      *   （用户要求删除全部保存成功提示），失败仍然提示 —— 那是可能丢内容的信号。
      * @param syncTrigger 写盘成功后要触发的一次 WebDAV 同步，null = 不触发。
@@ -623,13 +723,21 @@ class MainActivity : AppCompatActivity() {
      *   的单飞合并（一趟上传吸收它开始前登记的所有保存）。
      *   MANUAL 只用于顶部「立即上传」按钮（永不参与合并）。
      * @param reason 只用于日志/诊断的路径标记，见 [SaveReason]。
+     * @param onDone 保存结束回调，参数 = 是否真的持久化成功（读盘失败时会是 false）。
      */
     private fun saveContent(
         notifyFailure: Boolean,
         syncTrigger: SyncTrigger? = null,
         reason: SaveReason = SaveReason.OTHER,
-        onDone: () -> Unit = {}
+        onDone: (Boolean) -> Unit = {}
     ) {
+        // 读盘失败时绝不能写盘：编辑器里的内容不代表磁盘内容，写下去就是覆盖丢失
+        if (loadFailed) {
+            Log.w(TAG, "磁盘内容读取失败，本次保存被拒绝（防止覆盖磁盘内容）：reason=${reason.token}")
+            if (notifyFailure) toast(getString(R.string.editor_load_failed))
+            onDone(false)
+            return
+        }
         val text = binding.editor.text.toString()
         val appContext = applicationContext
         ContentStore.saveScope.launch {
@@ -674,9 +782,14 @@ class MainActivity : AppCompatActivity() {
                 if (notifyFailure && !ok) {
                     Toast.makeText(appContext, R.string.save_failed, Toast.LENGTH_SHORT).show()
                 }
-                onDone()
+                onDone(ok)
             }
         }
+    }
+
+    /** 与本应用其它页面同款的一句话提示（短、不打扰，只在需要用户知道结果时才弹） */
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     /** 达到长度上限时提示一次（限流，避免每次按键都弹） */
@@ -702,8 +815,12 @@ class MainActivity : AppCompatActivity() {
         /** v8.0.1：保存路径埋点与诊断日志的 TAG（`adb logcat -s MainActivity` 即可看全部退出路径） */
         private const val TAG = "MainActivity"
 
-        /** 编辑器内容上限（字符），见 [maxLengthFilter] 的说明 */
-        const val MAX_CONTENT_CHARS = 100_000
+        /**
+         * 编辑器内容上限（字符），见 [maxLengthFilter] 的说明。
+         * v8.4.0：100,000 → 10,000（用户决定：以桌面小部件显示为主，用小上限换内存安全；
+         * 撤回次数仍然不设上限）。
+         */
+        const val MAX_CONTENT_CHARS = 10_000
 
         val Context.prefs
             get() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

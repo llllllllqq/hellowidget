@@ -10,6 +10,14 @@
         <item quantity="other">Maximum length reached (%1$d characters)</item>
     </plurals>
     <string name="widget_empty_hint">Tap to edit</string>
+    <!-- v8.4.0: read failure is no longer treated as an empty note -->
+    <string name="widget_read_failed">Could not read the content; tap to open</string>
+    <!-- v8.4.0: the text limit dropped from 100,000 to 10,000; oversized legacy text loads in full but can only be trimmed -->
+    <string name="editor_over_limit_after_upgrade">The text has %1$d characters, above the new limit of %2$d. Nothing was removed, but you must trim it below %2$d characters before typing again.</string>
+    <!-- v8.4.0: when reading fails the editor stays disabled so the file on disk is never overwritten -->
+    <string name="editor_load_failed">Could not read the content. Saving is disabled this time so the file on disk is not overwritten. Please close and reopen the app.</string>
+    <!-- v8.4.0: the content file was corrupt (CRC check failed); it was rebuilt and the damaged file kept -->
+    <string name="content_corrupted_rebuilt">The content file was found corrupt and has been rebuilt as empty. The damaged file was kept as %1$s; the app cannot restore it automatically. If the content matters, keep the app data before editing further.</string>
     <string name="widget_description">Show your text on the home screen, scrollable</string>
     <string name="widget_preview_sample">Type your text here.\nThe widget shows all of it\nas a scrollable list,\nwith no background process.</string>
     <!-- Saving no longer shows a success toast (v7.7); failures still do -->
@@ -84,7 +92,7 @@
     <string name="sync_state_enabled">Status: enabled</string>
     <string name="sync_state_disabled">Status: disabled</string>
     <string name="sync_effective_url">Writes to: %1$s</string>
-    <string name="sync_history_note">Every upload creates a new file with a unix timestamp; older files are left untouched (the cloud keeps the full history)</string>
+    <string name="sync_history_note">Every upload creates a new file named with local time (prefix + date_time_millis + extension, for example note20261018_192437_123.txt); older files are left untouched (the cloud keeps the full history)</string>
     <string name="sync_status_never">Never synced yet</string>
     <string name="sync_status_success">Last sync succeeded: %1$s</string>
     <!-- v8.0.1: distinguish "really uploaded" from "nothing changed, no request sent" (both store result=success) -->

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import moe.hellowidget.ContentRead
 import moe.hellowidget.ContentStore
 
 /** 同步结果（界面据此渲染状态行） */
@@ -95,9 +96,14 @@ object SyncManager {
     internal var clientFactory: (SyncConfig, (String) -> Unit) -> WebDavClient =
         { config, onUntrusted -> OkHttpWebDavClient(config, onUntrusted) }
 
-    /** 待上传内容的读取入口；单测里替换掉，避免依赖 DataStore 的具体实现 */
+    /**
+     * 待上传内容的读取入口；单测里替换掉，避免依赖 DataStore 的具体实现。
+     *
+     * v8.4.0：返回类型从 `String` 改成 [ContentRead] —— 读盘失败**必须**被区分出来，
+     * 否则同步会把 `""` 当成"用户的新内容"上传一份空文件（审计里的 fail-open 路径）。
+     */
     @VisibleForTesting
-    internal var contentReader: suspend () -> String = { ContentStore.read() }
+    internal var contentReader: suspend () -> ContentRead = { ContentStore.readResult() }
 
     /** 前台服务无法启动时的兜底（进程内同步；进度通知由这里自己发） */
     private val fallbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -357,7 +363,16 @@ object SyncManager {
     // ------------------------------------------------------------------ 单向覆盖上传
 
     private suspend fun uploadOnce(context: Context, client: WebDavClient, config: SyncConfig): SyncStatus {
-        val localText = contentReader()
+        // v8.4.0：读盘失败就当场失败，绝不把空内容当成新版本传上去。
+        // 抛 WebDavError.IO 是有意的：它会被窗口内重试/系统兜底任务当作暂时性失败再试，
+        // 同时走"上传失败 Toast + 落盘错误"的既有通道，用户能看到"这次没传上去"。
+        val localText = when (val read = contentReader()) {
+            is ContentRead.Success -> read.text
+            is ContentRead.Failed -> throw WebDavException(
+                WebDavError.IO,
+                detail = "读取本地内容失败，本次不上传（避免把空内容传上去）：${read.cause.message ?: read.cause.javaClass.simpleName}"
+            )
+        }
         val bytes = localText.toByteArray(Charsets.UTF_8)
         val localHash = SyncEngine.sha256Hex(bytes)
 
@@ -375,16 +390,16 @@ object SyncManager {
             return SyncStatus.Success(System.currentTimeMillis(), uploaded = false)
         }
 
-        // 每次上传都写一个新文件：文件名 = 前缀 + unix 毫秒时间戳 + 扩展名
-        val timestampSec = SyncEngine.nextUploadTimestamp(
-            nowSec = System.currentTimeMillis(),
-            lastUploadedSec = SyncSettings.lastUploadedTs(context)
+        // 每次上传都写一个新文件：文件名 = 前缀 + yyyyMMdd_HHmmss_SSS（本地时间）+ 扩展名
+        val timestampMs = SyncEngine.nextUploadTimestamp(
+            nowMs = System.currentTimeMillis(),
+            lastUploadedMs = SyncSettings.lastUploadedTs(context)
         )
         // v8.1.0：从这一刻起"真的要去碰服务器了"。这个锚点不参与任何跳过判断，
         // 它只是给排查用的一个事实：上一次真的发请求是什么时候。
         SyncSettings.setLastServerContactAt(context, System.currentTimeMillis())
-        putNewFile(client, config, bytes, timestampSec)
-        SyncSettings.recordSuccess(context, localHash, timestampSec, uploaded = true)
+        putNewFile(client, config, bytes, timestampMs)
+        SyncSettings.recordSuccess(context, localHash, timestampMs, uploaded = true)
         return SyncStatus.Success(System.currentTimeMillis(), uploaded = true)
     }
 
@@ -397,8 +412,8 @@ object SyncManager {
      * 目标目录不存在时（服务器回 409/404）先 `MKCOL` 再重试一次 ——
      * 这样正常路径只需要一个请求，而首次使用（用户填的目录还没建）也能自动建好。
      */
-    private fun putNewFile(client: WebDavClient, config: SyncConfig, bytes: ByteArray, timestampSec: Long) {
-        val url = config.historyFileUrl(timestampSec)
+    private fun putNewFile(client: WebDavClient, config: SyncConfig, bytes: ByteArray, timestampMs: Long) {
+        val url = config.historyFileUrl(timestampMs)
         try {
             client.put(url, bytes)
         } catch (e: WebDavException) {

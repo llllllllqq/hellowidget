@@ -7,8 +7,10 @@ import moe.hellowidget.MainActivity.Companion.prefs
  * WebDAV 同步的全部持久化状态（沿用应用已有的 `hello_prefs`）。
  *
  * 安全说明：WebDAV 口令以明文存进应用私有 SharedPreferences。这是刻意的取舍 ——
- *  - 该 prefs 文件已被 `res/xml/backup_rules.xml` 与 `res/xml/data_extraction_rules.xml`
- *    **完全排除**在云备份与换机迁移之外，不会随系统备份离开设备；
+ *  - v8.2.0 起该 prefs 文件**会随系统云备份 / 换机迁移一起离机**：备份规则
+ *    （`res/xml/backup_rules.xml`、`res/xml/data_extraction_rules.xml`）显式 include 了
+ *    `sharedpref` 域，这是"换机不丢配置"的直接代价，界面已写明（口令是明文，建议用应用专用密码）。
+ *    **别再在这里写"已被排除在备份之外"** —— v8.2.0 之前确实如此，之后正好相反；
  *  - 在未 root 的设备上，应用私有目录其他应用读不到；真正的威胁模型（拿到已解锁设备的人）
  *    下，本机加密密钥同样在设备里，边际收益很小；
  *  - 界面明确建议使用 WebDAV 侧的「应用专用密码」，让这份凭据可以随时单独吊销。

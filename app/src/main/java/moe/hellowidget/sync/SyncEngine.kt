@@ -1,6 +1,10 @@
 package moe.hellowidget.sync
 
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * 同步触发来源。
@@ -70,14 +74,38 @@ object SyncEngine {
         lastUploadedHash == null || localHash != lastUploadedHash
 
     /**
-     * 本次上传该用的 unix **秒**时间戳。
+     * 本次上传该用的 unix **毫秒**时间戳。
      *
      * 取 `max(now, 上次上传的时间戳 + 1)`，两个作用：
-     *  - 同一秒内的第二次上传不会复用同一个文件名（那会覆盖上一份历史）；
-     *  - 设备时钟被回拨时文件名依旧单调递增，云端按名字排序仍是正确的时间顺序。
+     *  - 同一毫秒内的第二次上传不会复用同一个文件名（那会覆盖上一份历史）；
+     *  - 设备时钟被回拨时时间戳依旧单调递增，云端按时间排序仍是正确的时间顺序。
+     *
+     * v8.4.0：参数名从 `nowSec/lastUploadedSec` 改成 `nowMs/lastUploadedMs` ——
+     * 名字早就和实际语义不符了（从 v7.6.1 起这里传的就是毫秒），
+     * 而 v8.4.0 起文件名直接由毫秒时间戳格式化，名字对不上只会误导下一个人。
      */
-    fun nextUploadTimestamp(nowSec: Long, lastUploadedSec: Long): Long =
-        if (nowSec > lastUploadedSec) nowSec else lastUploadedSec + 1
+    fun nextUploadTimestamp(nowMs: Long, lastUploadedMs: Long): Long =
+        if (nowMs > lastUploadedMs) nowMs else lastUploadedMs + 1
+
+    /**
+     * v8.4.0：把上传时间戳格式化成**用户能一眼看懂**的文件名片段。
+     *
+     * 之前文件名是裸 unix 毫秒（`note1759312800123.txt`），用户无法从名字判断"这是哪一次上传"。
+     * 现在统一用 `yyyyMMdd_HHmmss_SSS`（精确到毫秒），例如 `20261018_192437_123`，
+     * 与「前缀 + 扩展名」拼成 `note20261018_192437_123.txt`。
+     *
+     * 用**本机时区**（默认时区）而不是 UTC：这是给人看的名字，本地时间可读性优先；
+     * 名字由**时间戳值**格式化而来（不读墙上时钟），因此时钟回拨也不会重名 ——
+     * 唯一的小代价是手机改时区时，新旧文件按名字排序可能短暂错位（功能上没有任何影响，
+     * 因为客户端从不读取/清理云端）。
+     */
+    fun formatUploadTimestamp(timestampMs: Long, timeZone: TimeZone = TimeZone.getDefault()): String =
+        SimpleDateFormat(FILENAME_TIMESTAMP_PATTERN, Locale.US).apply {
+            this.timeZone = timeZone
+        }.format(Date(timestampMs))
+
+    /** 文件名时间戳格式（`yyyyMMdd_HHmmss_SSS`）：字典序 == 时间序，且精确到毫秒 */
+    const val FILENAME_TIMESTAMP_PATTERN = "yyyyMMdd_HHmmss_SSS"
 
     private val HEX = "0123456789abcdef".toCharArray()
 }

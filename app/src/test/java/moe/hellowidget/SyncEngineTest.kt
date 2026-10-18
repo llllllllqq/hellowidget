@@ -58,28 +58,61 @@ class SyncEngineTest {
         assertFalse(SyncEngine.hasLocalChanges("h1", "h1"))
     }
 
-    // ------------------------------------------------------------ 上传文件名的时间戳
+    // ------------------------------------------------------------ 上传文件名的时间戳（v8.4.0）
+
+    private val shanghai: java.util.TimeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
 
     @Test
     fun nextUploadTimestamp_usesNowWhenItIsNewer() {
-        assertEquals(1_735_689_600L, SyncEngine.nextUploadTimestamp(1_735_689_600L, 1_735_689_000L))
+        assertEquals(
+            1_735_689_600_000L,
+            SyncEngine.nextUploadTimestamp(1_735_689_600_000L, 1_735_689_000_000L)
+        )
     }
 
     @Test
-    fun nextUploadTimestamp_sameSecondStillAdvances() {
-        // 同一秒内的第二次上传必须换一个文件名，否则会覆盖上一份历史
-        assertEquals(1_735_689_601L, SyncEngine.nextUploadTimestamp(1_735_689_600L, 1_735_689_600L))
+    fun nextUploadTimestamp_sameMsStillAdvances() {
+        // 同一毫秒内的第二次上传必须换一个文件名，否则会覆盖上一份历史
+        assertEquals(
+            1_735_689_600_001L,
+            SyncEngine.nextUploadTimestamp(1_735_689_600_000L, 1_735_689_600_000L)
+        )
     }
 
     @Test
     fun nextUploadTimestamp_clockRolledBack_stillIncreases() {
-        // 设备时钟被回拨：文件名仍单调递增，云端按名字排序仍是正确的时间顺序
-        assertEquals(1_735_689_601L, SyncEngine.nextUploadTimestamp(1_000_000_000L, 1_735_689_600L))
+        // 设备时钟被回拨：时间戳仍单调递增，文件名（由时间戳格式化）也不会复用
+        assertEquals(
+            1_735_689_600_001L,
+            SyncEngine.nextUploadTimestamp(1_000_000_000_000L, 1_735_689_600_000L)
+        )
     }
 
     @Test
     fun nextUploadTimestamp_firstEverUpload_usesNow() {
-        assertEquals(1_735_689_600L, SyncEngine.nextUploadTimestamp(1_735_689_600L, 0L))
+        assertEquals(1_735_689_600_000L, SyncEngine.nextUploadTimestamp(1_735_689_600_000L, 0L))
+    }
+
+    @Test
+    fun formatUploadTimestamp_isReadableLocalDateTimeWithMillis() {
+        // 1735689600000ms = 2025-01-01T00:00:00Z = 上海时间 08:00:00.000
+        assertEquals(
+            "20250101_080000_000",
+            SyncEngine.formatUploadTimestamp(1_735_689_600_000L, shanghai)
+        )
+        // 毫秒必须补零到三位（否则字典序会乱：_7 会排在 _12 后面）
+        assertEquals(
+            "20250102_075959_999",
+            SyncEngine.formatUploadTimestamp(1_735_689_600_000L + 86_399_999L, shanghai)
+        )
+        // 换时区只是显示不同，同一时间戳不会改变「时间先后」
+        assertEquals(
+            "20250101_000000_000",
+            SyncEngine.formatUploadTimestamp(
+                1_735_689_600_000L,
+                java.util.TimeZone.getTimeZone("UTC")
+            )
+        )
     }
 
     // v7.7.2 ~ v8.0.3 这里曾有 6 条「1 分钟节流闸门」用例（gate_* / throttleInterval_isOneMinute）。

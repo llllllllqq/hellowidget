@@ -108,12 +108,12 @@ class SyncManagerUploadTest {
         SyncSettings.resetRuntimeState(context)
         client = RecordingClient()
         SyncManager.clientFactory = { _, _ -> client }
-        SyncManager.contentReader = { content }
+        SyncManager.contentReader = { ContentRead.Success(content) }
     }
 
     @After
     fun tearDown() {
-        SyncManager.contentReader = { ContentStore.read() }
+        SyncManager.contentReader = { ContentRead.Success(ContentStore.read()) }
         SyncManager.clientFactory = { config, onUntrusted -> OkHttpWebDavClient(config, onUntrusted) }
         SyncSettings.resetRuntimeState(context)
     }

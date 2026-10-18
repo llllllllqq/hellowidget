@@ -3,6 +3,7 @@ package moe.hellowidget.sync
 import java.net.URI
 import java.net.URISyntaxException
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * 一次同步所需的全部配置（已归一化）。
@@ -29,19 +30,29 @@ data class SyncConfig(
     val directoryUrl: String get() = baseUrl
 
     /**
-     * 本次上传的文件名：`<前缀><unix 秒时间戳><扩展名>`（如 `note1735689600.txt`）。
+     * 本次上传的文件名：`<前缀><yyyyMMdd_HHmmss_SSS><扩展名>`，如 `note20261018_192437_123.txt`。
+     *
+     * v8.4.0：之前是裸 unix 毫秒（`note1759312800123.txt`），用户看不懂"这是哪一次上传"；
+     * 现在用本地时间格式化、精确到毫秒（见 [SyncEngine.formatUploadTimestamp]），
+     * 字典序 == 时间序，也不会重名。
      *
      * 每次上传都是**新文件**，云端天然保留每一次上传的历史，旧文件永远不会被覆盖 ——
      * 因此完全不需要列出、比对或清理远端（省流量，也不怕历史积累）。
+     * 改格式前的旧文件（裸时间戳命名）保持原样，不会被清理或改名。
      */
-    fun historyFileName(timestampSec: Long): String = "$stem$timestampSec$extension"
+    fun historyFileName(
+        timestampMs: Long,
+        timeZone: TimeZone = TimeZone.getDefault()
+    ): String = "$stem${SyncEngine.formatUploadTimestamp(timestampMs, timeZone)}$extension"
 
     /** 本次上传的完整 URL（文件名已做百分号编码） */
-    fun historyFileUrl(timestampSec: Long): String =
-        baseUrl + UrlCodec.encodePathSegment(historyFileName(timestampSec))
+    fun historyFileUrl(
+        timestampMs: Long,
+        timeZone: TimeZone = TimeZone.getDefault()
+    ): String = baseUrl + UrlCodec.encodePathSegment(historyFileName(timestampMs, timeZone))
 
-    /** 界面上展示的命名规则，如 `note<时间戳>.txt` */
-    val historyFilePattern: String get() = "$stem<时间戳>$extension"
+    /** 界面上展示的命名规则，如 `note<yyyyMMdd_HHmmss_SSS>.txt` */
+    val historyFilePattern: String get() = "$stem<${SyncEngine.FILENAME_TIMESTAMP_PATTERN}>$extension"
 
     /** 是否明文 http（界面需要给出风险提示） */
     val isCleartext: Boolean get() = baseUrl.startsWith("http://", ignoreCase = true)

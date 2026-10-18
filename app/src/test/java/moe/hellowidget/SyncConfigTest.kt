@@ -8,6 +8,7 @@ import moe.hellowidget.sync.UrlCodec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.TimeZone
 
 /**
  * 配置校验 / URL 编码的单元测试（纯 JVM）。
@@ -101,20 +102,24 @@ class SyncConfigTest {
         assertEquals("a%3Fb%23c%25d", UrlCodec.encodePathSegment("a?b#c%d"))
     }
 
+    /** v8.4.0：文件名时间戳是本地时间的 `yyyyMMdd_HHmmss_SSS`；单测固定时区以保证可重复 */
+    private val shanghai: TimeZone = TimeZone.getTimeZone("Asia/Shanghai")
+
     @Test
-    fun historyFileName_isPrefixPlusUnixTimestampPlusExtension() {
+    fun historyFileName_isPrefixPlusReadableLocalTimestampPlusExtension() {
         val config = SyncConfig(
             baseUrl = "https://dav.example.com/dav/",
             fileName = "note.txt",
             username = "u",
             password = "p"
         )
-        assertEquals("note1735689600.txt", config.historyFileName(1735689600L))
+        // 1735689600000ms = 2025-01-01T00:00:00Z = 上海时间 08:00:00.000
+        assertEquals("note20250101_080000_000.txt", config.historyFileName(1735689600000L, shanghai))
         assertEquals(
-            "https://dav.example.com/dav/note1735689600.txt",
-            config.historyFileUrl(1735689600L)
+            "https://dav.example.com/dav/note20250101_080000_000.txt",
+            config.historyFileUrl(1735689600000L, shanghai)
         )
-        assertEquals("note<时间戳>.txt", config.historyFilePattern)
+        assertEquals("note<yyyyMMdd_HHmmss_SSS>.txt", config.historyFilePattern)
         assertEquals("dav.example.com", config.host)
     }
 
@@ -122,11 +127,14 @@ class SyncConfigTest {
     fun historyFileName_handlesCustomNamesAndMissingExtension() {
         fun config(name: String) = SyncConfig("https://d/x/", name, "u", "p")
         // 自定义前缀与扩展名照旧生效
-        assertEquals("我的笔记1759312800.md", config("我的笔记.md").historyFileName(1759312800L))
+        assertEquals(
+            "我的笔记20251001_180000_000.md",
+            config("我的笔记.md").historyFileName(1759312800000L, shanghai)
+        )
         // 多个点：只把最后一段当扩展名
-        assertEquals("a.b1759312800.txt", config("a.b.txt").historyFileName(1759312800L))
+        assertEquals("a.b20251001_180000_000.txt", config("a.b.txt").historyFileName(1759312800000L, shanghai))
         // 没写扩展名时默认 .txt
-        assertEquals("memo1759312800.txt", config("memo").historyFileName(1759312800L))
+        assertEquals("memo20251001_180000_000.txt", config("memo").historyFileName(1759312800000L, shanghai))
     }
 
     @Test
@@ -140,8 +148,8 @@ class SyncConfigTest {
         // 空格必须是 %20 而不是 +（+ 在路径里就是加号本身，服务器会找不到文件）
         assertEquals(
             "https://dav.example.com/dav/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0" +
-                "1759312800.txt",
-            config.historyFileUrl(1759312800L)
+                "20251001_180000_000.txt",
+            config.historyFileUrl(1759312800000L, shanghai)
         )
     }
 }

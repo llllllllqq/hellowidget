@@ -6,6 +6,14 @@
         <item quantity="other">已达最大长度 %1$d 字符</item>
     </plurals>
     <string name="widget_empty_hint">点此编辑</string>
+    <!-- v8.4.0：读盘失败不再当成空便签（审计修复） -->
+    <string name="widget_read_failed">内容读取失败，点此查看</string>
+    <!-- v8.4.0：正文上限从 100,000 降到 10,000；历史遗留的超长内容完整加载、只能删不能加 -->
+    <string name="editor_over_limit_after_upgrade">正文有 %1$d 字，超过新的上限 %2$d 字。内容完整保留，但需要先删减到 %2$d 字以下才能继续输入。</string>
+    <!-- v8.4.0：读盘失败时编辑器保持禁用，绝不覆盖磁盘内容 -->
+    <string name="editor_load_failed">内容读取失败：本次已禁止保存，以免覆盖磁盘上的内容。请退出后重新打开应用。</string>
+    <!-- v8.4.0：上次运行期间检测到内容文件损坏（CRC 校验失败），已保留现场并重建 -->
+    <string name="content_corrupted_rebuilt">上次检测到内容文件损坏，已用空内容重建。损坏的原文件已保留为 %1$s，应用内暂时无法自动恢复；如果这份内容重要，请在继续编辑前先保留应用数据。</string>
     <string name="widget_description">在桌面显示你的文本，可上下滚动阅读</string>
     <string name="widget_preview_sample">在这里输入内容，\n桌面小组件将以列表形式\n展示全部文字，\n支持上下滑动阅读，\n无需后台进程常驻。</string>
     <!-- 保存成功不再弹 toast（v7.7 按用户要求删除全部「已保存」提示）；失败仍然提示 -->
@@ -80,7 +88,7 @@
     <string name="sync_state_enabled">状态：已启用</string>
     <string name="sync_state_disabled">状态：未启用</string>
     <string name="sync_effective_url">云端写入：%1$s</string>
-    <string name="sync_history_note">每次上传都会新建一个带 unix 时间戳的文件，旧文件保持原样（云端自动保留全部历史）</string>
+    <string name="sync_history_note">每次上传都会新建一个以本地时间命名的文件（前缀 + 年月日_时分秒_毫秒 + 扩展名，如 note20261018_192437_123.txt），旧文件保持原样（云端自动保留全部历史）</string>
     <string name="sync_status_never">尚未同步过</string>
     <string name="sync_status_success">上次同步成功：%1$s</string>
     <!-- v8.0.1：区分"真传上去了"与"本地无改动、一个请求都没发"（两者都写 result=success） -->

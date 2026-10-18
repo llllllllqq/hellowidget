@@ -72,13 +72,13 @@ class SyncRetryTest {
         // setPersisted(true) 的前置权限：JobInfo.Builder.build() 会检查它
         shadowOf(app).grantPermissions(Manifest.permission.RECEIVE_BOOT_COMPLETED)
         enableSync()
-        SyncManager.contentReader = { content }
+        SyncManager.contentReader = { ContentRead.Success(content) }
         SyncManager.clientFactory = { _, _ -> FakeClient() }
     }
 
     @After
     fun tearDown() {
-        SyncManager.contentReader = { moe.hellowidget.ContentStore.read() }
+        SyncManager.contentReader = { ContentRead.Success(moe.hellowidget.ContentStore.read()) }
         SyncManager.clientFactory = { config, onUntrusted ->
             moe.hellowidget.sync.OkHttpWebDavClient(config, onUntrusted)
         }
