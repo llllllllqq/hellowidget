@@ -39,9 +39,6 @@
     <string name="settings_bg_color">Background color</string>
     <string name="settings_bg_alpha">Background opacity (opaque ← transparent)</string>
     <string name="settings_bg_alpha_value">%1$d%%</string>
-    <string name="settings_fill_margin">Tap-safety margin</string>
-    <string name="settings_fill_margin_hint">Bottom margin removed for short content: a larger margin prevents accidental scrolling but leaves a small blank strip; increase it if scrolling happens by mistake, decrease it if the blank strip is too visible</string>
-    <string name="settings_fill_margin_value">%1$ddp</string>
     <string name="settings_reset">Restore defaults</string>
     <string name="color_picker_title_text">Custom text color</string>
     <string name="color_picker_title_bg">Custom background color</string>
@@ -50,7 +47,6 @@
     <!-- Placeholders shown in the layout editor; replaced at runtime -->
     <string name="settings_font_size_placeholder">14sp</string>
     <string name="settings_bg_alpha_placeholder">100%</string>
-    <string name="settings_fill_margin_placeholder">4dp</string>
 
     <!-- Accessibility -->
     <string name="a11y_swatch_description">%1$s: %2$s</string>

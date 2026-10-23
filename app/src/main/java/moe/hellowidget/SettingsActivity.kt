@@ -22,7 +22,10 @@ import moe.hellowidget.databinding.ActivitySettingsBinding
 import java.util.Locale
 
 /**
- * 设置页：小组件外观（字体大小 / 颜色 / 背景 / 防误触余量）与浅色 / 深色模式各自的编辑器配色。
+ * 设置页：小组件外观（字体大小 / 颜色 / 背景）与浅色 / 深色模式各自的编辑器配色。
+ *
+ * v8.5.0 删除「防误触余量」滑杆：小组件改成"列表按内容高度、空白由根容器接住点击"后
+ * 不再按宿主尺寸撑高列表项，余量这个补偿参数不再需要（详见 widget_layout.xml 与 CHANGELOG）。
  *
  * v8.3.0：**删除了 v8.2.0 自加的「导出 / 恢复备份文件」整块功能**（用户要求：不要乱加功能，
  * 越少越不容易出 bug）。数据出路不受影响 —— 换机迁移与云备份走系统的备份通道
@@ -58,7 +61,6 @@ class SettingsActivity : AppCompatActivity() {
     private var textColor = WidgetSettings.DEFAULT_TEXT_COLOR
     private var bgColor = WidgetSettings.DEFAULT_BG_COLOR
     private var bgAlpha = WidgetSettings.DEFAULT_BG_ALPHA
-    private var fillMarginDp = WidgetSettings.DEFAULT_FILL_MARGIN_DP
 
     // 编辑器颜色（浅色/深色模式各自的背景色与文字色，与小组件颜色独立）
     private var editorLightBg = EditorSettings.DEFAULT_LIGHT_BG
@@ -79,7 +81,6 @@ class SettingsActivity : AppCompatActivity() {
         binding.previewBox.background = GradientDrawable().apply { cornerRadius = dp(8).toFloat() }
         setupFontSizeSeek()
         setupBgAlphaSeek()
-        setupFillMarginSeek()
         renderTextSwatches()
         renderBgSwatches()
         renderEditorSwatches()
@@ -111,7 +112,6 @@ class SettingsActivity : AppCompatActivity() {
         textColor = WidgetSettings.textColor(this)
         bgColor = WidgetSettings.bgColor(this)
         bgAlpha = WidgetSettings.bgAlpha(this)
-        fillMarginDp = WidgetSettings.fillMarginDp(this)
         editorLightBg = EditorSettings.lightBg(this)
         editorLightText = EditorSettings.lightText(this)
         editorDarkBg = EditorSettings.darkBg(this)
@@ -125,7 +125,6 @@ class SettingsActivity : AppCompatActivity() {
             .putInt(WidgetSettings.KEY_TEXT_COLOR, textColor)
             .putInt(WidgetSettings.KEY_BG_COLOR, bgColor)
             .putInt(WidgetSettings.KEY_BG_ALPHA, bgAlpha)
-            .putInt(WidgetSettings.KEY_FILL_MARGIN_DP, fillMarginDp)
             .putInt(EditorSettings.KEY_LIGHT_BG, editorLightBg)
             .putInt(EditorSettings.KEY_LIGHT_TEXT, editorLightText)
             .putInt(EditorSettings.KEY_DARK_BG, editorDarkBg)
@@ -164,24 +163,6 @@ class SettingsActivity : AppCompatActivity() {
                 bgAlpha = progress
                 binding.bgAlphaValue.text = getString(R.string.settings_bg_alpha_value, progress)
                 updatePreview()
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                persist()
-            }
-        })
-    }
-
-    private fun setupFillMarginSeek() {
-        binding.fillMarginSeek.progress = fillMarginDp.coerceIn(0, 20)
-        binding.fillMarginValue.text = getString(R.string.settings_fill_margin_value, fillMarginDp)
-        binding.fillMarginSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                fillMarginDp = progress
-                binding.fillMarginValue.text =
-                    getString(R.string.settings_fill_margin_value, progress)
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -459,7 +440,6 @@ class SettingsActivity : AppCompatActivity() {
         textColor = WidgetSettings.DEFAULT_TEXT_COLOR
         bgColor = WidgetSettings.DEFAULT_BG_COLOR
         bgAlpha = WidgetSettings.DEFAULT_BG_ALPHA
-        fillMarginDp = WidgetSettings.DEFAULT_FILL_MARGIN_DP
         editorLightBg = EditorSettings.DEFAULT_LIGHT_BG
         editorLightText = EditorSettings.DEFAULT_LIGHT_TEXT
         editorDarkBg = EditorSettings.DEFAULT_DARK_BG
@@ -467,7 +447,6 @@ class SettingsActivity : AppCompatActivity() {
         persist()
         binding.fontSizeSeek.progress = (fontSp - 10).toInt()
         binding.bgAlphaSeek.progress = bgAlpha
-        binding.fillMarginSeek.progress = fillMarginDp
         renderTextSwatches()
         renderBgSwatches()
         renderEditorSwatches()

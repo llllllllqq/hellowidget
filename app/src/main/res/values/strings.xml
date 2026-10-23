@@ -35,9 +35,6 @@
     <string name="settings_bg_color">背景颜色</string>
     <string name="settings_bg_alpha">背景透明度（不透明 ← 透明）</string>
     <string name="settings_bg_alpha_value">%1$d%%</string>
-    <string name="settings_fill_margin">防误触余量</string>
-    <string name="settings_fill_margin_hint">短内容时底部扣除的余量：余量越大越不易误滚动，但底部留白略增；如出现误滚动可调大，底部有明显留白可调小</string>
-    <string name="settings_fill_margin_value">%1$ddp</string>
     <string name="settings_reset">恢复默认设置</string>
     <string name="color_picker_title_text">自定义字体颜色</string>
     <string name="color_picker_title_bg">自定义背景颜色</string>
@@ -46,7 +43,6 @@
     <!-- 布局中的占位文本（运行时会被真实数值覆盖，仅用于可视化编辑） -->
     <string name="settings_font_size_placeholder">14sp</string>
     <string name="settings_bg_alpha_placeholder">100%</string>
-    <string name="settings_fill_margin_placeholder">4dp</string>
 
     <!-- 无障碍 -->
     <string name="a11y_swatch_description">%1$s：%2$s</string>

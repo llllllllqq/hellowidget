@@ -186,48 +186,6 @@
                 android:textSize="15sp" />
         </LinearLayout>
 
-        <!-- 防误触余量 -->
-        <TextView
-            android:id="@+id/fill_margin_label"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:labelFor="@id/fill_margin_seek"
-            android:text="@string/settings_fill_margin"
-            android:textColor="@color/settings_text"
-            android:textSize="16sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <SeekBar
-                android:id="@+id/fill_margin_seek"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:max="20" />
-
-            <TextView
-                android:id="@+id/fill_margin_value"
-                android:layout_width="56dp"
-                android:layout_height="wrap_content"
-                android:gravity="end"
-                android:text="@string/settings_fill_margin_placeholder"
-                android:textColor="@color/settings_text"
-                android:textSize="15sp" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/settings_fill_margin_hint"
-            android:textColor="@color/settings_secondary"
-            android:textSize="12sp" />
-
         <!-- 编辑器颜色：浅色模式 -->
         <View
             android:layout_width="match_parent"

@@ -1,17 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    桌面小组件布局：ListView 集合视图。
-    RemoteViews 中只有 ListView/GridView/StackView 支持原生滚动，
-    文本数据由 TextWidgetService(RemoteViewsFactory) 提供。
-    内边距已移至列表项内部（widget_list_item.xml），
-    使列表可视区 = 完整小组件高度，短内容填满后不会因内边距产生误滚动。
+    桌面小组件根布局（v8.5.0）。
+
+    为什么根不是 ListView 而是 FrameLayout：
+    列表项高度 = 文字自然高度（wrap_content），列表因此只占「有文字的那块」，
+    文字下方的空白落在**根容器**上 —— 点击交给根容器（setOnClickPendingIntent 在
+    widget_root 上，见 TextWidgetProvider），于是「整块可点」不再依赖任何尺寸计算。
+
+    v5.6~v8.4.0 的做法是把唯一的列表项撑到「宿主报告的小组件高度 − 防误触余量」，
+    于是 item 高度是**估算值**的函数：估算值一旦大于实际可视高度，短内容就会多出
+    1px 滚动余量（v5.8 线上事故「短内容误滚动半行」），只能靠一个用户可调的余量去吸收误差。
+    v8.5.0 换成本布局后：列表项按内容高度、空白由根容器接住，估算、余量、
+    onAppWidgetOptionsChanged 重算全部删除 —— 误差这一类 bug 从结构上消失。
+
+    注意：ListView 不能写成 match_parent，否则列表铺满整块小组件、文字下方也归列表管，
+    根容器就收不到那片区域的点击（这正是旧方案必须撑高列表项的原因）。
 -->
-<ListView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/widget_list"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/transparent"
-    android:divider="@android:color/transparent"
-    android:dividerHeight="0dp"
-    android:overScrollMode="never"
-    android:scrollbars="vertical" />
+    android:background="@android:color/transparent">
+
+    <ListView
+        android:id="@+id/widget_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@android:color/transparent"
+        android:divider="@android:color/transparent"
+        android:dividerHeight="0dp"
+        android:overScrollMode="never"
+        android:scrollbars="vertical" />
+
+</FrameLayout>
