@@ -1,19 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
+    小组件尺寸契约（v8.5.1 起固定，改动前先读这段）：
+
+    Android 12+（API 31+）只读 targetCell*：默认摆在 4 列 × 3 行。
+    Android 11 及以下不认 targetCell*，只按 minWidth/minHeight 折算格子数；
+    它们原先还是 v2.0 单行 TextView 时代的值（180dp / 100dp，约 3×2），与 4×3 不一致。
+    v8.5.1 起按官方折算表（n 格 ≈ 70n − 30dp，见 App Widget Design Guidelines）对齐：
+
+      - minWidth=250dp  → 4 格宽（旧系统默认也是 4 列）
+      - minHeight=180dp → 3 格高（旧系统默认也是 3 行）
+      - minResizeWidth=110dp  → 2 格宽（缩放下限 2 列；官方表 110dp 对应 2 格）
+      - minResizeHeight=40dp  → 1 格高（缩放下限 1 行；官方表 40dp 对应 1 格）
+
+    为什么另外写 minResize*：若不声明，可缩放下限会默认等于 minWidth/minHeight，
+    旧系统上就再也缩不小了。v8.5.0 起小组件任何尺寸都能正常渲染（列表按内容高度、
+    空白由根容器接住点击），所以下限只取决于"多小还能看清"，取 2×1。
+
     tools:ignore="UnusedAttribute" 的原因：previewLayout / targetCellWidth / targetCellHeight
     只被 API 31+ 读取，但旧平台的解析器会直接忽略未知属性（不会崩溃），
-    同时保留了 minWidth/minHeight 供 API 21–30 使用，属于有意为之的前向兼容写法。
+    同时保留 minWidth/minHeight 供 API 24–30 使用，属于有意为之的前向兼容写法。
+
+    这些值只影响"默认多大 / 能拖多小"，不影响渲染正确性；桌面按自己的格子尺寸折算，
+    实际像素尺寸在不同设备上会有出入。launcher 行为无法在 CI 里验证，改完请在桌面上拖一下验收。
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:description="@string/widget_description"
     android:initialLayout="@layout/widget_layout"
-    android:minWidth="180dp"
-    android:minHeight="100dp"
+    android:minHeight="180dp"
+    android:minResizeHeight="40dp"
+    android:minResizeWidth="110dp"
+    android:minWidth="250dp"
     android:previewLayout="@layout/widget_preview"
     android:resizeMode="horizontal|vertical"
-    android:targetCellWidth="4"
     android:targetCellHeight="3"
+    android:targetCellWidth="4"
     android:updatePeriodMillis="0"
     android:widgetCategory="home_screen"
     tools:ignore="UnusedAttribute" />
