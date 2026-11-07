@@ -104,6 +104,12 @@ android {
         // 这里用的是 Robolectric 官方 getting-started 的整套 --add-opens（我们原先只有前 4 条）：
         // 升到 Robolectric 4.17 且 CI 用 JDK 21 后，缺项更容易在运行时炸出来。
         unitTests.all { test ->
+            // 临时诊断（qa/undo-flake-diag）：把测试 stdout 与完整异常打进 CI 日志
+            test.testLogging {
+                events("failed")
+                showStandardStreams = true
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            }
             test.jvmArgs(
                 "--add-opens=java.base/java.lang=ALL-UNNAMED",
                 "--add-opens=java.base/java.util=ALL-UNNAMED",

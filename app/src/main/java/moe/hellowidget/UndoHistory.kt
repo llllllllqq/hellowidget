@@ -72,6 +72,7 @@ internal class UndoHistory : TextWatcher {
         insertedLengths[depth] = count
         removedTexts.add(pendingRemoved)
         depth++
+        println("UNDODIAG historyRecord depth=$depth start=$start before=$before count=$count")
         pendingRemoved = ""
     }
 

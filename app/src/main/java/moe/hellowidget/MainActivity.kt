@@ -137,6 +137,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // savedInstanceState == null ⇔ 全新进入应用；非 null ⇔ 系统重建（旋转/深色模式/进程恢复）
         freshEntry = savedInstanceState == null
+        println(
+            "UNDODIAG onCreate state=${savedInstanceState != null} fresh=$freshEntry " +
+                "thread=${Thread.currentThread().name}"
+        )
         // targetSdk 35 起系统强制边到边（Android 15+），必须自行消费系统栏 insets
         enableEdgeToEdge()
 
@@ -181,6 +185,19 @@ class MainActivity : AppCompatActivity() {
         installBackHandler()
     }
 
+    /** 临时诊断（qa/undo-flake-diag）：观察系统恢复文本与撤回监听器的先后顺序 */
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        println(
+            "UNDODIAG restore BEFORE depth=$undoDepth " +
+                "text=${binding.editor.text.toString().take(20)} enabled=${binding.editor.isEnabled}"
+        )
+        super.onRestoreInstanceState(savedInstanceState)
+        println(
+            "UNDODIAG restore AFTER depth=$undoDepth " +
+                "text=${binding.editor.text.toString().take(20)} enabled=${binding.editor.isEnabled}"
+        )
+    }
+
     /**
      * 磁盘内容读取成功后的收尾：装内容、挂撤回监听、解禁编辑、聚焦、按需提示。
      *
@@ -189,6 +206,10 @@ class MainActivity : AppCompatActivity() {
      * 提示一次即清除（同一个损坏事件不会反复打扰）。
      */
     private fun onContentLoaded(savedText: String) {
+        println(
+            "UNDODIAG onContentLoaded touched=$editorTouched fresh=$freshEntry " +
+                "depthBefore=$undoDepth editorEnabled=${binding.editor.isEnabled}"
+        )
         loadCompleted = true
         loadFailed = false
         if (!editorTouched) {
@@ -198,6 +219,10 @@ class MainActivity : AppCompatActivity() {
         // 否则「读盘写入」或「系统重建恢复文本」会被当成一次用户编辑，
         // 撤回就会一路退成空文本，而不是回到刚打开时的内容。
         binding.editor.addTextChangedListener(undoHistory)
+        println(
+            "UNDODIAG undoListenerAttached depthAfter=$undoDepth " +
+                "text=${binding.editor.text.toString().take(20)}"
+        )
         // 顺序很重要：先解禁编辑（disabled 的 View 拿不到焦点），再聚焦，最后才定位光标
         binding.editor.isEnabled = true
         binding.editor.requestFocus()
