@@ -59,6 +59,26 @@ class MainActivity : AppCompatActivity() {
     /** 异步加载内容是否已完成（true = 磁盘内容已成功读入/确认可以保存） */
     private var loadCompleted = false
 
+    /** 磁盘内容是否已经放进编辑器（系统恢复/读盘写入都算「初始内容就位」） */
+    private var contentLoaded = false
+
+    /**
+     * 系统恢复实例状态（[onRestoreInstanceState]）是否已经发生。
+     *
+     * 为什么需要这个闸门：撤回历史只能记录**用户**造成的文本变更，而系统重建时框架会把
+     * 保存的文本 `setText` 回来 —— 这同样会触发 TextWatcher。异步读盘若比系统恢复先完成
+     * （真机/CI 上都观测到过），旧的收尾逻辑已经把撤回监听挂上、编辑器也已解禁，随后的
+     * 系统恢复就被记成一次「用户编辑」，重建后 `undoDepth` 从 1 变成 2
+     * （[moe.hellowidget.MainActivityUndoTest] 的偶发失败，v8.5.2 修复）。
+     *
+     * [onPostCreate] 在 `restoreInstanceState` 之后（真实 Android 与 Robolectric 一致），
+     * 因此用它作为「系统恢复已完成」的证据；监听器与编辑器解禁都等这个标志。
+     */
+    private var postCreateDone = false
+
+    /** 撤回监听器是否已经挂到当前 Activity 的编辑器上（每个 Activity 只挂一次） */
+    private var undoListenerAttached = false
+
     /**
      * v8.4.0：读盘是否**失败过**（`ContentRead.Failed`）。
      *
@@ -182,7 +202,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * 系统恢复完成后的闸门（见 [postCreateDone]）。
+     *
+     * [android.app.Activity.onPostCreate] 在 `restoreInstanceState` 之后执行（真实 Android 与
+     * Robolectric 的 recreate 顺序一致）：只有到这里，撤回监听器才允许挂到编辑器上。
+     */
+    override fun onPostCreate(savedInstanceState: Bundle?) {
+        super.onPostCreate(savedInstanceState)
+        postCreateDone = true
+        attachUndoListenerIfReady()
+    }
+
+    /**
+     * 撤回监听器的**唯一**挂载点：必须同时满足「磁盘内容已就位」（[contentLoaded]）与
+     * 「系统恢复已完成」（[postCreateDone]）。
+     *
+     * 正常情况下内容在 `onPostCreate` 之后才读完，于是由 [onContentLoaded] 走到这里；
+     * 若异步读盘比系统恢复还快（真机/CI 都观测到过这个交错），这里会先跳过，
+     * 等 [onPostCreate] 再挂 —— 否则随后的系统恢复 `setText` 会被记成一次用户编辑。
+     */
+    private fun attachUndoListenerIfReady() {
+        if (undoListenerAttached || !postCreateDone || !contentLoaded) return
+        undoListenerAttached = true
+        binding.editor.addTextChangedListener(undoHistory)
+    }
+
+    /**
      * 磁盘内容读取成功后的收尾：装内容、挂撤回监听、解禁编辑、聚焦、按需提示。
+     *
+     * 撤回监听器只经由 [attachUndoListenerIfReady] 挂载 —— 它内部会等系统恢复完成，
+     * 避免「系统重建恢复的文本」被当成一次用户编辑（`undoDepth` 偶发 1→2 的根因）。
      *
      * v8.4.0 起「损坏提示」也在这里：损坏可能发生在小组件/后台进程的首次读取里，
      * 用户当时不在编辑页；[ContentStore.takeCorruptionNotice] 把那个事件留到这一刻，
@@ -194,10 +243,11 @@ class MainActivity : AppCompatActivity() {
         if (!editorTouched) {
             installLoadedContent(savedText)
         }
-        // 撤回历史的记录器必须在「初始内容就位」之后才挂上：
+        contentLoaded = true
+        // 撤回历史的记录器必须在「初始内容就位」且「系统恢复已完成」之后才挂上：
         // 否则「读盘写入」或「系统重建恢复文本」会被当成一次用户编辑，
         // 撤回就会一路退成空文本，而不是回到刚打开时的内容。
-        binding.editor.addTextChangedListener(undoHistory)
+        attachUndoListenerIfReady()
         // 顺序很重要：先解禁编辑（disabled 的 View 拿不到焦点），再聚焦，最后才定位光标
         binding.editor.isEnabled = true
         binding.editor.requestFocus()
