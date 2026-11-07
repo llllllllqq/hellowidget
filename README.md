@@ -2,7 +2,7 @@
 
 一个轻量 Android 应用：**文本编辑器 + 桌面小组件**。在应用里输入文本，退出后内容以**可上下滚动的小部件**形式展示在桌面，支持自定义外观，且**零后台进程、数据永不损坏**。
 
-当前版本：**v8.5.1**（versionCode 37，compileSdk 36 / minSdk 24 / targetSdk 36）
+当前版本：**v8.5.2**（versionCode 38，compileSdk 36 / minSdk 24 / targetSdk 36）
 
 ## 功能特性
 
@@ -30,7 +30,14 @@
 
 完整更新日志（含每次改动的起因、真机证据与边界）见 **[CHANGELOG.md](CHANGELOG.md)**。
 
-当前版本：**v8.5.1** —— 小组件尺寸契约对齐：
+当前版本：**v8.5.2** —— 修「系统重建后撤回历史偶发多记一步」：
+
+- **现象**：系统重建（旋转 / 深色模式 / 进程恢复）后偶发 `undoDepth` 期望 1、实际 2，`MainActivityUndoTest.undoHistory_survivesSystemRecreation` 因此间歇性失败。
+- **根因**：框架在 `restoreInstanceState` 里把保存的文本 `setText` 回来，这也是一次文本变更；旧实现把撤回监听器挂在**异步读盘收尾**里，读盘偶尔比系统恢复先完成，监听器已挂、编辑器已解禁，恢复文本就被记成一次用户编辑。
+- **修复**：监听器收口到唯一挂载点，必须等「磁盘内容已就位」**且**「`onPostCreate`（在系统恢复之后）已发生」；用户可见行为与正常路径时序不变。
+- 新增 2 条回归用例（确定性交错 + 60 次 recreate 循环）；JVM 用例 180 → 182。
+
+上一版：**v8.5.1** —— 小组件尺寸契约对齐：
 
 - **默认大小 4×3 在新旧系统上统一**：Android 12+ 本来就按 `targetCellWidth=4 / targetCellHeight=3` 摆 4×3；
   Android 11 及以下不读 `targetCell`，此前用 180dp/100dp 折算出来约 3×2 —— 现在改成 `minWidth=250dp / minHeight=180dp`
@@ -110,11 +117,11 @@ Release 签名使用以下仓库 Secrets（已配置）。**没有 secrets 时�
 只改 `gradle.properties` 两行，提交并推送 `main`：
 
 ```properties
-hellowidget.versionName=8.5.1
-hellowidget.versionCode=37
+hellowidget.versionName=8.5.2
+hellowidget.versionCode=38
 ```
 
-CI 会自动用 `versionName` 生成 tag（`v8.5.1`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
+CI 会自动用 `versionName` 生成 tag（`v8.5.2`）与 Release 标题，APK 元数据也取自同一处，三者不会再漂移。
 发布后请顺手在 [CHANGELOG.md](CHANGELOG.md) 顶部补一条本版记录（起因、改动、证据、边界）。
 
 ## 本地构建
