@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
     /** 异步加载内容是否已完成（true = 磁盘内容已成功读入/确认可以保存） */
     private var loadCompleted = false
 
-    /** 磁盘内容是否已经放进编辑器（系统恢复/读盘写入都算「初始内容就位」） */
+    /** 磁盘内容是否已经成功读入（由 [onContentLoaded] 置位；系统恢复的文本由框架直接写入，不走这里） */
     private var contentLoaded = false
 
     /**
@@ -72,7 +72,8 @@ class MainActivity : AppCompatActivity() {
      * （[moe.hellowidget.MainActivityUndoTest] 的偶发失败，v8.5.2 修复）。
      *
      * [onPostCreate] 在 `restoreInstanceState` 之后（真实 Android 与 Robolectric 一致），
-     * 因此用它作为「系统恢复已完成」的证据；监听器与编辑器解禁都等这个标志。
+     * 因此用它作为「系统恢复已完成」的证据。它只用来闸住**撤回监听器**的挂载；
+     * 编辑器解禁 / 聚焦 / 输入法仍在 [onContentLoaded] 里按原顺序立即执行。
      */
     private var postCreateDone = false
 
@@ -414,6 +415,9 @@ class MainActivity : AppCompatActivity() {
      * 先把编辑器里的当前内容原子落盘，再用 [SyncTrigger.MANUAL] 触发同步：
      * 同步读的是磁盘上的内容，不先落盘就会把**旧内容**推上云端（而且看起来「同步成功」）。
      * MANUAL 是用户明确的当下意图，因此**永不并入**正在执行的那一趟同步（自己走一趟等锁）。
+     *
+     * v8.5.3：读盘尚未完成时 [saveContent] 会拒绝保存并提示「内容还在加载」，
+     * 不会把空编辑器内容落盘或推上云端。
      */
     private fun uploadToCloudNow() {
         if (!SyncLauncher.isReady(this)) {
@@ -438,6 +442,11 @@ class MainActivity : AppCompatActivity() {
      *
      * v8.4.0：**读盘失败时一律不保存**（`loadFailed`）—— 读失败意味着编辑器里的内容
      * 不代表磁盘内容，此时任何保存都可能把磁盘上唯一那份内容覆盖成空。
+     *
+     * v8.5.3：**内容还没就绪时也拒绝保存**（`!loadCompleted && !editorTouched`）。
+     * 这是给「立即上传」这类不经过 [shouldPersist] 的入口补的最后一道闸门：读盘未完成时
+     * 编辑器还是空的，若把空文本当快照写盘，就会覆盖磁盘上的旧内容，并随后触发一次
+     * 可能为空的云端上传。系统恢复出文本（`editorTouched == true`）不受影响。
      */
     private fun shouldPersist(): Boolean = !loadFailed && (loadCompleted || editorTouched)
 
@@ -761,12 +770,17 @@ class MainActivity : AppCompatActivity() {
      * v8.4.0（审计）：
      *  - 读盘失败（[loadFailed]）时**直接拒绝保存**——这是"不用空内容覆盖磁盘"的最后一道闸门，
      *    覆盖所有保存入口（包括顶部的「立即上传」，它不经过 [shouldPersist]）；
+     *  - 内容尚未就绪（`!loadCompleted && !editorTouched`，v8.5.3）时同样拒绝保存：
+     *    读盘还没回来时编辑器是空的，把空文本当快照写盘会覆盖磁盘内容并触发一次
+     *    可能为空的云端上传；系统恢复出文本（`editorTouched == true`）不受影响；
      *  - 写盘失败不再一律收尾：`onDone(ok)` 把结果交给调用方，返回键/深色模式据此决定
      *    是否销毁或重建界面（失败时保留用户内容）；
      *  - 保存作用域是单线程的（见 [ContentStore.saveScope]），两次并发保存不会乱序落盘。
      *
      * @param notifyFailure 写盘**失败**时是否提示。v7.7 起保存成功不再弹「已保存」toast
      *   （用户要求删除全部保存成功提示），失败仍然提示 —— 那是可能丢内容的信号。
+     *   v8.5.3 起「内容还在加载」的拒绝也走这个开关（顶部「立即上传」会看到提示；
+     *   返回键 / 失焦 / onStop 等入口本来就过 [shouldPersist]，不会走到这里）。
      * @param syncTrigger 写盘成功后要触发的一次 WebDAV 同步，null = 不触发。
      *   v7.8：**每一条保存路径都传 [SyncTrigger.CLOSE_EDITOR]**（旋转 / 深色模式 / 跳设置页
      *   这些静默保存也一样）——「任何保存操作都触发自动上传」，密集保存由 SyncManager
@@ -785,6 +799,16 @@ class MainActivity : AppCompatActivity() {
         if (loadFailed) {
             Log.w(TAG, "磁盘内容读取失败，本次保存被拒绝（防止覆盖磁盘内容）：reason=${reason.token}")
             if (notifyFailure) toast(getString(R.string.editor_load_failed))
+            onDone(false)
+            return
+        }
+        // v8.5.3：内容还没就绪（读盘未完成、用户也没输入过）时拒绝一切保存。
+        // 返回键 / 失焦 / onStop / 深色模式本来就先过 shouldPersist，走不到这里；
+        // 这道闸门专门兜住不经过 shouldPersist 的「立即上传」——否则它会拿空编辑器
+        // 内容覆盖磁盘，并随后触发一次（可能为空的）上传。
+        if (!loadCompleted && !editorTouched) {
+            Log.w(TAG, "内容尚未就绪（读盘未完成），本次保存被拒绝：reason=${reason.token}")
+            if (notifyFailure) toast(getString(R.string.editor_still_loading))
             onDone(false)
             return
         }
