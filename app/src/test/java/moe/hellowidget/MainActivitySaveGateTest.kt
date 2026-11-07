@@ -1,16 +1,28 @@
 package moe.hellowidget
 
+import android.app.Application
 import android.text.SpannableStringBuilder
 import android.widget.EditText
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
+import moe.hellowidget.sync.SyncConfig
+import moe.hellowidget.sync.SyncSettings
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import org.robolectric.fakes.RoboMenuItem
+import org.robolectric.shadows.ShadowToast
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 投产 QA：MainActivity 保存语义的确定性回归测试（Robolectric，全云端运行）。
@@ -19,6 +31,8 @@ import org.robolectric.annotation.LooperMode
  *  A. 加载尚未完成、但用户已经输入时离开 → **输入必须落盘**（旧版本会静默丢弃）
  *  B. 加载尚未完成且用户没输入时离开 → **不得用空编辑器覆盖磁盘上的旧内容**
  *  C. 编辑器必须安装长度上限过滤器（防止超大文本导致 OOM）
+ *  D. v8.5.3：加载尚未完成时点「立即上传」（不经过 [MainActivity.shouldPersist] 的入口）
+ *     → **一次写盘都不许发起**，并提示用户稍候
  *
  * 说明：真实设备上「onCreate 已发出异步读盘、读盘尚未返回」的窗口客观存在，
  * 但用测试时钟无法稳定命中，因此这里显式构造该状态，以确定性地验证门禁逻辑。
@@ -27,6 +41,21 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [34])
 @LooperMode(LooperMode.Mode.PAUSED)
 class MainActivitySaveGateTest {
+
+    private val app: Application get() = RuntimeEnvironment.getApplication()
+
+    /** v8.5.3：用来把「读盘」按住在挂起状态（测试结束（含失败）时取消） */
+    private var pendingRead: CompletableDeferred<ContentRead>? = null
+
+    @After
+    fun tearDown() {
+        pendingRead?.cancel()
+        pendingRead = null
+        ContentStore.readOverride = null
+        ContentStore.writeOverride = null
+        SyncSettings.setEnabled(app, false)
+        SyncSettings.resetRuntimeState(app)
+    }
 
     private fun getBooleanField(target: Any, name: String): Boolean =
         target.javaClass.getDeclaredField(name).apply { isAccessible = true }.getBoolean(target)
@@ -87,6 +116,61 @@ class MainActivitySaveGateTest {
 
         // 必须保留磁盘上的旧内容，不能被空编辑器覆盖
         assertEquals("OLD_CONTENT", runBlocking { ContentStore.read() })
+    }
+
+    /**
+     * v8.5.3：「立即上传」不经过 [MainActivity.shouldPersist]，因此必须由
+     * [MainActivity.saveContent] 自己拒绝「读盘未完成且用户没输入过」的保存 ——
+     * 否则空编辑器内容会被当作快照写盘，并随后触发一次（可能为空的）上传。
+     *
+     * 这里把读盘按住不返回（真实设备上这个窗口客观存在），并且**只记录写盘尝试、
+     * 不真的写盘**：断言的是「一次保存协程都没启动」，而不是用磁盘内容去证明磁盘没变。
+     */
+    @Test
+    fun manualUploadBeforeLoad_isRejected_insteadOfWritingEmptyContent() {
+        assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write("OLD_CONTENT") })
+        // 让「立即上传」具备同步条件，确保它一定会走到 saveContent（而不是提示未配置）
+        SyncSettings.saveConfig(
+            app,
+            SyncConfig("https://dav.example.com/dav/", "note.txt", "user", "pass")
+        )
+        SyncSettings.setEnabled(app, true)
+
+        // 读盘一直挂着：onContentLoaded 不会执行，编辑器保持禁用、内容为空
+        val read = CompletableDeferred<ContentRead>()
+        pendingRead = read
+        ContentStore.readOverride = { read.await() }
+
+        val written = AtomicReference<String?>(null)
+        val writeLatch = CountDownLatch(1)
+        ContentStore.writeOverride = { text ->
+            written.set(text)
+            writeLatch.countDown()
+            true
+        }
+
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val editor: EditText = activity.findViewById(R.id.editor)
+        assertFalse("前置条件：读盘未完成时编辑器必须保持禁用", editor.isEnabled)
+
+        assertTrue(
+            "「立即上传」入口必须被处理",
+            activity.onOptionsItemSelected(RoboMenuItem(R.id.action_upload))
+        )
+
+        // 修复前：这里会以空文本发起一次写盘；修复后：保存协程根本不会启动
+        val wrote = writeLatch.await(2, TimeUnit.SECONDS)
+        idleMain()
+        assertFalse(
+            "读盘未完成时点「立即上传」不得写盘（实际写入内容=${written.get() ?: "无"}）；" +
+                "否则空编辑器内容会覆盖磁盘，并触发一次可能为空的云端上传",
+            wrote
+        )
+        assertEquals(
+            "必须明确提示用户内容还在加载，而不是点了没反应",
+            activity.getString(R.string.editor_still_loading),
+            ShadowToast.getTextOfLatestToast()
+        )
     }
 
     @Test

@@ -12,6 +12,8 @@
     <string name="editor_over_limit_after_upgrade">正文有 %1$d 字，超过新的上限 %2$d 字。内容完整保留，但需要先删减到 %2$d 字以下才能继续输入。</string>
     <!-- v8.4.0：读盘失败时编辑器保持禁用，绝不覆盖磁盘内容 -->
     <string name="editor_load_failed">内容读取失败：本次已禁止保存，以免覆盖磁盘上的内容。请退出后重新打开应用。</string>
+    <!-- v8.5.3：读盘未完成时点「立即上传」会被拒绝（防止用空编辑器内容覆盖磁盘） -->
+    <string name="editor_still_loading">内容还在加载，请稍候再试</string>
     <!-- v8.4.0：上次运行期间检测到内容文件损坏（CRC 校验失败），已保留现场并重建 -->
     <string name="content_corrupted_rebuilt">上次检测到内容文件损坏，已用空内容重建。损坏的原文件已保留为 %1$s，应用内暂时无法自动恢复；如果这份内容重要，请在继续编辑前先保留应用数据。</string>
     <string name="widget_description">在桌面显示你的文本，可上下滚动阅读</string>

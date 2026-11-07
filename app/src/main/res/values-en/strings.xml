@@ -16,6 +16,8 @@
     <string name="editor_over_limit_after_upgrade">The text has %1$d characters, above the new limit of %2$d. Nothing was removed, but you must trim it below %2$d characters before typing again.</string>
     <!-- v8.4.0: when reading fails the editor stays disabled so the file on disk is never overwritten -->
     <string name="editor_load_failed">Could not read the content. Saving is disabled this time so the file on disk is not overwritten. Please close and reopen the app.</string>
+    <!-- v8.5.3: "Upload now" is rejected while the initial read is still in flight (the empty editor must never overwrite the disk) -->
+    <string name="editor_still_loading">Still loading. Please try again in a moment.</string>
     <!-- v8.4.0: the content file was corrupt (CRC check failed); it was rebuilt and the damaged file kept -->
     <string name="content_corrupted_rebuilt">The content file was found corrupt and has been rebuilt as empty. The damaged file was kept as %1$s; the app cannot restore it automatically. If the content matters, keep the app data before editing further.</string>
     <string name="widget_description">Show your text on the home screen, scrollable</string>
