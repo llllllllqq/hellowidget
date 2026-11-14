@@ -1,5 +1,6 @@
 package moe.hellowidget
 
+import android.Manifest
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -21,6 +22,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
+import moe.hellowidget.sync.SyncNotifier
 import moe.hellowidget.sync.SyncSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -65,7 +67,32 @@ class MainActivityEntryInstrumentedTest {
 
     @Before
     fun seedContent() {
+        ensureNotificationPermission()
         assertTrue("前置条件：DataStore 必须可写", runBlocking { ContentStore.write(seed) })
+    }
+
+    /**
+     * v8.5.5：主界面首次启动会检查通知权限。仪器化环境是全新安装，API 33+ 默认没有
+     * `POST_NOTIFICATIONS`，权限说明框会盖住编辑页，让下面的 IME / 点击用例假失败。
+     * 权限流程本身已由 JVM 用例覆盖，这里直接授予，保持既有用例的前置条件不变。
+     */
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        if (SyncNotifier.hasNotificationPermission(context)) return
+        val permission = Manifest.permission.POST_NOTIFICATIONS
+        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+        runCatching { ui.grantRuntimePermission(context.packageName, permission) }
+            .onFailure {
+                runCatching {
+                    val descriptor = ui.executeShellCommand("pm grant ${context.packageName} $permission")
+                    ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+                }
+            }
+        assertTrue(
+            "无法授予通知权限：首次启动的权限说明框会干扰本类用例",
+            SyncNotifier.hasNotificationPermission(context)
+        )
     }
 
     /**

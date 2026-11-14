@@ -1,5 +1,6 @@
 package moe.hellowidget
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
@@ -16,8 +17,10 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.drawable.DrawableCompat
@@ -46,6 +49,24 @@ class MainActivity : AppCompatActivity() {
      * 见 [UndoHistoryViewModel] 的说明。
      */
     private val undoViewModel: UndoHistoryViewModel by viewModels()
+
+    /**
+     * v8.5.5：首次启动时的通知权限请求。
+     *
+     * 拒绝后同步照常跑（只是没有通知栏进度），因此回调里**不打断**用户：
+     * 只有系统已经标记「不再询问」时才再给一次「去设置」的引导；
+     * 其余情况只把焦点和输入法还给编辑器。
+     */
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            awaitingNotificationPermission = false
+            notificationPromptActive = false
+            if (!granted && NotificationPermissionPrompt.isPermanentlyDenied(this)) {
+                showNotificationSettingsDialog()
+            } else {
+                restoreEditorAfterPermissionPrompt()
+            }
+        }
 
     private val undoHistory: UndoHistory get() = undoViewModel.history
 
@@ -115,6 +136,18 @@ class MainActivity : AppCompatActivity() {
 
     /** 本次离开（失焦/Home/多任务键）是否已保存过，防止重复保存 */
     private var savedOnLeave = false
+
+    /**
+     * v8.5.5：通知权限说明框 / 系统权限弹窗是否正在占用窗口焦点。
+     *
+     * 这些弹窗会让 Activity 收到 `onWindowFocusChanged(false)`，而本应用把失焦当成「用户离开」
+     * 并保存。首次启动时内容刚读完，如果不抑制，用户还没编辑就会写盘并触发一次自动上传
+     * （违反「打开应用只读盘」）。抑制只覆盖权限流程，用户真正按 Home / 返回时照常保存。
+     */
+    private var notificationPromptActive = false
+
+    /** 已经 `launch()` 系统权限请求：等回调期间必须继续抑制，不能因弹窗关闭的瞬间失焦而保存。 */
+    private var awaitingNotificationPermission = false
 
     /** 最近一次记录的夜间模式标志位（Configuration.UI_MODE_NIGHT_MASK），用于检测深色模式切换 */
     private var lastNightMode = -1
@@ -277,6 +310,80 @@ class MainActivity : AppCompatActivity() {
             TAG,
             "上次自动上传通道：${SyncSettings.launchNote(applicationContext).ifEmpty { "无记录" }}"
         )
+        maybeAskNotificationPermission()
+    }
+
+    /**
+     * v8.5.5：首次启动检查通知权限，缺权限时先说明用途再申请。
+     *
+     * 只在**全新进入应用**时走一次（`freshEntry` + 持久化标记），系统重建（旋转 / 深色模式 /
+     * 进程恢复）不会重复弹。先显示自己的说明框而不是直接弹系统框，是官方推荐的做法：
+     * 系统框只说「是否允许发送通知」，不说为什么要它；本应用的用途是 WebDAV 上传进度，
+     * 用户拒绝也完全不影响保存与同步。点「开启通知」后才拉起系统权限弹窗。
+     *
+     * API 32 及以下没有 `POST_NOTIFICATIONS` 运行时权限，只能引导到系统设置；API 33+ 但
+     * 用户在系统里关掉了全部通知时同理（运行时权限已经给了，重新请求不会有弹窗）。
+     */
+    private fun maybeAskNotificationPermission() {
+        if (!freshEntry) return
+        if (NotificationPermissionPrompt.hasBeenAsked(this)) return
+        // 先落标记：无论用户点「开启」还是「暂不」，都不再自动问第二次。
+        NotificationPermissionPrompt.markAsked(this)
+        if (NotificationPermissionPrompt.notificationsEnabled(this)) return
+        // 说明框会夺走窗口焦点；抑制「失焦即保存」，否则首次启动会在用户没编辑时写盘/自动上传。
+        notificationPromptActive = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.notification_permission_title)
+            .setMessage(R.string.notification_permission_message)
+            .setPositiveButton(R.string.notification_permission_enable) { _, _ ->
+                if (NotificationPermissionPrompt.canRequestRuntimePermission(this)) {
+                    awaitingNotificationPermission = true
+                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    // 去系统设置：抑制保持到 onResume 从设置页回来
+                    NotificationPermissionPrompt.openNotificationSettings(this)
+                }
+            }
+            .setNegativeButton(R.string.notification_permission_not_now) { _, _ ->
+                notificationPromptActive = false
+            }
+            // 返回键/点外部取消（没有选择）：权限流程结束，恢复正常的失焦保存
+            .setOnCancelListener { notificationPromptActive = false }
+            .setOnDismissListener { restoreEditorAfterPermissionPrompt() }
+            .show()
+    }
+
+    /**
+     * 权限被永久拒绝后的唯一出路：系统不会再次弹窗，只能去设置页手动打开。
+     * 只在 `isPermanentlyDenied` 时调用，避免用户刚点一次「不允许」就被第二个框追着问。
+     */
+    private fun showNotificationSettingsDialog() {
+        if (isFinishing || isDestroyed) return
+        notificationPromptActive = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.notification_permission_denied_title)
+            .setMessage(R.string.notification_permission_denied_message)
+            .setPositiveButton(R.string.notification_permission_open_settings) { _, _ ->
+                // 去系统设置：抑制保持到 onResume 从设置页回来
+                NotificationPermissionPrompt.openNotificationSettings(this)
+            }
+            .setNegativeButton(android.R.string.ok) { _, _ ->
+                notificationPromptActive = false
+            }
+            .setOnCancelListener { notificationPromptActive = false }
+            .setOnDismissListener { restoreEditorAfterPermissionPrompt() }
+            .show()
+    }
+
+    /**
+     * 权限相关弹窗会短暂抢走窗口焦点，关掉后把焦点与输入法还给编辑器。
+     * 首次启动本来就该「打开即输入」，不该因为一次权限询问让用户再点一下编辑区。
+     */
+    private fun restoreEditorAfterPermissionPrompt() {
+        if (isFinishing || isDestroyed) return
+        if (!binding.editor.isEnabled) return
+        binding.editor.requestFocus()
+        requestImeShow()
     }
 
     /**
@@ -477,7 +584,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun shouldSaveOnLeave(): Boolean =
-        !openingSettings && !isChangingConfigurations && !exitingByBack && shouldPersist() && !savedOnLeave
+        !openingSettings && !isChangingConfigurations && !exitingByBack &&
+            !notificationPromptActive && shouldPersist() && !savedOnLeave
 
     /**
      * 失焦保存。写盘走应用级作用域（[ContentStore.saveScope]），**不阻塞主线程**
@@ -510,7 +618,7 @@ class MainActivity : AppCompatActivity() {
      */
     override fun onStop() {
         super.onStop()
-        if (!exitingByBack && !savedOnLeave && shouldPersist()) {
+        if (!exitingByBack && !notificationPromptActive && !savedOnLeave && shouldPersist()) {
             val leavingApp = !openingSettings && !isChangingConfigurations
             saveContent(
                 notifyFailure = leavingApp,
@@ -524,6 +632,9 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         openingSettings = false
         savedOnLeave = false
+        // 从系统权限弹窗/设置页回来：权限流程结束。等待权限回调时不清，避免回调前
+        // 系统弹窗关闭的瞬间被当成「用户离开」而触发一次保存。
+        if (!awaitingNotificationPermission) notificationPromptActive = false
         applyEditorAppearance()
     }
 

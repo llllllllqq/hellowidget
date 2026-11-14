@@ -335,7 +335,7 @@ object SyncManager {
             try {
                 val outcome = uploadOnce(context, client, config)
                 // 重试成功后把通知文案恢复成默认的「正在上传最新内容…」：
-                // 上传其实已经成功，不该让最后 5 秒的最短可见期显示"正在重试"
+                // 上传其实已经成功，不该让最后 1.5 秒的最短可见期显示"正在重试"
                 if (retries > 0) onWindowPhase.invoke(null)
                 return outcome
             } catch (e: CancellationException) {
