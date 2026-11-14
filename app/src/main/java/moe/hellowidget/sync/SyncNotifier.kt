@@ -50,8 +50,13 @@ object SyncNotifier {
     /**
      * 进度通知的最短可见时长。上传通常只要几百毫秒：通知刚发出去就被收掉，
      * SystemUI 甚至来不及渲染，用户看到的是「完全没有通知」。
+     *
+     * v8.5.4：1500ms → **5000ms**。真机 adb 取证（2026-11-14）显示通知每次都建立、
+     * 但只存活约 1.3–1.4 秒；1.5 秒的窗口经常来不及让用户下拉通知栏，表现为「有时无通知」。
+     * 延长到 5 秒只是让这条静音、LOW、无横幅的进度条有足够时间被看到，
+     * 不改变「只有真的上传才保留、没变就立刻收掉」的语义。
      */
-    const val MIN_PROGRESS_VISIBLE_MS = 1500L
+    const val MIN_PROGRESS_VISIBLE_MS = 5000L
 
     /** 通知渠道懒创建：同步没启用时应用启动完全不受影响 */
     fun ensureChannel(context: Context) {
