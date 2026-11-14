@@ -41,12 +41,11 @@ import org.robolectric.shadows.ShadowToast
  * 因此断言的是**编排本身**：有没有发请求、发的是什么、有没有给用户可见的反馈。
  * 真实的 HTTP 行为由 `HttpWebDavClientTest`（真 Socket）与 CI 的模拟器端到端测试覆盖。
  *
- * 两个直接对应线上报障的用例：
- *  - [upload_whenLocalChanged_hasVisibleProgressNotificationAndShowsToast]：
- *    「上传很快，通知栏进度根本看不到」——断言**上传进行中进度通知确实存在**，
- *    且上传结束后至少保留 [SyncNotifier.MIN_PROGRESS_VISIBLE_MS]，并弹出成功 Toast；
- *  - [noUpload_whenContentUnchanged_sendsNothingAndIsSilent]：
- *    「本地没改」时一个请求都不发、也不打扰用户。
+ * 两个直接对应报障的用例：
+ *  - [upload_whenLocalChanged_showsToastAndLeavesNoNotification]：
+ *    成功路径只弹 Toast，不再发用户可见通知（v8.5.6）；
+ *  - [failure_recordsTheErrorShowsAFailureToastAndPostsAHighNotification]：
+ *    失败同时弹 Toast + 发 HIGH 渠道通知，两者并存。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -58,7 +57,6 @@ class SyncManagerTest {
 
     /** 记录所有请求的假客户端 */
     private class FakeClient(
-        private val context: Context,
         private val firstPutFailure: WebDavException? = null
     ) : WebDavClient {
         val puts = mutableListOf<Pair<String, String>>()
@@ -66,9 +64,6 @@ class SyncManagerTest {
 
         /** 尝试过的 PUT 次数（含被模拟失败挡下的那次） */
         var putAttempts = 0
-
-        /** 上传进行中，进度通知是否可见（这正是「有没有通知栏进度」的证据） */
-        var progressVisibleDuringPut = false
 
         private var failed = false
 
@@ -78,7 +73,6 @@ class SyncManagerTest {
                 failed = true
                 throw firstPutFailure
             }
-            if (progressNotificationVisible(context)) progressVisibleDuringPut = true
             puts += url to String(body, Charsets.UTF_8)
         }
 
@@ -97,7 +91,7 @@ class SyncManagerTest {
 
     @Before
     fun setUp() {
-        // 通知权限（API 33+ 需要）；不过权限时进度通知不会显示，测不到
+        // 通知权限（API 33+ 需要）；不过权限时失败通知不会显示，测不到
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         // setPersisted(true) 的前置权限（v7.9 的系统重试任务）：JobInfo.Builder.build() 会检查它
         shadowOf(app).grantPermissions(Manifest.permission.RECEIVE_BOOT_COMPLETED)
@@ -131,7 +125,7 @@ class SyncManagerTest {
     private fun installClient(firstPutFailure: WebDavException? = null) {
         SyncManager.clientFactory = { _, _ ->
             clientBuilds++
-            FakeClient(context, firstPutFailure).also {
+            FakeClient(firstPutFailure).also {
                 lastClient = it
                 clients += it
             }
@@ -139,14 +133,12 @@ class SyncManagerTest {
     }
 
     private fun sync(trigger: SyncTrigger = SyncTrigger.MANUAL): SyncStatus =
-        runBlocking { SyncManager.performSync(context, trigger, progress = true) }
+        runBlocking { SyncManager.performSync(context, trigger) }
 
     // ------------------------------------------------------------ 上传
 
     @Test
-    fun upload_whenLocalChanged_hasVisibleProgressNotificationAndShowsToast() {
-        val startedAt = System.currentTimeMillis()
-
+    fun upload_whenLocalChanged_showsToastAndLeavesNoNotification() {
         val status = sync()
 
         assertTrue("第一次同步（本机从未上传过）必须上传，实际：$status", status is SyncStatus.Success)
@@ -172,23 +164,10 @@ class SyncManagerTest {
             name
         )
 
-        // 报障点 1：上传很快也必须真的有通知栏进度
-        assertTrue(
-            "上传进行中进度通知必须可见（否则就是用户看到的「没有通知栏进度」）",
-            client.progressVisibleDuringPut
-        )
-        // 报障点 2：通知至少可见 MIN_PROGRESS_VISIBLE_MS，不会「闪一下就没了」
-        val elapsed = System.currentTimeMillis() - startedAt
-        assertTrue(
-            "上传结束后进度通知应至少保留 ${SyncNotifier.MIN_PROGRESS_VISIBLE_MS}ms，实际 ${elapsed}ms",
-            elapsed >= SyncNotifier.MIN_PROGRESS_VISIBLE_MS - 100
-        )
-        // 报障点 3：上传成功要有 Toast（即使通知一闪而过也能知道）
+        // v8.5.6：成功路径不再发用户可见通知（前台服务通知由 SyncService 自己管理）
+        assertEquals("上传成功不得留下通知", 0, notificationCount(context))
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(context.getString(R.string.sync_upload_succeeded), ShadowToast.getTextOfLatestToast())
-
-        // 收尾：进度通知必须被收掉，不留常驻通知
-        assertFalse("同步结束后不得留下进度通知", progressNotificationVisible(context))
         // 基线：哈希记录下来，供下次判断「本地有没有变」
         assertEquals(
             SyncEngine.sha256Hex("内容 A".toByteArray()),
@@ -214,7 +193,6 @@ class SyncManagerTest {
     @Test
     fun noUpload_whenContentUnchanged_sendsNothingAndIsSilent() {
         SyncSettings.recordSuccess(context, SyncEngine.sha256Hex(content.toByteArray()), 1_735_689_600L)
-        val startedAt = System.currentTimeMillis()
 
         val status = sync()
 
@@ -223,8 +201,7 @@ class SyncManagerTest {
         assertTrue("本地没变时一个请求都不该发", lastClient!!.puts.isEmpty())
         assertTrue("也不该创建目录", lastClient!!.mkcols.isEmpty())
 
-        val elapsed = System.currentTimeMillis() - startedAt
-        assertTrue("没有上传就不该占着通知（无需等待可见时长），实际 ${elapsed}ms", elapsed < 1_000)
+        assertEquals("没有上传也不得发通知", 0, notificationCount(context))
         shadowOf(Looper.getMainLooper()).idle()
         assertNull("没有上传就不该弹成功提示", ShadowToast.getTextOfLatestToast())
     }
@@ -281,14 +258,14 @@ class SyncManagerTest {
     @Test
     fun readFailure_abortsTheUploadInsteadOfSendingEmptyContent() {
         // 先用正常内容建立「本机曾上传过」的基准
-        val first = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR, progress = true) }
+        val first = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
         assertTrue("前置条件：正常内容应上传成功", first is SyncStatus.Success)
         val hashBefore = SyncSettings.lastUploadedHash(context)
         assertNotNull("前置条件：应记下上次成功上传的哈希", hashBefore)
         val putsBefore = clients.sumOf { it.puts.size }
 
         SyncManager.contentReader = { ContentRead.Failed(java.io.IOException("模拟读盘失败")) }
-        val failed = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR, progress = true) }
+        val failed = runBlocking { SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR) }
 
         assertTrue("读盘失败必须报失败，而不是成功，实际：$failed", failed is SyncStatus.Failed)
         assertEquals(
@@ -371,11 +348,11 @@ class SyncManagerTest {
     // ------------------------------------------------------------ 失败路径
 
     /**
-     * v7.8：失败反馈改成一条 Toast（与成功提示对称），**不再往通知栏留东西**。
+     * v8.5.6：失败反馈 = 原来的 Toast（文案/触发条件不变）+ 新增一条 HIGH 渠道通知。
      * 完整原因仍然写进 [SyncSettings.lastResult] / `lastError`，同步设置页的状态行照常显示。
      */
     @Test
-    fun failure_recordsTheErrorAndShowsAFailureToastButLeavesNoNotification() {
+    fun failure_recordsTheErrorShowsAFailureToastAndPostsAHighNotification() {
         SyncManager.clientFactory = { _, _ ->
             clientBuilds++
             object : WebDavClient {
@@ -409,7 +386,22 @@ class SyncManagerTest {
             expectedToast,
             ShadowToast.getTextOfLatestToast()
         )
-        assertEquals("失败之后不得留下任何通知", 0, notificationCount(context))
+        // v8.5.6：失败必须有 HIGH 渠道通知，且与 Toast 并存
+        assertEquals("失败后应只留一条通知", 1, notificationCount(context))
+        val channel = notificationManager(context).getNotificationChannel(SyncNotifier.CHANNEL_ID_FAILURE)
+        assertNotNull("失败通知渠道必须已创建", channel)
+        assertEquals(
+            "失败通知渠道必须是 HIGH",
+            NotificationManager.IMPORTANCE_HIGH,
+            channel!!.importance
+        )
+        val notification = shadowOf(notificationManager(context))
+            .getNotification(SyncNotifier.ID_FAILURE)
+        assertNotNull("失败通知必须真的发出", notification)
+        assertEquals(
+            context.getString(R.string.sync_notif_failure_title),
+            notification!!.extras?.getString(android.app.Notification.EXTRA_TITLE)
+        )
     }
 
     @Test
@@ -440,22 +432,7 @@ class SyncManagerTest {
         fun notificationManager(context: Context): NotificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        /**
-         * 通知是否处于「已发出」状态。
-         *
-         * 用标题做匹配而不是 `getNotification(tag, id)`：进度通知由前台服务的
-         * `startForeground` 发出（没有 tag），用无 tag 查询在 Robolectric 上不可靠；
-         * 而通知的标题在应用内唯一，足够精确。
-         */
-        fun notificationWithTitle(context: Context, title: String): Any? =
-            shadowOf(notificationManager(context)).allNotifications.firstOrNull {
-                it.extras?.getString(android.app.Notification.EXTRA_TITLE) == title
-            }
-
-        fun progressNotificationVisible(context: Context): Boolean =
-            notificationWithTitle(context, context.getString(R.string.sync_notif_progress_title)) != null
-
-        /** 当前还挂在通知栏上的通知数量（v7.8：失败之后必须是 0） */
+        /** 当前还挂在通知栏上的通知数量（v8.5.6：成功必须是 0，失败是 1 条 HIGH） */
         fun notificationCount(context: Context): Int =
             shadowOf(notificationManager(context)).allNotifications.size
     }

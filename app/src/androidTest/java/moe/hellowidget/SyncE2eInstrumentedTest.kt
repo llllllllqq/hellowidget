@@ -103,7 +103,7 @@ class SyncE2eInstrumentedTest {
 
     /**
      * API 33+ 没授予通知权限时，前台服务通知不会进通知栏、`notify()` 也会被丢弃，
-     * 「进度通知是否可见」这条断言就会变成假失败 —— 所以先确保权限真的到手。
+     * 「失败通知是否可见」这条断言就会变成假失败 —— 所以先确保权限真的到手。
      *
      * 注意 `executeShellCommand` 得到的是异步管道：必须读到 EOF 才算命令执行完，
      * 直接 close 可能把 `pm grant` 掐掉。
@@ -300,102 +300,39 @@ class SyncE2eInstrumentedTest {
     }
 
     /**
-     * 用户报障的复现与固化：「上传很快，进度条根本看不到」。
+     * v8.5.6：成功路径不再发用户可见通知，尤其不得留下失败通知。
      *
-     * 为什么这里断言的是**服务存活时长**而不是「查询到通知」：
-     * 实测（CI 的 API 34 / API 35 模拟器）`NotificationManager.getActiveNotifications()`
-     * **不会返回前台服务的通知** —— 上传成功、服务确实在跑，但查询结果始终为空；
-     * 而本应用自己 `notify()` 发出的通知（见 [inProcessFallback_alsoShowsAProgressNotification]）
-     * 能被正常查到。因此前台服务路径改为断言它的**效果**：进度通知的宿主（前台服务）
-     * 必须存活足够久，让通知真的有机会被渲染出来 —— 这正是 v7.5 修的那个点
-     * （[SyncNotifier.MIN_PROGRESS_VISIBLE_MS]）；修好之前上传一结束就收通知，
-     * 服务只活几十毫秒。
+     * 前台服务仍会短暂持有一条 LOW 通知（Android 硬要求，见 SyncService 的说明），
+     * 但成功结束后不得出现 [SyncNotifier.ID_FAILURE] 的 HIGH 通知。
      */
     @Test
-    fun fastUpload_keepsTheProgressNotificationAliveLongEnough() {
+    fun fastUpload_successLeavesNoFailureNotification() {
         assertTrue(runBlocking { ContentStore.write("通知可见性验证") })
         SyncSettings.setEnabled(context, false)
 
         ActivityScenario.launch(MainActivity::class.java).use {
             SyncSettings.setEnabled(context, true)
-            // v8.1.0：没有闸门可设，也不需要设 —— 打开应用本身不触发任何上传（v7.8），
-            // 因此下面这次上传只可能来自那次显式请求
-            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             assertTrue("应启动前台服务", SyncLauncher.request(context, SyncTrigger.MANUAL))
 
-            var firstSeenAt = 0L
-            var lifetimeMs = -1L
-            val observeDeadline = SystemClock.uptimeMillis() + 20_000
-            while (SystemClock.uptimeMillis() < observeDeadline) {
-                val running = activityManager.getRunningServices(Int.MAX_VALUE)
-                    .any { it.service.className == SyncService::class.java.name }
-                val now = SystemClock.uptimeMillis()
-                if (running) {
-                    if (firstSeenAt == 0L) firstSeenAt = now
-                } else if (firstSeenAt != 0L) {
-                    lifetimeMs = now - firstSeenAt
-                    break
-                }
-                SystemClock.sleep(20)
+            val deadline = SystemClock.uptimeMillis() + 90_000
+            while (SystemClock.uptimeMillis() < deadline &&
+                SyncSettings.lastResult(context) != SyncEngine.RESULT_SUCCESS
+            ) {
+                SystemClock.sleep(200)
             }
-
             assertEquals(
                 "上传应成功（lastError=${SyncSettings.lastError(context)}）",
                 SyncEngine.RESULT_SUCCESS,
                 SyncSettings.lastResult(context)
             )
             assertEquals("通知可见性验证", cloud(uploadedName()))
-            assertTrue("应观测到前台服务的整个生命周期", lifetimeMs >= 0)
-            assertTrue(
-                "上传极快时进度通知也必须保留 ${SyncNotifier.MIN_PROGRESS_VISIBLE_MS}ms，" +
-                    "否则用户根本看不到（实测服务存活 ${lifetimeMs}ms）",
-                lifetimeMs >= SyncNotifier.MIN_PROGRESS_VISIBLE_MS - 200
+
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            assertFalse(
+                "成功路径不得留下失败通知（id=${SyncNotifier.ID_FAILURE}）",
+                manager.activeNotifications.any { it.id == SyncNotifier.ID_FAILURE }
             )
         }
-    }
-
-    /**
-     * 前台服务**无法启动**时的进程内兜底路径，同样必须有进度通知。
-     *
-     * 这是用户报障的第二种成因：Android 12+ 在个别时序下会拒绝后台启动前台服务，
-     * 旧实现在那条路径上静默同步 —— 完全没有用户可见反馈。这里直接调用
-     * [SyncManager.requestInProcess]，断言通知确实发出来了。
-     */
-    @Test
-    fun inProcessFallback_alsoShowsAProgressNotification() {
-        assumeTrue(
-            "此环境无法发出/查询本应用的通知（自检失败），跳过通知可见性断言",
-            notificationQueryReliable
-        )
-        assertTrue(runBlocking { ContentStore.write("进程内兜底验证") })
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        SyncManager.requestInProcess(context, SyncTrigger.MANUAL)
-
-        var observed = false
-        val observeDeadline = SystemClock.uptimeMillis() + 15_000
-        while (SystemClock.uptimeMillis() < observeDeadline) {
-            if (manager.activeNotifications.any { it.id == SyncNotifier.ID_PROGRESS }) {
-                observed = true
-                break
-            }
-            SystemClock.sleep(20)
-        }
-        assertTrue(
-            "进程内兜底路径同样必须发进度通知（旧实现这条路径完全没有反馈）" +
-                "（lastResult=${SyncSettings.lastResult(context)}, " +
-                "lastError=${SyncSettings.lastError(context)}）",
-            observed
-        )
-
-        val doneDeadline = SystemClock.uptimeMillis() + 90_000
-        while (SystemClock.uptimeMillis() < doneDeadline &&
-            SyncSettings.lastResult(context) != SyncEngine.RESULT_SUCCESS
-        ) {
-            SystemClock.sleep(100)
-        }
-        assertEquals(SyncEngine.RESULT_SUCCESS, SyncSettings.lastResult(context))
-        assertEquals("进程内兜底验证", cloud(uploadedName()))
     }
 
     // ------------------------------------------------------------ 顶部导航栏「立即上传」（v7.7）
@@ -546,6 +483,9 @@ class SyncE2eInstrumentedTest {
         var visibleAfterFailure = false
         var pendingIdsAfterFailure = ""
         var statusAfterFailure = ""
+        var failureNotificationPresent = false
+        var failureChannelImportance = -1
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             awaitEditorReady(scenario)
             // 返回键 = 用户报障时的那条路径：先落盘、再触发上传
@@ -563,6 +503,16 @@ class SyncE2eInstrumentedTest {
             visibleAfterFailure = SyncRetry.isScheduled(context)
             pendingIdsAfterFailure = pendingJobIds()
             statusAfterFailure = SyncManager.status.value.toString()
+
+            // 失败通知是持久通知（不会随前台服务结束消失）；等系统落库后再取一次
+            val notifyDeadline = SystemClock.uptimeMillis() + 5_000
+            while (SystemClock.uptimeMillis() < notifyDeadline && !failureNotificationPresent) {
+                failureNotificationPresent =
+                    manager.activeNotifications.any { it.id == SyncNotifier.ID_FAILURE }
+                if (!failureNotificationPresent) SystemClock.sleep(50)
+            }
+            failureChannelImportance =
+                manager.getNotificationChannel(SyncNotifier.CHANNEL_ID_FAILURE)?.importance ?: -1
         }
 
         // 网络恢复：模拟系统在合适时机拉起那个任务（真机上还要过 30 秒最短延迟）
@@ -577,7 +527,9 @@ class SyncE2eInstrumentedTest {
         val scene = "result=$resultAfterFailure acceptedDirect=$acceptedDirect " +
             "visibleDirect=$visibleDirect visibleAfterFailure=$visibleAfterFailure " +
             "pendingIds=$pendingIdsAfterFailure status=$statusAfterFailure " +
-            "directPendingIds=$directPendingIds visibleAfterCancel=$visibleAfterCancel"
+            "directPendingIds=$directPendingIds visibleAfterCancel=$visibleAfterCancel " +
+            "failureNotification=$failureNotificationPresent " +
+            "failureChannel=$failureChannelImportance"
         val failures = buildList {
             if (resultAfterFailure != SyncEngine.RESULT_FAILED) {
                 add("指向不可达端口时同步必须明确失败")
@@ -588,6 +540,12 @@ class SyncE2eInstrumentedTest {
             if (needsAnotherRetry) add("内容已经补传成功，不该再重试")
             if (recovered != typed) add("重试必须真的把内容传上去，实际[$recovered]")
             if (visibleAfterCancel) add("兜底任务不能留在系统里成为常驻唤醒源")
+            if (failureChannelImportance != NotificationManager.IMPORTANCE_HIGH) {
+                add("失败通知渠道必须是 HIGH，实际=$failureChannelImportance")
+            }
+            if (notificationQueryReliable && !failureNotificationPresent) {
+                add("失败后必须留下 id=${SyncNotifier.ID_FAILURE} 的失败通知")
+            }
         }
         // 注意：这里刻意**不**断言 visibleAfterFailure / pendingIdsAfterFailure ——
         // 实测模拟器上刚排入的任务用 getAllPendingJobs/getPendingJob 都查不回来

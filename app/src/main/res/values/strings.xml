@@ -122,20 +122,25 @@
     <string name="sync_trusted">已记住该证书指纹</string>
 
     <!-- WebDAV 同步：通知 -->
-    <string name="sync_notif_channel_name">WebDAV 同步</string>
-    <string name="sync_notif_channel_description">同步进度与上传结果</string>
+    <string name="sync_notif_channel_name">WebDAV 同步（运行中）</string>
+    <string name="sync_notif_channel_description">同步执行期间由前台服务显示，结束后自动消失</string>
     <string name="sync_notif_progress_title">正在同步到 WebDAV</string>
     <string name="sync_notif_progress_text">正在上传最新内容…</string>
     <!-- v8.0.3：窗口内快速重试时的进度正文（只在真的重试时出现） -->
     <string name="sync_notif_retry_text">网络不稳，正在重试（%1$d/%2$d）…</string>
 
-    <!-- v8.5.5：首次启动检查通知权限（先说明用途，再申请） -->
+    <!-- v8.5.6：失败通知（HIGH）；成功路径不再发用户可见通知 -->
+    <string name="sync_notif_failure_channel_name">同步失败提醒</string>
+    <string name="sync_notif_failure_channel_description">仅在 WebDAV 上传失败时提醒</string>
+    <string name="sync_notif_failure_title">WebDAV 同步失败</string>
+
+    <!-- v8.5.5：首次启动检查通知权限（先说明用途，再申请；v8.5.6 起用途改为失败提醒） -->
     <string name="notification_permission_title">开启通知权限？</string>
-    <string name="notification_permission_message">同步上传到 WebDAV 时，通知栏会显示一条上传进度。允许通知可以让你看到上传是否正在进行；不允许也不影响保存和同步，只是看不到这条进度。</string>
+    <string name="notification_permission_message">WebDAV 上传失败时，通知栏会显示失败原因，方便你及时处理。允许通知可以让你收到这条提醒；不允许也不影响保存和同步。</string>
     <string name="notification_permission_enable">开启通知</string>
     <string name="notification_permission_not_now">暂不</string>
     <string name="notification_permission_denied_title">通知权限未开启</string>
-    <string name="notification_permission_denied_message">你仍然可以正常保存和同步。想在上传时看到通知栏进度，可以到系统设置里为本应用开启通知。</string>
+    <string name="notification_permission_denied_message">你仍然可以正常保存和同步。想在上传失败时收到通知，可以到系统设置里为本应用开启通知。</string>
     <string name="notification_permission_open_settings">去设置</string>
 
     <!-- WebDAV 同步：错误与校验 -->

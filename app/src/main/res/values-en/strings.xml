@@ -126,20 +126,25 @@
     <string name="sync_trusted">Fingerprint remembered</string>
 
     <!-- WebDAV sync: notifications -->
-    <string name="sync_notif_channel_name">WebDAV sync</string>
-    <string name="sync_notif_channel_description">Sync progress</string>
+    <string name="sync_notif_channel_name">WebDAV sync (running)</string>
+    <string name="sync_notif_channel_description">Shown by the foreground service while syncing; disappears when it ends</string>
     <string name="sync_notif_progress_title">Syncing to WebDAV</string>
     <string name="sync_notif_progress_text">Uploading your latest content…</string>
     <!-- v8.0.3: progress text used only while actually retrying inside the foreground window -->
     <string name="sync_notif_retry_text">Network hiccup — retrying (%1$d/%2$d)…</string>
 
-    <!-- v8.5.5: first-launch notification permission check (explain, then request) -->
+    <!-- v8.5.6: failure notification (HIGH); successful syncs post no user-visible notification -->
+    <string name="sync_notif_failure_channel_name">Sync failure alerts</string>
+    <string name="sync_notif_failure_channel_description">Only alerts when a WebDAV upload fails</string>
+    <string name="sync_notif_failure_title">WebDAV sync failed</string>
+
+    <!-- v8.5.5: first-launch notification permission check (v8.5.6: used for failure alerts) -->
     <string name="notification_permission_title">Turn on notifications?</string>
-    <string name="notification_permission_message">A progress notification appears in the shade while content is uploading to WebDAV. Allowing notifications lets you see when an upload is running; declining does not affect saving or syncing — you simply will not see that progress.</string>
+    <string name="notification_permission_message">If a WebDAV upload fails, a notification shows the reason so you can act on it. Allowing notifications lets you receive that alert; declining does not affect saving or syncing.</string>
     <string name="notification_permission_enable">Turn on notifications</string>
     <string name="notification_permission_not_now">Not now</string>
     <string name="notification_permission_denied_title">Notifications are off</string>
-    <string name="notification_permission_denied_message">You can still save and sync normally. To see upload progress in the notification shade, enable notifications for this app in system settings.</string>
+    <string name="notification_permission_denied_message">You can still save and sync normally. To be alerted when an upload fails, enable notifications for this app in system settings.</string>
     <string name="notification_permission_open_settings">Open settings</string>
 
     <!-- WebDAV sync: errors and validation -->

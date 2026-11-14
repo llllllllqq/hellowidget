@@ -25,17 +25,15 @@ import moe.hellowidget.sync.WebDavError
  * 承载一次 WebDAV 同步的前台服务。
  *
  * 为什么用前台服务而不是普通后台协程：
- *  - 产品要求「通知栏留一条进度条直到同步结束」，这正好是前台服务的语义；
- *  - 前台服务期间进程不会被系统回收，上传不会做到一半被打断；
+ *  - 同步期间进程不会被系统回收，上传不会做到一半被打断；
  *  - 同步一结束立即 [ServiceCompat.stopForeground] + `stopSelf()` —— 不留常驻通知、
  *    不留后台线程、不做任何周期性任务（应用其余部分也刻意保持「无后台轮询」的设计）。
+ *  - 前台服务通知是 Android 的硬要求，不是成功反馈；用户可见的提醒只有失败通知（v8.5.6）。
  *
- * ## v7.5：进度条必须真的被看见
- * 上传通常几百毫秒就结束，旧实现在 `startForeground` 之后立刻 `stopForeground(REMOVE)`，
- * SystemUI 甚至来不及渲染，用户看到的就是「明明上传了却没有通知栏进度」。
- * 现在只要**确实发生了上传**，进度通知就至少保留
- * [SyncNotifier.MIN_PROGRESS_VISIBLE_MS]；而「本地没变、什么都没做」的跳过立刻收掉，
- * 不产生无意义的闪烁。
+ * ## v8.5.6：前台通知只履行平台义务，不再作为成功反馈
+ * Android 要求前台服务必须持有一条通知，这条通知无法省略。它走 LOW 静音渠道，
+ * 只在同步执行期间存在；同步一结束（无论成败）立即 `stopForeground(REMOVE)`。
+ * 用户可见的**失败**提醒由 [SyncNotifier.notifyFailure] 发到 HIGH 渠道，成功时不再发通知。
  *
  * 启动点全部在用户可见的转换处（返回键退出、失焦、打开应用、手动按钮），
  * 因此落在 Android 12+ 后台启动限制的豁免条款「app transitions from a user-visible state」里。
@@ -76,7 +74,7 @@ class SyncService : Service() {
             // v7.9：系统可能拒绝前台服务（后台启动限制 / 额度用尽 / 类型不允许）。
             // 这里**必须**接住 —— 让它冒泡就是未捕获异常，系统会直接杀掉进程
             // （RemoteServiceException），而用户只会看到「保存了却没上传」。
-            // 降级为进程内同步：上传照做，进度通知与结果提示由 SyncManager 自己发。
+            // 降级为进程内同步：上传照做，失败通知与结果提示由 SyncManager 自己发。
             // v8.0.1：异常**类型**进消息与落盘记录，见 SyncLauncher 的同款说明。
             val kind = e.javaClass.simpleName
             Log.w(TAG, "前台服务启动被系统拒绝（$kind: ${e.message}），降级为进程内同步：trigger=$trigger", e)
@@ -105,13 +103,9 @@ class SyncService : Service() {
                 Log.e(TAG, "同步服务执行异常", e)
                 SyncStatus.Failed(System.currentTimeMillis(), WebDavError.IO, e.message ?: "未知错误")
             }
-            // 失败/成功提示由 SyncManager 负责（进程内降级时同样会发），这里只管进度条
+            // 失败/成功提示由 SyncManager 负责（进程内降级时同样会发），这里只管前台通知的起停
             if (status is SyncStatus.Skipped) {
                 Log.i(TAG, "本次同步被跳过：${status.reason}")
-            }
-            if (status is SyncStatus.Success && status.uploaded) {
-                // 上传已经完成，但通知刚发出去可能还没被渲染出来：补足最短可见时长
-                SyncNotifier.awaitProgressVisibleFor(startedAt)
             }
             Log.i(TAG, "同步服务结束：$status（耗时 ${System.currentTimeMillis() - startedAt}ms）")
             ServiceCompat.stopForeground(this@SyncService, ServiceCompat.STOP_FOREGROUND_REMOVE)

@@ -105,7 +105,7 @@ object SyncManager {
     @VisibleForTesting
     internal var contentReader: suspend () -> ContentRead = { ContentStore.readResult() }
 
-    /** 前台服务无法启动时的兜底（进程内同步；进度通知由这里自己发） */
+    /** 前台服务无法启动时的兜底（进程内同步；没有进度通知，失败时由 doSync 发失败通知） */
     private val fallbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
@@ -119,8 +119,8 @@ object SyncManager {
     internal var elapsedClock: () -> Long = System::currentTimeMillis
 
     /**
-     * 进程内执行一次同步（没有前台服务，因此这里自己维护进度通知）。
-     * 只在 [SyncLauncher] 无法启动前台服务时使用。
+     * 进程内执行一次同步（没有前台服务，因此没有平台强制的进度通知）。
+     * 只在 [SyncLauncher] 无法启动前台服务时使用；失败通知仍由 [doSync] 发出。
      */
     fun requestInProcess(context: Context, trigger: SyncTrigger) {
         val appContext = context.applicationContext
@@ -129,10 +129,10 @@ object SyncManager {
                 performSync(
                     appContext,
                     trigger,
-                    progress = true,
                     // 这条路径同样处在"用户刚离开界面"的窗口里，值得享受窗口内快速重试；
-                    // 通知由本路径自己持有，所以阶段文案也由它更新
-                    onWindowPhase = { text -> SyncNotifier.postProgress(appContext, text) }
+                    // 传一个空回调只是为了保留 onWindowPhase != null 这个"可以重试"的信号，
+                    // 不再借它更新任何进度通知（成功路径不发通知）。
+                    onWindowPhase = { _ -> }
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -141,19 +141,6 @@ object SyncManager {
             }
         }
     }
-
-    /**
-     * 前台服务路径（进度通知由服务的 `startForeground` 负责）。
-     *
-     * [onWindowPhase] 非 null = 这条路径**拥有可见的前台通知**，因此允许窗口内快速重试
-     * （[SyncWindowRetry]），并把阶段文案（重试中 / 恢复默认）交给它显示；
-     * 传 null = 没有前台窗口（系统兜底任务），既不改通知也不做窗口内重试。
-     */
-    suspend fun performSync(
-        context: Context,
-        trigger: SyncTrigger,
-        onWindowPhase: ((String?) -> Unit)? = null
-    ): SyncStatus = performSync(context, trigger, progress = false, onWindowPhase = onWindowPhase)
 
     /**
      * 单飞 + 合并（v8.1.0）。
@@ -181,11 +168,9 @@ object SyncManager {
      * 调用方**先写盘、后触发**，所以一个请求序号被登记时，它的内容已经在盘上；
      * 领跑者在认领之后才读内容，读到的必然不旧于任何一个被它覆盖的请求。
      */
-    @VisibleForTesting
-    internal suspend fun performSync(
+    suspend fun performSync(
         context: Context,
         trigger: SyncTrigger,
-        progress: Boolean,
         onWindowPhase: ((String?) -> Unit)? = null
     ): SyncStatus {
         val mine = requestSeq.incrementAndGet()
@@ -204,7 +189,7 @@ object SyncManager {
             claimedSeq = requestSeq.get()
             Log.i(TAG, "获得同步锁：trigger=$trigger（认领 #$claimedSeq）")
             val result = try {
-                doSync(context.applicationContext, trigger, progress, onWindowPhase)
+                doSync(context.applicationContext, trigger, onWindowPhase)
             } catch (e: CancellationException) {
                 // 领跑者被取消（例如前台服务被销毁）时，下面的赋值不会执行 —— 若不在这里补一个
                 // 终态，并入者会拿到**上一次的旧结果**（可能是一次 Success），于是兜底任务会
@@ -224,13 +209,17 @@ object SyncManager {
     private suspend fun doSync(
         context: Context,
         trigger: SyncTrigger,
-        progress: Boolean,
         onWindowPhase: ((String?) -> Unit)?
     ): SyncStatus {
         if (!SyncSettings.enabled(context)) return SyncStatus.Skipped(SkipReason.NOT_ENABLED)
 
         val config = SyncSettings.config(context) ?: run {
             SyncSettings.recordFailure(context, WebDavError.NOT_CONFIGURED)
+            SyncNotifier.notifyFailure(
+                context,
+                WebDavError.NOT_CONFIGURED,
+                "同步设置不完整"
+            )
             return SyncStatus.Failed(
                 System.currentTimeMillis(), WebDavError.NOT_CONFIGURED, "同步设置不完整"
             )
@@ -239,10 +228,7 @@ object SyncManager {
         val startedAt = System.currentTimeMillis()
         _status.value = SyncStatus.Running(trigger, startedAt)
         Log.i(TAG, "开始同步：trigger=$trigger")
-        // 进程内路径没有前台服务，通知得自己发
-        if (progress) SyncNotifier.postProgress(context)
 
-        var uploaded = false
         var client: WebDavClient? = null
         return try {
             // 客户端构造本身也可能抛（TLS/参数问题），因此也放进 try：
@@ -258,12 +244,12 @@ object SyncManager {
                 config = config,
                 onWindowPhase = onWindowPhase
             )
-            uploaded = outcome is SyncStatus.Success && outcome.uploaded
             _status.value = outcome
             Log.i(TAG, "同步结束：$outcome（耗时 ${System.currentTimeMillis() - startedAt}ms）")
             if (outcome is SyncStatus.Success) {
                 // 内容已经在云端（或本地本来就没有改动）：撤销系统重试任务，不必再唤醒进程
                 SyncRetry.cancel(context)
+                SyncNotifier.cancelFailure(context)
                 if (outcome.uploaded) SyncNotifier.showUploadSucceededToast(context)
             }
             outcome
@@ -289,14 +275,9 @@ object SyncManager {
             SyncSettings.setLastServerContactAt(context, System.currentTimeMillis())
             SyncSettings.recordFailure(context, error)
             SyncNotifier.showUploadFailedToast(context, error, safeDetail)
+            SyncNotifier.notifyFailure(context, error, safeDetail)
             SyncStatus.Failed(System.currentTimeMillis(), error, safeDetail).also { _status.value = it }
         } finally {
-            if (progress) {
-                // 只有**真的上传了**才保证进度通知可见的时长：上传常常几百毫秒就结束，
-                // 立即收掉用户根本看不到；而「本地没变、什么都没做」不该弹通知打扰用户
-                if (uploaded) SyncNotifier.awaitProgressVisibleFor(startedAt)
-                SyncNotifier.cancelProgress(context)
-            }
             client?.close()
         }
     }
@@ -335,7 +316,7 @@ object SyncManager {
             try {
                 val outcome = uploadOnce(context, client, config)
                 // 重试成功后把通知文案恢复成默认的「正在上传最新内容…」：
-                // 上传其实已经成功，不该让最后 1.5 秒的最短可见期显示"正在重试"
+                // 上传其实已经成功，不该让最后一段前台通知显示"正在重试"
                 if (retries > 0) onWindowPhase.invoke(null)
                 return outcome
             } catch (e: CancellationException) {

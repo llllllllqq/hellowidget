@@ -16,54 +16,51 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.delay
 import moe.hellowidget.R
 import moe.hellowidget.SyncActivity
 
 /**
  * WebDAV 同步的通知与上传结果提示。
  *
- * 产品要求是「同步期间通知栏留一条进度条，结束后立刻收掉」：
- *  - 进度通知既是用户可见的反馈，也是前台服务能长期存活（不被系统回收）的依据；
- *  - 同步一结束就收掉，不留常驻通知、不留后台线程。
+ * ## v8.5.6：用户可见通知只在失败时发
+ * 旧实现每次同步都发一条「正在同步」的进度通知，并保证它至少可见 1.5 秒（v8.5.4 曾试过 5 秒）。
+ * 但真机反馈 5 秒也没有改善「有时看不到」，而且成功路径上的进度条本身就是打扰。
+ * 现在：
+ *  - **失败**才发一条 `HIGH` 渠道的通知（[CHANNEL_ID_FAILURE]），点开进入同步设置页；
+ *  - 成功后不发任何用户可见的通知，并撤掉之前的失败通知；
+ *  - Toast 逻辑保持不变（成功「已上传到云端」/ 失败原因）。
  *
- * ## v7.8：失败只用 Toast 报错
- * 旧实现把失败**留在通知栏**里（需要用户手动点掉）；v7.8 起改为与成功对称的一条 Toast，
- * 通知栏只在同步进行中出现进度条，结束后干干净净。失败的完整原因仍会写进
- * `SyncSettings.lastResult`，WebDAV 设置页的「同步状态」照样能看到。
+ * ## 前台服务仍有一条通知，这是 Android 的硬要求
+ * 同步跑在前台服务里，`startForeground()` **必须**关联一条通知；拒绝发通知也挡不住这条要求
+ * （没有通知前台服务根本不成立）。它走单独的 `LOW` 渠道 [CHANNEL_ID]：静音、无横幅、
+ * 不可手动划掉，只在同步执行的几百毫秒到几十秒内存在，结束立刻 `stopForeground(REMOVE)`。
+ * 因此它不是「成功通知」，而是平台强制的前台服务凭据；用户可感知的失败提醒只有 HIGH 那条。
  *
- * ## v7.5 起新增的两条保证
- *  1. **每次上传都有可见的进度条**：上传往往几百毫秒就结束，`startForeground` 之后
- *     立刻收掉用户根本看不到（这正是「明明上传了却没有通知栏进度」的根因）。
- *     为此引入 [awaitProgressVisibleFor]：真的发生了上传时，进度通知至少可见
- *     [MIN_PROGRESS_VISIBLE_MS]；而「本地没变、什么都没做」仍旧不打扰用户。
- *  2. **上传成功弹 Toast**：通知可能一闪而过（或用户没拉下通知栏），
- *     Toast 直接把「已上传到云端」送到眼前。用 `Toast.makeText`（纯文本 Toast）——
- *     官方文档明确：Android 11 起只禁止后台的**自定义视图** Toast，文本 Toast 仍然允许；
- *     何况本应用的同步始终在前台服务或可见界面中执行。
+ * ## 历史
+ * v7.5 为「上传太快、进度条看不到」加过最短可见时长；v8.5.4 延长到 5 秒，真机反馈无效；
+ * v8.5.5 撤回 1.5 秒；v8.5.6 直接取消成功路径的进度通知，只保留平台必需的前台服务通知。
  */
 object SyncNotifier {
 
+    /** 前台服务通知渠道（LOW、静音；平台强制，不是成功提醒） */
     const val CHANNEL_ID = "webdav_sync"
+
+    /** 失败通知渠道（HIGH；只有失败时才会创建/使用） */
+    const val CHANNEL_ID_FAILURE = "webdav_sync_failure"
+
+    /** 前台服务通知 id（`startForeground` 必须与它绑定） */
     const val ID_PROGRESS = 1001
 
-    /**
-     * 进度通知的最短可见时长。上传通常只要几百毫秒：通知刚发出去就被收掉，
-     * SystemUI 甚至来不及渲染，用户看到的是「完全没有通知」。
-     *
-     * v8.5.4 曾延长到 5000ms，但用户真机反馈「没有效果」—— 延长最短可见窗口没有让这条
-     * 静音、LOW、无横幅的进度条更容易被看到。v8.5.5 按用户要求撤回为 **1500ms**
-     * （与 v8.5.3 及以前一致）；可见性问题的真正原因不在窗口长度，另行排查。
-     */
-    const val MIN_PROGRESS_VISIBLE_MS = 1500L
+    /** 失败通知 id（独立于前台服务通知，`stopForeground(REMOVE)` 不会误删它） */
+    const val ID_FAILURE = 1002
 
-    /** 通知渠道懒创建：同步没启用时应用启动完全不受影响 */
+    /** 前台服务通知渠道懒创建：同步没启用时应用启动完全不受影响 */
     fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createRunningChannel(context)
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun createChannel(context: Context) {
+    private fun createRunningChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
@@ -79,7 +76,28 @@ object SyncNotifier {
         manager.createNotificationChannel(channel)
     }
 
-    /** 进度通知（前台服务必须持有的那条） */
+    /** 失败通知渠道：只有真正失败时才会创建（首次失败时系统会按 HIGH 提醒一次） */
+    fun ensureFailureChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createFailureChannel(context)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun createFailureChannel(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(CHANNEL_ID_FAILURE) != null) return
+        val channel = NotificationChannel(
+            CHANNEL_ID_FAILURE,
+            context.getString(R.string.sync_notif_failure_channel_name),
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = context.getString(R.string.sync_notif_failure_channel_description)
+            setShowBadge(true)
+            enableVibration(true)
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    /** 前台服务通知（平台强制；内容只是「正在同步」/ 重试阶段） */
     fun progressNotification(context: Context, text: String? = null): Notification =
         NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_sync_notification)
@@ -96,35 +114,74 @@ object SyncNotifier {
             .build()
 
     /**
-     * 进程内兜底路径的进度通知（没有前台服务，用普通通知顶上）。
-     * 失败/成功的收尾与前台服务路径共用同一套回调。
+     * 更新前台服务通知的正文（同 id、同渠道）。
      *
-     * v8.0.3：也可用来**更新已有那条通知的正文** —— 前台服务路径用它显示
-     * 「网络不稳，正在重试（1/2）…」（同一个通知 id，`startForeground` 之后
-     * 用 `NotificationManager.notify` 更新前台通知正是官方做法，前台状态不受影响）。
+     * 只应从前台服务路径调用：v8.0.3 起窗口内重试会用它显示「网络不稳，正在重试（1/2）…」，
+     * 同一个 id 的 `notify` 不会撤销前台状态。进程内兜底路径**不再发进度通知**，
+     * 因此也不要从那里调用它。
      */
     fun postProgress(context: Context, text: String? = null) {
-        // 进程内兜底路径可能从没启动过 SyncService，渠道要在这里补齐（幂等）
         ensureChannel(context)
         notifyCompat(context, ID_PROGRESS, progressNotification(context, text))
     }
 
     /**
-     * 窗口内重试时的进度正文。
-     *
-     * 这条文案是"窗口内快速重试"对用户的全部可见代价：只在**真的在重试**时出现，
-     * 且明确说清"正在重试第几次"—— 而不是像"挂一条常驻通知"那样，
-     * 让用户在什么都没发生的时候也看到"正在上传"。
+     * 窗口内重试时的进度正文（只用于前台服务通知）。
      */
     fun retryText(context: Context, attempt: Int, max: Int): String =
         context.getString(R.string.sync_notif_retry_text, attempt, max)
 
     /**
-     * 同步失败的 Toast（v7.8：与成功提示对称，不再往通知栏留东西）。
+     * 失败通知（v8.5.6）。
      *
-     * 只给「一句话原因 + 截断后的服务器细节」：完整细节在 WebDAV 设置页的「同步状态」里，
-     * Toast 只是让用户立刻知道「这次没传上去」——否则失败是静默的，用户会以为已经同步了。
-     * 和成功 Toast 一样切到主线程 Looper，并吞掉异常（提示不该影响同步流程本身）。
+     * 只在**失败**时调用；成功路径不会留下它。`detail` 必须已经过
+     * `SyncManager` 的 sanitize（`SyncStatus.Failed.detail` 即是），
+     * 绝不能把 WebDAV 口令带进通知栏。
+     *
+     * 同一 id 更新而不是每次新建：多次失败只保留最新一条；`setOnlyAlertOnce(true)`
+     * 避免后台重试连续失败时反复响铃，用户划掉后再失败仍会重新提醒。
+     */
+    fun notifyFailure(context: Context, error: WebDavError, detail: String) {
+        ensureFailureChannel(context)
+        notifyCompat(context, ID_FAILURE, failureNotification(context, error, detail))
+    }
+
+    /** 成功（或用户主动重试成功）后撤掉旧的失败通知，避免状态行说成功、通知栏还留着失败 */
+    fun cancelFailure(context: Context) {
+        runCatching { NotificationManagerCompat.from(context).cancel(ID_FAILURE) }
+    }
+
+    private fun failureNotification(
+        context: Context,
+        error: WebDavError,
+        detail: String
+    ): Notification {
+        val localized = SyncErrorText.of(context, error)
+        val trimmed = detail.trim().take(FAILURE_DETAIL_MAX)
+        val reason = if (trimmed.isNotEmpty() && trimmed != error.name) {
+            "$localized（$trimmed）"
+        } else {
+            localized
+        }
+        return NotificationCompat.Builder(context, CHANNEL_ID_FAILURE)
+            .setSmallIcon(R.drawable.ic_sync_notification)
+            .setContentTitle(context.getString(R.string.sync_notif_failure_title))
+            .setContentText(reason)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(reason))
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(openSyncActivity(context))
+            .build()
+    }
+
+    /**
+     * 同步失败的 Toast（v7.8 起与成功提示对称）。
+     *
+     * v8.5.6 保持原样：Toast 只给「一句话原因 + 截断后的服务器细节」，
+     * 完整细节在 WebDAV 设置页的「同步状态」里。失败通知是**额外**的持久提醒，
+     * 不改变 Toast 的文案与触发条件。
      */
     fun showUploadFailedToast(context: Context, error: WebDavError, detail: String) {
         val appContext = context.applicationContext
@@ -142,22 +199,8 @@ object SyncNotifier {
         }
     }
 
-    fun cancelProgress(context: Context) {
-        runCatching { NotificationManagerCompat.from(context).cancel(ID_PROGRESS) }
-    }
-
     /**
-     * 让进度通知至少显示到 [MIN_PROGRESS_VISIBLE_MS]（只在**真的上传了**之后调用）。
-     * 调用方随后照常 [cancelProgress]。
-     */
-    suspend fun awaitProgressVisibleFor(startedAt: Long) {
-        val elapsed = System.currentTimeMillis() - startedAt
-        val remaining = MIN_PROGRESS_VISIBLE_MS - elapsed
-        if (remaining > 0) delay(remaining)
-    }
-
-    /**
-     * 上传成功的 Toast。
+     * 上传成功的 Toast（v8.5.6 不变）。
      *
      * 必须切到主线程 Looper：同步跑在 IO 协程上，而 Toast 需要一个有 Looper 的线程。
      * 失败时吞掉异常 —— 提示不该把一次成功的上传变成失败。
@@ -200,4 +243,7 @@ object SyncNotifier {
 
     /** Toast 里最多带出的服务器细节长度：一句话能读完，完整细节看同步设置页的状态行 */
     private const val TOAST_DETAIL_MAX = 80
+
+    /** 通知里可以多带一点细节，但仍要能一眼看到原因 */
+    private const val FAILURE_DETAIL_MAX = 200
 }

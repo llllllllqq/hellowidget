@@ -8,10 +8,10 @@ import moe.hellowidget.SyncService
 /**
  * 同步的统一入口。
  *
- * 先用**前台服务**跑（通知栏进度条 + 进程不会被回收），这是产品明确要求的形态；
+ * 先用**前台服务**跑（进程不会被回收；前台通知是 Android 的硬要求）；
  * 若系统拒绝后台启动前台服务（Android 12+ 的 FGS 限制在个别时序下会拒绝，
  * 例如「切后台的瞬间触发」），降级为进程内协程同步：
- * 上传照做，进度通知与成功 Toast 由 [SyncManager] 自己发（见 `requestInProcess`），
+ * 上传照做，失败通知与结果提示由 [SyncManager] 自己发（见 `requestInProcess`），
  * 因此**两条路径都有用户可见的反馈**。
  */
 object SyncLauncher {

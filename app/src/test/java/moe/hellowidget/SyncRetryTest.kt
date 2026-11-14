@@ -137,7 +137,7 @@ class SyncRetryTest {
         //   IllegalArgumentException: An expedited job cannot have a time delay
         //     at android.app.job.JobInfo.enforceValidity(JobInfo.java:2279)
         // 即「加急 ⇒ 不允许延迟 ⇒ 必须立刻执行」，而立刻执行会在应用仍处前台时
-        // 抢走 SyncManager 的互斥锁，把上传从"进度条 + 成功 Toast"这条唯一可见路径上夺走。
+        // 抢走 SyncManager 的互斥锁，把上传从"前台通知 + 成功 Toast"这条唯一可见路径上夺走。
         // 所以这里**故意**保持常规 + 延迟；想拿加急的收益需要独立一轮改成两个任务 id。
         // （sdk 34 的 JobInfo.isExpedited 是 API 31，本类 @Config(sdk = [34]) 恒可用）
         assertFalse("兜底任务刻意不使用加急", job.isExpedited)
@@ -451,7 +451,7 @@ class SyncRetryTest {
         SyncManager.contentReader = { awaitCancellation() }
 
         val job = launch(Dispatchers.IO) {
-            SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR, progress = false)
+            SyncManager.performSync(context, SyncTrigger.CLOSE_EDITOR)
         }
         // 必须等它真的进入同步（状态变成 Running）再取消，否则测不到「Running 之后被取消」
         val entered = System.currentTimeMillis() + 5_000
